@@ -63,10 +63,14 @@ import {
   deleteAccount,
   deleteCategory,
   deleteFixedCost,
+  deleteSharedLedger,
   deleteTransaction,
   insertRemoteTransaction,
   joinSharedLedger,
+  leaveSharedLedger,
+  loadHouseholdMembers,
   loadRemoteState,
+  removeSharedLedgerMember,
   signInWithEmail,
   signInWithGoogle,
   signOut,
@@ -80,6 +84,7 @@ import {
   toJapaneseError
 } from "@/lib/db";
 import { AccountType } from "@/lib/types";
+import type { HouseholdMember } from "@/lib/types";
 
 type Tab = "home" | "analysis" | "goals" | "settings";
 
@@ -700,6 +705,9 @@ function SettingsView({
 }) {
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [inviteCode, setInviteCode] = useState("");
+  const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
+  const [sharedMembers, setSharedMembers] = useState<HouseholdMember[]>([]);
+  const [memberLoading, setMemberLoading] = useState(false);
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
@@ -710,6 +718,30 @@ function SettingsView({
   const [newParentCategory, setNewParentCategory] = useState({ name: "", color: "#0f766e" });
   const [newChildCategory, setNewChildCategory] = useState({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
   const [newFixed, setNewFixed] = useState({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
+  const selectedLedger = (state.households ?? []).find((household) => household.id === selectedLedgerId);
+  const personalLedgerId = (state.households ?? []).find((household) => household.spaceType === "personal")?.id ?? state.householdId ?? "";
+
+  useEffect(() => {
+    if (!selectedLedger || selectedLedger.spaceType !== "shared") {
+      setSharedMembers([]);
+      return;
+    }
+    let mounted = true;
+    setMemberLoading(true);
+    loadHouseholdMembers(selectedLedger.id)
+      .then((members) => {
+        if (mounted) setSharedMembers(members);
+      })
+      .catch((error) => {
+        if (mounted) setNotice(toJapaneseError(error, "共有メンバーの取得に失敗しました。"));
+      })
+      .finally(() => {
+        if (mounted) setMemberLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [selectedLedger?.id, selectedLedger?.spaceType, setNotice]);
 
   return (
     <div className="view-stack">
@@ -730,27 +762,104 @@ function SettingsView({
         <div className="ledger-list">
           {(state.households ?? []).map((household) => (
             <button
-              className={household.id === state.householdId ? "selected-ledger" : ""}
+              className={household.id === selectedLedgerId ? "selected-ledger" : ""}
               key={household.id}
               type="button"
-              onClick={() => reloadHousehold(household.id).catch((error) => setNotice(toJapaneseError(error)))}
+              onClick={() => setSelectedLedgerId(household.id)}
             >
               <span>{household.name}</span>
-              <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+              <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}{household.id === state.householdId ? " / 表示中" : ""}</em>
             </button>
           ))}
         </div>
-        {state.inviteCode && (
-          <div className="invite-box">
-            <span>招待コード</span>
-            <strong>{state.inviteCode}</strong>
-            <button
-              type="button"
-              onClick={() => navigator.clipboard.writeText(state.inviteCode ?? "").then(() => setNotice("招待コードをコピーしました。"))}
-              aria-label="招待コードをコピー"
-            >
-              <Copy size={16} />コピー
-            </button>
+        {selectedLedger && (
+          <div className="ledger-detail">
+            <div>
+              <span>家計簿名</span>
+              <strong>{selectedLedger.name}</strong>
+              <em>{selectedLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {selectedLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+            </div>
+            {selectedLedger.spaceType === "shared" && (
+              <>
+                {selectedLedger.inviteCode && (
+                  <div className="invite-box">
+                    <span>共有ID</span>
+                    <strong>{selectedLedger.inviteCode}</strong>
+                    <button
+                      type="button"
+                      onClick={() => navigator.clipboard.writeText(selectedLedger.inviteCode ?? "").then(() => setNotice("共有IDをコピーしました。"))}
+                      aria-label="共有IDをコピー"
+                    >
+                      <Copy size={16} />コピー
+                    </button>
+                  </div>
+                )}
+                <div className="member-list">
+                  <span>共有メンバー</span>
+                  {memberLoading && <em>読み込み中</em>}
+                  {!memberLoading && sharedMembers.map((member) => (
+                    <div key={member.userId}>
+                      <strong>{member.displayName}</strong>
+                      <em>{member.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+                      {selectedLedger.memberRole === "owner" && member.memberRole !== "owner" && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!window.confirm(`${member.displayName}さんを共有家計簿から脱退させますか？`)) return;
+                            try {
+                              await removeSharedLedgerMember(selectedLedger.id, member.userId);
+                              setSharedMembers(await loadHouseholdMembers(selectedLedger.id));
+                              setNotice("共有メンバーを脱退させました。");
+                            } catch (error) {
+                              setNotice(toJapaneseError(error, "共有メンバーの脱退処理に失敗しました。"));
+                            }
+                          }}
+                        >
+                          脱退させる
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {selectedLedger.memberRole === "owner" ? (
+                  <button
+                    className="danger-button"
+                    type="button"
+                    onClick={async () => {
+                      if (!window.confirm("この共有家計簿を削除しますか？取引・口座・固定費・目標もこの画面から見えなくなります。")) return;
+                      try {
+                        await deleteSharedLedger(selectedLedger.id);
+                        await reloadHousehold(personalLedgerId);
+                        setSelectedLedgerId(personalLedgerId);
+                        setNotice("共有家計簿を削除しました。");
+                      } catch (error) {
+                        setNotice(toJapaneseError(error, "共有家計簿の削除に失敗しました。"));
+                      }
+                    }}
+                  >
+                    共有家計簿を削除
+                  </button>
+                ) : (
+                  <button
+                    className="danger-button"
+                    type="button"
+                    onClick={async () => {
+                      if (!window.confirm("この共有家計簿から脱退しますか？")) return;
+                      try {
+                        await leaveSharedLedger(selectedLedger.id);
+                        await reloadHousehold(personalLedgerId);
+                        setSelectedLedgerId(personalLedgerId);
+                        setNotice("共有家計簿から脱退しました。");
+                      } catch (error) {
+                        setNotice(toJapaneseError(error, "共有家計簿からの脱退に失敗しました。"));
+                      }
+                    }}
+                  >
+                    この共有家計簿から脱退
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
       </section>

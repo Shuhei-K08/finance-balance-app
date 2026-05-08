@@ -9,6 +9,7 @@ import {
   FixedCost,
   FixedCostStatus,
   Goal,
+  HouseholdMember,
   HouseholdSummary,
   LedgerMode,
   LedgerState,
@@ -61,6 +62,12 @@ type DbHousehold = {
 
 type DbHouseholdSummary = DbHousehold & {
   household_members?: { member_role: "owner" | "member" }[];
+};
+
+type DbHouseholdMember = {
+  user_id: string;
+  member_role: "owner" | "member";
+  profiles?: { display_name: string | null } | { display_name: string | null }[] | null;
 };
 
 type DbProfile = {
@@ -202,6 +209,45 @@ export async function joinSharedLedger(inviteCode: string) {
   const { data, error } = await client.rpc("join_shared_ledger", { code: inviteCode.trim().toUpperCase() });
   if (error) throwJapanese(error, "共有家計簿への参加に失敗しました。");
   return data as string;
+}
+
+export async function loadHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("household_members")
+    .select("user_id,member_role,profiles(display_name)")
+    .eq("household_id", householdId)
+    .order("created_at");
+  if (error) throwJapanese(error, "共有メンバーの取得に失敗しました。");
+  return ((data ?? []) as unknown as DbHouseholdMember[]).map((member) => {
+    const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
+    return {
+    userId: member.user_id,
+    displayName: profile?.display_name || "ユーザー",
+    memberRole: member.member_role
+    };
+  });
+}
+
+export async function removeSharedLedgerMember(householdId: string, userId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("remove_shared_ledger_member", {
+    target_household_id: householdId,
+    target_user_id: userId
+  });
+  if (error) throwJapanese(error, "共有メンバーの脱退処理に失敗しました。");
+}
+
+export async function leaveSharedLedger(householdId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("leave_shared_ledger", { target_household_id: householdId });
+  if (error) throwJapanese(error, "共有家計簿からの脱退に失敗しました。");
+}
+
+export async function deleteSharedLedger(householdId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("delete_shared_ledger", { target_household_id: householdId });
+  if (error) throwJapanese(error, "共有家計簿の削除に失敗しました。");
 }
 
 async function loadHouseholds(): Promise<HouseholdSummary[]> {

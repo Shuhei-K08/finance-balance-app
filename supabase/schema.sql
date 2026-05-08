@@ -443,6 +443,90 @@ begin
 end;
 $$;
 
+create or replace function public.remove_shared_ledger_member(target_household_id uuid, target_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'login required';
+  end if;
+
+  if not public.owns_household(target_household_id) and not public.is_admin() then
+    raise exception '共有メンバーを変更する権限がありません。';
+  end if;
+
+  if target_user_id = current_user_id then
+    raise exception '所有者自身はここから脱退できません。共有家計簿を削除してください。';
+  end if;
+
+  delete from household_members
+  where household_id = target_household_id
+    and user_id = target_user_id
+    and member_role <> 'owner';
+end;
+$$;
+
+create or replace function public.leave_shared_ledger(target_household_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'login required';
+  end if;
+
+  if public.owns_household(target_household_id) then
+    raise exception '所有者は脱退できません。共有家計簿を削除してください。';
+  end if;
+
+  delete from household_members
+  where household_id = target_household_id
+    and user_id = current_user_id;
+end;
+$$;
+
+create or replace function public.delete_shared_ledger(target_household_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'login required';
+  end if;
+
+  if not public.owns_household(target_household_id) and not public.is_admin() then
+    raise exception '共有家計簿を削除する権限がありません。';
+  end if;
+
+  update households
+  set deleted_at = now()
+  where id = target_household_id
+    and space_type = 'shared';
+
+  update accounts set deleted_at = now() where household_id = target_household_id;
+  update categories set deleted_at = now() where household_id = target_household_id;
+  update transactions set deleted_at = now() where household_id = target_household_id;
+  update fixed_costs set deleted_at = now() where household_id = target_household_id;
+  update saving_goals set deleted_at = now() where household_id = target_household_id;
+end;
+$$;
+
 create or replace function public.validate_household_refs()
 returns trigger
 language plpgsql

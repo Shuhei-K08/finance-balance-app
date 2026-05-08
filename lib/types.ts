@@ -70,6 +70,12 @@ export type HouseholdSummary = {
   memberRole?: "owner" | "member";
 };
 
+export type HouseholdMember = {
+  userId: string;
+  displayName: string;
+  memberRole: "owner" | "member";
+};
+
 export type LedgerState = {
   householdId?: string;
   householdName?: string;
