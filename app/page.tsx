@@ -54,6 +54,7 @@ import {
   yen
 } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
+import { analyzeFinance, buildFinancePrompt } from "@/lib/gemini";
 import { LedgerState, TransactionType } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
@@ -438,6 +439,32 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
   );
 }
 
+function useAiInsights(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
+  const [aiText, setAiText] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    const top = [...category].sort((a, b) => b.value - a.value)[0];
+    const income = stats.income ?? 0;
+    const expense = stats.expense ?? 0;
+    const savingRate = Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0);
+    const prompt = buildFinancePrompt({
+      income,
+      expense,
+      assets: stats.assets ?? 0,
+      forecast: stats.forecast ?? 0,
+      topCategory: top?.name ?? "なし",
+      topCategoryAmount: top?.value ?? 0,
+      savingRate
+    });
+    setLoading(true);
+    analyzeFinance(prompt)
+      .then(setAiText)
+      .catch(() => setAiText("AI分析を取得できませんでした。"))
+      .finally(() => setLoading(false));
+  }, []);
+  return { aiText, loading };
+}
+
 function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerState; stats: Record<string, number>; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
   const category = categoryExpense(state);
   const assetBreakdown = state.accounts.map((account) => ({
@@ -467,10 +494,7 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         <Metric icon={Wallet} label="引落予定" value={yen.format(stats.credit)} />
       </div>
 
-      <section className="ai-panel">
-        <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
-        {aiInsights.map((insight) => <p key={insight}>{insight}</p>)}
-      </section>
+      <AiPanel state={state} stats={stats} category={category} />
 
       <section className="panel chart-panel">
         <div className="section-title"><h2>残高推移</h2><span>予測は点線</span></div>
@@ -518,6 +542,17 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         <TransactionList state={state} limit={5} setNotice={setNotice} reload={reload} />
       </section>
     </div>
+  );
+}
+
+function AiPanel({ state, stats, category }: { state: LedgerState; stats: Record<string, number>; category: Array<{ name: string; value: number }> }) {
+  const { aiText, loading } = useAiInsights(state, stats, category);
+  const lines = aiText.split("\n").filter(Boolean);
+  return (
+    <section className="ai-panel">
+      <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
+      {loading ? <p>分析中...</p> : lines.map((line, i) => <p key={i}>{line}</p>)}
+    </section>
   );
 }
 
