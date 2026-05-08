@@ -247,7 +247,23 @@ export async function leaveSharedLedger(householdId: string) {
 export async function deleteSharedLedger(householdId: string) {
   const client = requireSupabase();
   const { error } = await client.rpc("delete_shared_ledger", { target_household_id: householdId });
-  if (error) throwJapanese(error, "共有家計簿の削除に失敗しました。");
+  if (!error) return;
+
+  const deletedAt = new Date().toISOString();
+  const { error: householdError } = await client
+    .from("households")
+    .update({ deleted_at: deletedAt })
+    .eq("id", householdId)
+    .eq("space_type", "shared");
+  if (householdError) throwJapanese(error, "共有家計簿の削除に失敗しました。");
+
+  await Promise.all([
+    client.from("accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+  ]);
 }
 
 async function loadHouseholds(): Promise<HouseholdSummary[]> {

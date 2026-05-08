@@ -19,7 +19,6 @@ import {
   ArrowDownUp,
   BarChart3,
   Copy,
-  CreditCard,
   Goal,
   Home,
   Landmark,
@@ -40,7 +39,6 @@ import {
   creditStatusLabel,
   fixedCostForecast,
   goalProjection,
-  isFixedCostActiveInMonth,
   monthTransactions,
   monthlyExpense,
   monthlyIncome,
@@ -450,9 +448,8 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
 
       <div className="stat-grid">
         <Metric icon={Wallet} label="今月支出" value={yen.format(stats.expense)} />
+        <Metric icon={Landmark} label="今月収入" value={yen.format(stats.income)} />
         <Metric icon={PiggyBank} label="貯金率" value={`${Math.max(Math.round(((stats.income - stats.expense) / Math.max(stats.income, 1)) * 100), 0)}%`} />
-        <Metric icon={Landmark} label="固定費予定" value={yen.format(stats.fixed)} />
-        <Metric icon={CreditCard} label="引落予定" value={yen.format(stats.credit)} />
       </div>
 
       <section className="panel chart-panel">
@@ -565,21 +562,22 @@ function QuickTransactionSheet({
 function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date: string) => void }) {
   const [selectedMonth, setSelectedMonth] = useState(todayIso().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(todayIso());
+  const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
   const monthKey = selectedMonth;
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
   const monthRows = state.transactions.filter((transaction) => transaction.date.startsWith(monthKey));
   const dateRows = monthRows.filter((transaction) => transaction.date === selectedDate);
-  const selectedFixedCosts = state.fixedCosts.filter((cost) => cost.dueDay === Number(selectedDate.slice(8, 10)) && isFixedCostActiveInMonth(cost, monthKey));
+  const selectedTransaction = dateRows.find((transaction) => transaction.id === selectedTransactionId) ?? dateRows[0];
   const monthIncome = monthlyIncome(monthRows);
   const monthExpense = monthlyExpense(monthRows);
-  const monthFixed = state.fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((sum, cost) => sum + cost.amount, 0);
 
   function moveMonth(delta: number) {
     const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
     const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
     setSelectedMonth(nextKey);
     setSelectedDate(`${nextKey}-01`);
+    setSelectedTransactionId(null);
   }
 
   return (
@@ -593,7 +591,7 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
         <div className="month-summary">
           <span>収入 <strong>{yen.format(monthIncome)}</strong></span>
           <span>支出 <strong>{yen.format(monthExpense)}</strong></span>
-          <span>固定費 <strong>{yen.format(monthFixed)}</strong></span>
+          <span>収支 <strong>{yen.format(monthIncome - monthExpense)}</strong></span>
         </div>
         <div className="calendar-grid">
           {["日", "月", "火", "水", "木", "金", "土"].map((day) => <b key={day}>{day}</b>)}
@@ -603,17 +601,31 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
             const date = `${monthKey}-${day}`;
             const income = monthRows.filter((transaction) => transaction.date === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
             const expense = monthRows.filter((transaction) => transaction.date === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
-            const fixed = state.fixedCosts.filter((cost) => cost.dueDay === index + 1 && isFixedCostActiveInMonth(cost, monthKey)).reduce((sum, cost) => sum + cost.amount, 0);
-            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => setSelectedDate(date)}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 {yen.format(fixed)}</span>}</button>;
+            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setSelectedTransactionId(null); }}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}</button>;
           })}
         </div>
-        <button className="full-primary" type="button" onClick={() => onQuick(selectedDate)}>選択日の取引を登録</button>
+        <button className="full-primary" type="button" onClick={() => onQuick(selectedDate)}>この日に支出を登録</button>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>{selectedDate} の予定</h2><span>{dateRows.length + selectedFixedCosts.length}件</span></div>
-        {selectedFixedCosts.length > 0 && (
-          <div className="fixed-calendar-list">
-            {selectedFixedCosts.map((cost) => <div key={cost.id}><span>{cost.name}</span><strong>{yen.format(cost.amount)}</strong><em>固定費</em></div>)}
+        <div className="section-title"><h2>{selectedDate} の取引</h2><span>{dateRows.length}件</span></div>
+        {dateRows.length > 0 && (
+          <div className="calendar-transaction-list">
+            {dateRows.map((transaction) => {
+              const category = state.categories.find((item) => item.id === transaction.categoryId);
+              return (
+                <button className={selectedTransaction?.id === transaction.id ? "active" : ""} key={transaction.id} type="button" onClick={() => setSelectedTransactionId(transaction.id)}>
+                  <span>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</span>
+                  <strong>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</strong>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {selectedTransaction && <TransactionDetail transaction={selectedTransaction} state={state} />}
+        {dateRows.length === 0 && (
+          <div className="empty-state">
+            <span>この日の取引はまだありません。</span>
+            <button type="button" onClick={() => onQuick(selectedDate)}>支出を登録</button>
           </div>
         )}
         <TransactionList state={{ ...state, transactions: dateRows }} setNotice={setNotice} reload={reload} />
@@ -624,13 +636,19 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
 
 function AnalysisView({ state }: { state: LedgerState }) {
   const category = categoryExpense(state);
+  const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
   const bars = [
     { name: "収入", value: monthlyIncome(monthTransactions(state.transactions)), fill: "#16a34a" },
     { name: "支出", value: monthlyExpense(monthTransactions(state.transactions)), fill: "#dc2626" },
     { name: "貯金", value: Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpense(monthTransactions(state.transactions)), 0), fill: "#0f766e" }
   ];
+  const aiInsights = buildAiInsights(state, category);
   return (
     <div className="view-stack">
+      <section className="ai-panel">
+        <div className="section-title"><h2>AI分析</h2><span>今月の傾向</span></div>
+        {aiInsights.map((insight) => <p key={insight}>{insight}</p>)}
+      </section>
       <section className="panel chart-panel">
         <div className="section-title"><h2>カテゴリー分析</h2><span>今月</span></div>
         <ResponsiveContainer width="100%" height={230}>
@@ -641,6 +659,19 @@ function AnalysisView({ state }: { state: LedgerState }) {
             <Tooltip formatter={(value) => yen.format(Number(value))} />
           </PieChart>
         </ResponsiveContainer>
+      </section>
+      <section className="panel">
+        <div className="section-title"><h2>カテゴリー別割合</h2><span>表</span></div>
+        <div className="analysis-table">
+          <div><strong>カテゴリ</strong><strong>金額</strong><strong>割合</strong></div>
+          {category.map((item) => (
+            <div key={item.name}>
+              <span><i style={{ background: item.fill }} />{item.name}</span>
+              <span>{yen.format(item.value)}</span>
+              <span>{totalCategoryExpense ? Math.round((item.value / totalCategoryExpense) * 100) : 0}%</span>
+            </div>
+          ))}
+        </div>
       </section>
       <section className="panel chart-panel">
         <div className="section-title"><h2>月別収支</h2><span>前月比の土台</span></div>
@@ -655,6 +686,43 @@ function AnalysisView({ state }: { state: LedgerState }) {
         </ResponsiveContainer>
       </section>
       <section className="advice"><Sparkles size={20} /><p>{spendingAdvice(state)}</p></section>
+    </div>
+  );
+}
+
+function buildAiInsights(state: LedgerState, category: Array<{ name: string; value: number }>) {
+  const current = monthTransactions(state.transactions);
+  const income = monthlyIncome(current);
+  const expense = monthlyExpense(current);
+  const saving = income - expense;
+  const top = [...category].sort((a, b) => b.value - a.value)[0];
+  const insights = [
+    `今月の収支は ${yen.format(saving)} です。${saving >= 0 ? "黒字なので、このペースなら残高を守れています。" : "赤字なので、まず大きい支出カテゴリから見直すのが近道です。"}`
+  ];
+  if (top) {
+    const share = expense ? Math.round((top.value / expense) * 100) : 0;
+    insights.push(`支出で一番大きいカテゴリは「${top.name}」で、今月支出の約${share}%です。ここを少し調整すると月末残高への影響が大きいです。`);
+  }
+  const credit = pendingCreditWithdrawals(state);
+  if (credit > 0) insights.push(`クレジットカードの未引落が ${yen.format(credit)} あります。引落月の残高に余裕があるか確認しておくと安心です。`);
+  if (insights.length < 3) insights.push(spendingAdvice(state));
+  return insights;
+}
+
+function TransactionDetail({ transaction, state }: { transaction: LedgerState["transactions"][number]; state: LedgerState }) {
+  const category = state.categories.find((item) => item.id === transaction.categoryId);
+  const account = state.accounts.find((item) => item.id === transaction.accountId);
+  const transferTo = state.accounts.find((item) => item.id === transaction.transferToAccountId);
+  return (
+    <div className="transaction-detail">
+      <div><span>種類</span><strong>{transactionTypeLabel[transaction.type]}</strong></div>
+      <div><span>金額</span><strong>{yen.format(transaction.amount)}</strong></div>
+      {transaction.type !== "transfer" && <div><span>カテゴリ</span><strong>{category?.name ?? "未設定"}</strong></div>}
+      <div><span>{transaction.type === "income" ? "入金先" : "支払元"}</span><strong>{account?.name ?? "未設定"}</strong></div>
+      {transaction.type === "transfer" && <div><span>振替先</span><strong>{transferTo?.name ?? "未設定"}</strong></div>}
+      <div><span>日付</span><strong>{transaction.date}</strong></div>
+      {transaction.reflectedDate && <div><span>反映日</span><strong>{transaction.reflectedDate}</strong></div>}
+      <div><span>メモ</span><strong>{transaction.memo || "なし"}</strong></div>
     </div>
   );
 }
@@ -1086,41 +1154,89 @@ function AdminView() {
 }
 
 function EditableAccountList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
-  return <div className="edit-list">{state.accounts.map((account) => <EditableAccountRow key={account.id} account={account} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  return (
+    <div className="detail-card-list">
+      {state.accounts.map((account) => {
+        const isOpen = selectedId === account.id;
+        const isEditing = editingId === account.id;
+        const withdrawalAccount = state.accounts.find((item) => item.id === account.withdrawalAccountId);
+        return (
+          <div className="detail-card" key={account.id}>
+            <button className="detail-card-head" type="button" onClick={() => { setSelectedId(isOpen ? null : account.id); setEditingId(null); }}>
+              <span><i style={{ background: account.color }} />{account.name}</span>
+            </button>
+            {isOpen && !isEditing && (
+              <div className="fixed-detail">
+                <span>種類: {account.type === "bank" ? "銀行口座" : account.type === "cash" ? "現金" : account.type === "saving" ? "貯金口座" : "クレジットカード"}</span>
+                {account.type !== "credit" && <span>初期残高: {yen.format(account.openingBalance)} / 基準日: {account.openingBalanceDate ?? "未設定"}</span>}
+                {account.type === "credit" && <span>締め日: 毎月{account.closingDay ?? 25}日 / 引落日: 毎月{account.withdrawalDay ?? 10}日 / 引落口座: {withdrawalAccount?.name ?? "未設定"}</span>}
+                <button type="button" onClick={() => setEditingId(account.id)}>編集する</button>
+              </div>
+            )}
+            {isOpen && isEditing && <EditableAccountRow account={account} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-function EditableAccountRow({ account, state, setNotice, reloadHousehold }: { account: LedgerState["accounts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
+function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone }: { account: LedgerState["accounts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
   const [name, setName] = useState(account.name);
   const [openingBalance, setOpeningBalance] = useState(account.openingBalance);
   const [openingBalanceDate, setOpeningBalanceDate] = useState(account.openingBalanceDate ?? todayIso());
   const [closingDay, setClosingDay] = useState(account.closingDay ?? 25);
   const [withdrawalDay, setWithdrawalDay] = useState(account.withdrawalDay ?? 10);
   const [withdrawalAccountId, setWithdrawalAccountId] = useState(account.withdrawalAccountId ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "");
-  return <div className="edit-row"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>更新</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>削除</button></div>;
+  return <div className="edit-row"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
 }
 
 function EditableCategoryList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const parents = state.categories.filter((category) => !category.parentId);
   const children = state.categories.filter((category) => category.parentId);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  function renderCategory(category: LedgerState["categories"][number]) {
+    const isOpen = selectedId === category.id;
+    const isEditing = editingId === category.id;
+    const parent = state.categories.find((item) => item.id === category.parentId);
+    return (
+      <div className="detail-card" key={category.id}>
+        <button className="detail-card-head" type="button" onClick={() => { setSelectedId(isOpen ? null : category.id); setEditingId(null); }}>
+          <span><i style={{ background: category.color }} />{category.name}</span>
+        </button>
+        {isOpen && !isEditing && (
+          <div className="fixed-detail">
+            <span>分類: {category.parentId ? `小カテゴリ（${parent?.name ?? "親カテゴリ未設定"}）` : "親カテゴリ"}</span>
+            {!category.parentId && <span>小カテゴリ: {children.filter((child) => child.parentId === category.id).map((child) => child.name).join("、") || "なし"}</span>}
+            <button type="button" onClick={() => setEditingId(category.id)}>編集する</button>
+          </div>
+        )}
+        {isOpen && isEditing && <EditableCategoryRow category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
+      </div>
+    );
+  }
   return (
     <div className="category-edit-columns">
       <div>
-        <h3>親カテゴリを編集</h3>
-        <div className="edit-list">{parents.map((category) => <EditableCategoryRow key={category.id} category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>
+        <h3>親カテゴリ</h3>
+        <div className="detail-card-list">{parents.map(renderCategory)}</div>
       </div>
       <div>
-        <h3>小カテゴリを編集</h3>
-        <div className="edit-list">{children.map((category) => <EditableCategoryRow key={category.id} category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>
+        <h3>小カテゴリ</h3>
+        <div className="detail-card-list">{children.map(renderCategory)}</div>
       </div>
     </div>
   );
 }
 
-function EditableCategoryRow({ category, state, setNotice, reloadHousehold }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
+function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDone }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
   const [name, setName] = useState(category.name);
   const [parentId, setParentId] = useState(category.parentId ?? "");
   const [color, setColor] = useState(category.color);
-  return <div className="edit-row"><label>{category.parentId ? "小カテゴリ名" : "親カテゴリ名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>分類<select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">親カテゴリにする</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name} の小カテゴリにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリ名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ削除に失敗しました。")); } }}>カテゴリを削除</button></div>;
+  return <div className="edit-row"><label>{category.parentId ? "小カテゴリ名" : "親カテゴリ名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>分類<select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">親カテゴリにする</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name} の小カテゴリにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリ名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリを更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ削除に失敗しました。")); } }}>カテゴリを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
 }
 
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {

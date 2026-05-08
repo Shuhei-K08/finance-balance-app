@@ -719,25 +719,33 @@ input[type="range"] {
   color: #15803d;
 }
 
-.calendar-grid .fixed-mini {
-  color: #7c3aed;
-}
-
+.calendar-transaction-list,
 .fixed-calendar-list {
   display: grid;
   gap: 8px;
   margin-bottom: 10px;
 }
 
+.calendar-transaction-list button,
 .fixed-calendar-list div {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #faf5ff;
+  background: #fff;
+}
+
+.calendar-transaction-list button {
+  color: var(--ink);
+  text-align: left;
+}
+
+.calendar-transaction-list button.active {
+  border-color: var(--brand);
+  background: #e9fbf7;
 }
 
 .fixed-calendar-list em {
@@ -746,9 +754,114 @@ input[type="range"] {
   color: #6d28d9;
 }
 
+.transaction-detail,
+.empty-state {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.transaction-detail div {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.transaction-detail span,
+.empty-state span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.empty-state button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-weight: 800;
+}
+
+.ai-panel {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+}
+
+.ai-panel p {
+  margin: 0;
+  color: #14532d;
+  line-height: 1.6;
+}
+
+.analysis-table {
+  display: grid;
+  gap: 6px;
+}
+
+.analysis-table div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 52px;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.analysis-table span:first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.analysis-table i,
+.detail-card-head i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
 .fixed-editor-list {
   display: grid;
   gap: 10px;
+}
+
+.detail-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.detail-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.detail-card-head {
+  display: grid;
+  width: 100%;
+  min-height: 50px;
+  border: 0;
+  padding: 12px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.detail-card-head span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
 }
 
 .fixed-editor-card {
