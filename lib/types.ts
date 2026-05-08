@@ -1,0 +1,85 @@
+export type SpaceType = "personal" | "shared";
+export type LedgerMode = "cashflow" | "balance";
+export type TransactionType = "income" | "expense" | "transfer";
+export type AccountType = "bank" | "cash" | "credit" | "saving";
+export type FixedCostStatus = "planned" | "confirmed" | "paid";
+export type CreditStatus = "unconfirmed" | "confirmed" | "withdrawn";
+
+export type Account = {
+  id: string;
+  name: string;
+  type: AccountType;
+  openingBalance: number;
+  openingBalanceDate?: string;
+  color: string;
+  closingDay?: number;
+  withdrawalDay?: number;
+  withdrawalAccountId?: string;
+};
+
+export type Category = {
+  id: string;
+  name: string;
+  parentId?: string;
+  color: string;
+};
+
+export type Transaction = {
+  id: string;
+  type: TransactionType;
+  amount: number;
+  categoryId?: string;
+  subcategoryId?: string;
+  accountId: string;
+  transferToAccountId?: string;
+  paymentMethodId?: string;
+  date: string;
+  reflectedDate?: string;
+  memo?: string;
+  creditStatus?: CreditStatus;
+};
+
+export type FixedCost = {
+  id: string;
+  name: string;
+  categoryId: string;
+  accountId: string;
+  amount: number;
+  variable: boolean;
+  dueDay: number;
+  status: FixedCostStatus;
+};
+
+export type Goal = {
+  id: string;
+  name: string;
+  targetAmount: number;
+  accountId: string;
+  deadline: string;
+  monthlyBoost: number;
+};
+
+export type HouseholdSummary = {
+  id: string;
+  name: string;
+  spaceType: SpaceType;
+  mode: LedgerMode;
+  inviteCode?: string;
+  memberRole?: "owner" | "member";
+};
+
+export type LedgerState = {
+  householdId?: string;
+  householdName?: string;
+  inviteCode?: string;
+  profileRole?: "user" | "admin";
+  households?: HouseholdSummary[];
+  needsOpeningSetup?: boolean;
+  activeSpace: SpaceType;
+  mode: LedgerMode;
+  accounts: Account[];
+  categories: Category[];
+  transactions: Transaction[];
+  fixedCosts: FixedCost[];
+  goals: Goal[];
+};
