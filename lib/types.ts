@@ -21,6 +21,7 @@ export type Category = {
   id: string;
   name: string;
   parentId?: string;
+  kind: "expense" | "income";
   color: string;
 };
 

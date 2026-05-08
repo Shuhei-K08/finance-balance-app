@@ -80,11 +80,15 @@ create table if not exists categories (
   id uuid primary key default gen_random_uuid(),
   household_id uuid not null references households(id) on delete cascade,
   parent_id uuid references categories(id),
+  category_kind text not null default 'expense' check (category_kind in ('expense', 'income')),
   name text not null,
   color text not null default '#0f766e',
   deleted_at timestamptz,
   created_at timestamptz not null default now()
 );
+
+alter table categories add column if not exists category_kind text not null default 'expense' check (category_kind in ('expense', 'income'));
+update categories set category_kind = 'income' where name in ('給与', '賞与', '副収入') and deleted_at is null;
 
 create table if not exists transactions (
   id uuid primary key default gen_random_uuid(),
@@ -309,7 +313,7 @@ begin
   insert into categories (household_id, name, color) values (target_household_id, '食費', '#ef4444') returning id into food_id;
   insert into categories (household_id, name, color) values (target_household_id, '住居', '#64748b') returning id into home_id;
   insert into categories (household_id, name, color) values (target_household_id, '娯楽', '#8b5cf6') returning id into fun_id;
-  insert into categories (household_id, name, color) values (target_household_id, '給与', '#16a34a') returning id into salary_id;
+  insert into categories (household_id, name, color, category_kind) values (target_household_id, '給与', '#16a34a', 'income') returning id into salary_id;
   insert into categories (household_id, name, color) values (target_household_id, '貯金', '#10b981') returning id into saving_cat_id;
   insert into categories (household_id, parent_id, name, color) values (target_household_id, food_id, 'スーパー', '#f97316') returning id into grocery_id;
   insert into categories (household_id, parent_id, name, color) values (target_household_id, food_id, '外食', '#fb7185') returning id into dining_id;
@@ -390,7 +394,7 @@ begin
   insert into categories (household_id, parent_id, name, color) values (new_household_id, home_id, '光熱費', '#0ea5e9') returning id into utility_id;
   insert into categories (household_id, name, color) values (new_household_id, '娯楽', '#8b5cf6') returning id into fun_id;
   insert into categories (household_id, parent_id, name, color) values (new_household_id, fun_id, 'サブスク', '#a855f7');
-  insert into categories (household_id, name, color) values (new_household_id, '給与', '#16a34a') returning id into salary_id;
+  insert into categories (household_id, name, color, category_kind) values (new_household_id, '給与', '#16a34a', 'income') returning id into salary_id;
   insert into categories (household_id, name, color) values (new_household_id, '貯金', '#10b981') returning id into saving_cat_id;
 
   insert into fixed_costs (household_id, name, category_id, account_id, amount, is_variable, due_day, status)

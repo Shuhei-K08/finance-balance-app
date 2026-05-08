@@ -19,15 +19,15 @@ export const initialState: LedgerState = {
     }
   ],
   categories: [
-    { id: "food", name: "食費", color: "#ef4444" },
-    { id: "grocery", name: "スーパー", parentId: "food", color: "#f97316" },
-    { id: "dining", name: "外食", parentId: "food", color: "#fb7185" },
-    { id: "home", name: "住居", color: "#64748b" },
-    { id: "utility", name: "光熱費", parentId: "home", color: "#0ea5e9" },
-    { id: "fun", name: "娯楽", color: "#8b5cf6" },
-    { id: "sub", name: "サブスク", parentId: "fun", color: "#a855f7" },
-    { id: "salary", name: "給与", color: "#16a34a" },
-    { id: "saving-cat", name: "貯金", color: "#10b981" }
+    { id: "food", name: "食費", kind: "expense", color: "#ef4444" },
+    { id: "grocery", name: "スーパー", parentId: "food", kind: "expense", color: "#f97316" },
+    { id: "dining", name: "外食", parentId: "food", kind: "expense", color: "#fb7185" },
+    { id: "home", name: "住居", kind: "expense", color: "#64748b" },
+    { id: "utility", name: "光熱費", parentId: "home", kind: "expense", color: "#0ea5e9" },
+    { id: "fun", name: "娯楽", kind: "expense", color: "#8b5cf6" },
+    { id: "sub", name: "サブスク", parentId: "fun", kind: "expense", color: "#a855f7" },
+    { id: "salary", name: "給与", kind: "income", color: "#16a34a" },
+    { id: "saving-cat", name: "貯金", kind: "expense", color: "#10b981" }
   ],
   transactions: [
     { id: "t1", type: "income", amount: 360000, categoryId: "salary", accountId: "bank-main", date: "2026-05-01", memo: "給与" },

@@ -90,6 +90,7 @@ type DbCategory = {
   id: string;
   name: string;
   parent_id: string | null;
+  category_kind: "expense" | "income" | null;
   color: string;
 };
 
@@ -316,7 +317,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("profiles").select("role").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("categories").select("id,name,parent_id,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at")
@@ -354,6 +355,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       id: category.id,
       name: category.name,
       parentId: category.parent_id ?? undefined,
+      kind: category.category_kind ?? (category.name === "給与" ? "income" : "expense"),
       color: category.color
     })),
     transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => ({
@@ -497,24 +499,26 @@ export async function deleteAccount(accountId: string) {
   if (error) throwJapanese(error, "口座削除に失敗しました。");
 }
 
-export async function createCategory(householdId: string, input: { name: string; parentId?: string; color: string }) {
+export async function createCategory(householdId: string, input: { name: string; parentId?: string; color: string; kind?: "expense" | "income" }) {
   const client = requireSupabase();
   if (!input.name.trim()) throw new Error("カテゴリ名を入力してください。");
   const { error } = await client.from("categories").insert({
     household_id: householdId,
     name: input.name.trim(),
     parent_id: input.parentId || null,
+    category_kind: input.kind ?? "expense",
     color: input.color || "#0f766e"
   });
   if (error) throwJapanese(error, "カテゴリ追加に失敗しました。");
 }
 
-export async function updateCategory(categoryId: string, input: { name: string; parentId?: string; color: string }) {
+export async function updateCategory(categoryId: string, input: { name: string; parentId?: string; color: string; kind?: "expense" | "income" }) {
   const client = requireSupabase();
   if (!input.name.trim()) throw new Error("カテゴリ名を入力してください。");
   const { error } = await client.from("categories").update({
     name: input.name.trim(),
     parent_id: input.parentId || null,
+    category_kind: input.kind ?? "expense",
     color: input.color || "#0f766e"
   }).eq("id", categoryId);
   if (error) throwJapanese(error, "カテゴリ更新に失敗しました。");

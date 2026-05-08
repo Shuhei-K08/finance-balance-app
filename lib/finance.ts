@@ -61,6 +61,23 @@ export function monthlyIncome(transactions: Transaction[]) {
   return transactions.filter((transaction) => transaction.type === "income").reduce((total, transaction) => total + transaction.amount, 0);
 }
 
+export function averageMonthlySaving(state: LedgerState) {
+  const monthly = new Map<string, { income: number; expense: number; savingTransfer: number }>();
+  state.transactions.forEach((transaction) => {
+    const key = transaction.date.slice(0, 7);
+    const current = monthly.get(key) ?? { income: 0, expense: 0, savingTransfer: 0 };
+    if (transaction.type === "income") current.income += transaction.amount;
+    if (transaction.type === "expense") current.expense += transaction.amount;
+    if (transaction.type === "transfer" && state.accounts.find((account) => account.id === transaction.transferToAccountId)?.type === "saving") {
+      current.savingTransfer += transaction.amount;
+    }
+    monthly.set(key, current);
+  });
+  const values = Array.from(monthly.values()).map((item) => Math.max(item.savingTransfer || item.income - item.expense, 0)).filter((value) => value > 0);
+  if (!values.length) return Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpense(monthTransactions(state.transactions)), 0);
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
 export function pendingCreditWithdrawals(state: LedgerState) {
   const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
   return state.transactions
@@ -87,7 +104,7 @@ export function projectedMonthEnd(state: LedgerState) {
 export function categoryExpense(state: LedgerState) {
   const month = monthTransactions(state.transactions);
   return state.categories
-    .filter((category) => !category.parentId)
+    .filter((category) => !category.parentId && category.kind === "expense")
     .map((category) => {
       const childIds = state.categories.filter((child) => child.parentId === category.id).map((child) => child.id);
       const ids = new Set([category.id, ...childIds]);
@@ -138,11 +155,7 @@ export function goalProjection(goal: Goal, state: LedgerState) {
   const account = state.accounts.find((item) => item.id === goal.accountId);
   const current = account ? calculateAccountBalance(account, state.transactions) : 0;
   const remaining = Math.max(goal.targetAmount - current, 0);
-  const month = monthTransactions(state.transactions);
-  const savingTransfers = month
-    .filter((transaction) => transaction.type === "transfer" && transaction.transferToAccountId === goal.accountId)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const monthlySaving = Math.max(savingTransfers + goal.monthlyBoost, 1);
+  const monthlySaving = Math.max(averageMonthlySaving(state), 1);
   const months = Math.ceil(remaining / monthlySaving);
   const target = new Date();
   target.setMonth(target.getMonth() + months);
