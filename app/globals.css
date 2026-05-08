@@ -38,6 +38,24 @@ button {
   display: grid;
   min-height: 100vh;
   place-items: center;
+  background: radial-gradient(circle at top, #e9fbf7, #f7f3ec 55%);
+}
+
+.boot div {
+  display: grid;
+  gap: 10px;
+  padding: 24px;
+  color: var(--brand-dark);
+  text-align: center;
+}
+
+.boot strong {
+  font-size: 24px;
+}
+
+.boot span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .app-shell {
@@ -456,13 +474,31 @@ input[type="range"] {
 }
 
 .ledger-detail {
+  position: fixed;
+  z-index: 25;
+  top: 50%;
+  left: 50%;
+  width: min(calc(100% - 32px), 520px);
+  max-height: 86vh;
+  overflow: auto;
+  transform: translate(-50%, -50%);
   display: grid;
   gap: 10px;
-  margin-top: 12px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.modal-close {
+  justify-self: end;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .ledger-detail > div:first-child {
@@ -578,6 +614,16 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.balanced-edit {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+}
+
+.balanced-edit label,
+.balanced-edit button {
+  min-height: 68px;
+}
+
 .split-editor {
   display: grid;
   gap: 10px;
@@ -611,6 +657,13 @@ input[type="range"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.category-tree button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
 }
 
 .category-tree strong,

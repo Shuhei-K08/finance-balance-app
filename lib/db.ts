@@ -420,6 +420,37 @@ export async function updateRemoteGoalBoost(goalId: string, monthlyBoost: number
   if (error) throwJapanese(error, "目標の更新に失敗しました。");
 }
 
+export async function createGoal(householdId: string, input: Omit<Goal, "id">) {
+  const client = requireSupabase();
+  const { error } = await client.from("saving_goals").insert({
+    household_id: householdId,
+    name: input.name,
+    account_id: input.accountId,
+    target_amount: input.targetAmount,
+    deadline: input.deadline,
+    monthly_boost: input.monthlyBoost
+  });
+  if (error) throwJapanese(error, "目標追加に失敗しました。");
+}
+
+export async function updateGoal(goalId: string, input: Omit<Goal, "id">) {
+  const client = requireSupabase();
+  const { error } = await client.from("saving_goals").update({
+    name: input.name,
+    account_id: input.accountId,
+    target_amount: input.targetAmount,
+    deadline: input.deadline,
+    monthly_boost: input.monthlyBoost
+  }).eq("id", goalId);
+  if (error) throwJapanese(error, "目標更新に失敗しました。");
+}
+
+export async function deleteGoal(goalId: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("saving_goals").update({ deleted_at: new Date().toISOString() }).eq("id", goalId);
+  if (error) throwJapanese(error, "目標削除に失敗しました。");
+}
+
 export async function updateOpeningBalances(balances: Record<string, { amount: number; date: string }>) {
   const client = requireSupabase();
   await Promise.all(Object.entries(balances).map(async ([accountId, value]) => {

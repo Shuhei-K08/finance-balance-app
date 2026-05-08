@@ -58,9 +58,11 @@ import {
   createAccount,
   createCategory,
   createFixedCost,
+  createGoal,
   deleteAccount,
   deleteCategory,
   deleteFixedCost,
+  deleteGoal,
   deleteSharedLedger,
   deleteTransaction,
   insertRemoteTransaction,
@@ -76,6 +78,7 @@ import {
   updateAccount,
   updateCategory,
   updateFixedCost,
+  updateGoal,
   updateOpeningBalances,
   updateTransaction,
   updateRemoteGoalBoost,
@@ -172,7 +175,7 @@ export default function App() {
     setState(next);
   }
 
-  if (!authReady) return <main className="boot">読み込み中</main>;
+  if (!authReady) return <main className="boot"><div><strong>Mirai Ledger</strong><span>資産データを読み込んでいます</span></div></main>;
 
   if (supabase && !isAuthed) {
     return <AuthScreen notice={notice} setNotice={setNotice} />;
@@ -268,7 +271,7 @@ export default function App() {
 
       {tab === "home" && <HomeView state={state} stats={stats} setNotice={setNotice} reload={() => refreshRemoteState()} onQuick={openQuick} />}
       {tab === "analysis" && <AnalysisView state={state} />}
-      {tab === "goals" && <GoalsView state={state} setState={setState} setNotice={setNotice} />}
+      {tab === "goals" && <GoalsView state={state} setState={setState} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
 
       <nav className="bottom-nav">
@@ -484,7 +487,7 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
           <div className="section-title"><h2>資産の内訳</h2><span>口座別</span></div>
           <ResponsiveContainer width="100%" height={210}>
             <PieChart>
-              <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={3}>
+              <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={3} label={({ name }) => name}>
                 {(assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
@@ -495,7 +498,7 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
           <div className="section-title"><h2>支出カテゴリ</h2><span>今月</span></div>
           <ResponsiveContainer width="100%" height={210}>
             <PieChart>
-              <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={3}>
+              <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={78} paddingAngle={3} label={({ name }) => name}>
                 {(category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
@@ -661,6 +664,9 @@ function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: 
 
 function AnalysisView({ state }: { state: LedgerState }) {
   const category = categoryExpense(state);
+  const [drillParentId, setDrillParentId] = useState<string | null>(null);
+  const drillParent = state.categories.find((item) => item.id === drillParentId);
+  const drillData = drillParent ? subcategoryExpense(state, drillParent.id) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
   const bars = [
     { name: "収入", value: monthlyIncome(monthTransactions(state.transactions)), fill: "#16a34a" },
@@ -675,11 +681,15 @@ function AnalysisView({ state }: { state: LedgerState }) {
         {aiInsights.map((insight) => <p key={insight}>{insight}</p>)}
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>カテゴリー分析</h2><span>今月</span></div>
+        <div className="section-title"><h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2><span>{drillParent ? "戻る" : "今月"}</span></div>
+        {drillParent && <button className="google-button" type="button" onClick={() => setDrillParentId(null)}>カテゴリー全体に戻る</button>}
         <ResponsiveContainer width="100%" height={230}>
           <PieChart>
-            <Pie data={category} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={4}>
-              {category.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={4} label={({ name }) => name} onClick={(entry) => {
+              const parent = state.categories.find((item) => item.name === entry.name && !item.parentId);
+              if (parent) setDrillParentId(parent.id);
+            }}>
+              {(drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
             </Pie>
             <Tooltip formatter={(value) => yen.format(Number(value))} />
           </PieChart>
@@ -734,6 +744,29 @@ function buildAiInsights(state: LedgerState, category: Array<{ name: string; val
   return insights;
 }
 
+function subcategoryExpense(state: LedgerState, parentId: string) {
+  const childIds = state.categories.filter((category) => category.parentId === parentId).map((category) => category.id);
+  return state.categories
+    .filter((category) => childIds.includes(category.id))
+    .map((category) => ({
+      name: category.name,
+      value: monthTransactions(state.transactions)
+        .filter((transaction) => transaction.type === "expense" && transaction.categoryId === category.id)
+        .reduce((sum, transaction) => sum + transaction.amount, 0),
+      fill: category.color
+    }))
+    .filter((item) => item.value > 0);
+}
+
+function goalAdvice(goal: LedgerState["goals"][number], state: LedgerState) {
+  const projection = goalProjection(goal, state);
+  const top = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
+  if (projection.months === 0) return "すでに達成圏内です。次の目標を作ると資産形成を続けやすくなります。";
+  if (!top) return "支出データが増えると、どこを改善すべきかより具体的に提案できます。";
+  const improve = Math.min(Math.ceil(top.value * 0.15 / 1000) * 1000, 30000);
+  return `最大支出の「${top.name}」を月${yen.format(improve)}抑えると、達成時期を早められる可能性があります。`;
+}
+
 function TransactionDetail({ transaction, state }: { transaction: LedgerState["transactions"][number]; state: LedgerState }) {
   const category = state.categories.find((item) => item.id === transaction.categoryId);
   const account = state.accounts.find((item) => item.id === transaction.accountId);
@@ -752,19 +785,53 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
   );
 }
 
-function GoalsView({ state, setState, setNotice }: { state: LedgerState; setState: (state: LedgerState) => void; setNotice: (message: string) => void }) {
+function GoalsView({ state, setState, setNotice, reload }: { state: LedgerState; setState: (state: LedgerState) => void; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const firstAccountId = state.accounts.find((account) => account.type === "saving")?.id ?? state.accounts[0]?.id ?? "";
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
+  async function saveGoal(goalId?: string) {
+    if (!draft.name.trim()) {
+      setNotice("目標名を入力してください。");
+      return;
+    }
+    if (goalId) {
+      await updateGoal(goalId, draft);
+      setNotice("目標を更新しました。");
+    } else {
+      await createGoal(state.householdId ?? "", draft);
+      setNotice("目標を追加しました。");
+    }
+    setShowForm(false);
+    setEditingId(null);
+    setDraft({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
+    await reload();
+  }
   return (
     <div className="view-stack">
+      <section className="panel">
+        <div className="section-title"><h2>目標貯金</h2><span>追加・達成予測</span></div>
+        <button className="full-primary" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}>目標を追加する</button>
+        {showForm && (
+          <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal()} onCancel={() => setShowForm(false)} />
+        )}
+      </section>
       {state.goals.map((goal) => {
         const projection = goalProjection(goal, state);
+        const isEditing = editingId === goal.id;
         return (
           <section className="panel goal-panel" key={goal.id}>
             <div className="section-title"><h2>{goal.name}</h2><span>{projection.projectedDate} 達成予測</span></div>
+            {isEditing ? (
+              <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal(goal.id)} onCancel={() => setEditingId(null)} onDelete={async () => { await deleteGoal(goal.id); await reload(); setEditingId(null); setNotice("目標を削除しました。"); }} />
+            ) : (
+            <>
             <div className="progress"><span style={{ width: `${projection.progress}%` }} /></div>
             <div className="goal-numbers">
               <strong>{Math.round(projection.progress)}%</strong>
-              <span>不足 {yen.format(projection.remaining)}</span>
+              <span>不足 {yen.format(projection.remaining)} / 約{projection.months}ヶ月</span>
             </div>
+            <section className="advice goal-advice"><Sparkles size={18} /><p>{goalAdvice(goal, state)}</p></section>
             <label className="slider-label">毎月の改善額 {yen.format(goal.monthlyBoost)}
               <input
                 type="range"
@@ -780,9 +847,27 @@ function GoalsView({ state, setState, setNotice }: { state: LedgerState; setStat
                 onTouchEnd={(event) => updateRemoteGoalBoost(goal.id, Number(event.currentTarget.value)).catch((error) => setNotice(toJapaneseError(error)))}
               />
             </label>
+            <button className="google-button" type="button" onClick={() => { setEditingId(goal.id); setShowForm(false); setDraft({ name: goal.name, targetAmount: goal.targetAmount, accountId: goal.accountId, deadline: goal.deadline, monthlyBoost: goal.monthlyBoost }); }}>編集する</button>
+            </>
+            )}
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { draft: Omit<LedgerState["goals"][number], "id">; setDraft: (draft: Omit<LedgerState["goals"][number], "id">) => void; state: LedgerState; onSave: () => void; onCancel: () => void; onDelete?: () => void }) {
+  return (
+    <div className="edit-row balanced-edit">
+      <label>目標名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例: 住宅資金" /></label>
+      <label>目標金額<input type="number" value={draft.targetAmount} onChange={(event) => setDraft({ ...draft, targetAmount: Number(event.target.value) })} /></label>
+      <label>対象口座<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+      <label>期限<input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} /></label>
+      <label>毎月の改善額<input type="number" value={draft.monthlyBoost} onChange={(event) => setDraft({ ...draft, monthlyBoost: Number(event.target.value) })} /></label>
+      <button type="button" onClick={onSave}>変更を保存</button>
+      {onDelete && <button type="button" onClick={onDelete}>目標を削除</button>}
+      <button type="button" onClick={onCancel}>編集をやめる</button>
     </div>
   );
 }
@@ -799,6 +884,7 @@ function SettingsView({
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [inviteCode, setInviteCode] = useState("");
   const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
+  const [ledgerModalId, setLedgerModalId] = useState<string | null>(null);
   const [sharedMembers, setSharedMembers] = useState<HouseholdMember[]>([]);
   const [memberLoading, setMemberLoading] = useState(false);
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
@@ -814,17 +900,20 @@ function SettingsView({
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [showFixedForm, setShowFixedForm] = useState(false);
+  const [categoryModalId, setCategoryModalId] = useState<string | null>(null);
   const selectedLedger = (state.households ?? []).find((household) => household.id === selectedLedgerId);
+  const modalLedger = (state.households ?? []).find((household) => household.id === ledgerModalId);
+  const modalCategory = state.categories.find((category) => category.id === categoryModalId);
   const personalLedgerId = (state.households ?? []).find((household) => household.spaceType === "personal")?.id ?? state.householdId ?? "";
 
   useEffect(() => {
-    if (!selectedLedger || selectedLedger.spaceType !== "shared") {
+    if (!modalLedger || modalLedger.spaceType !== "shared") {
       setSharedMembers([]);
       return;
     }
     let mounted = true;
     setMemberLoading(true);
-    loadHouseholdMembers(selectedLedger.id)
+    loadHouseholdMembers(modalLedger.id)
       .then((members) => {
         if (mounted) setSharedMembers(members);
       })
@@ -837,7 +926,7 @@ function SettingsView({
     return () => {
       mounted = false;
     };
-  }, [selectedLedger?.id, selectedLedger?.spaceType, setNotice]);
+  }, [modalLedger?.id, modalLedger?.spaceType, setNotice]);
 
   return (
     <div className="view-stack">
@@ -861,29 +950,30 @@ function SettingsView({
               className={household.id === selectedLedgerId ? "selected-ledger" : ""}
               key={household.id}
               type="button"
-              onClick={() => setSelectedLedgerId(household.id)}
+              onClick={() => { setSelectedLedgerId(household.id); setLedgerModalId(household.id); }}
             >
               <span>{household.name}</span>
               <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}{household.id === state.householdId ? " / 表示中" : ""}</em>
             </button>
           ))}
         </div>
-        {selectedLedger && (
+        {modalLedger && (
           <div className="ledger-detail">
+            <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
             <div>
               <span>家計簿名</span>
-              <strong>{selectedLedger.name}</strong>
-              <em>{selectedLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {selectedLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+              <strong>{modalLedger.name}</strong>
+              <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
             </div>
-            {selectedLedger.spaceType === "shared" && (
+            {modalLedger.spaceType === "shared" && (
               <>
-                {selectedLedger.inviteCode && (
+                {modalLedger.inviteCode && (
                   <div className="invite-box">
                     <span>共有ID</span>
-                    <strong>{selectedLedger.inviteCode}</strong>
+                    <strong>{modalLedger.inviteCode}</strong>
                     <button
                       type="button"
-                      onClick={() => navigator.clipboard.writeText(selectedLedger.inviteCode ?? "").then(() => setNotice("共有IDをコピーしました。"))}
+                      onClick={() => navigator.clipboard.writeText(modalLedger.inviteCode ?? "").then(() => setNotice("共有IDをコピーしました。"))}
                       aria-label="共有IDをコピー"
                     >
                       <Copy size={16} />コピー
@@ -897,14 +987,14 @@ function SettingsView({
                     <div key={member.userId}>
                       <strong>{member.displayName}</strong>
                       <em>{member.memberRole === "owner" ? "所有者" : "メンバー"}</em>
-                      {selectedLedger.memberRole === "owner" && member.memberRole !== "owner" && (
+                      {modalLedger.memberRole === "owner" && member.memberRole !== "owner" && (
                         <button
                           type="button"
                           onClick={async () => {
                             if (!window.confirm(`${member.displayName}さんを共有家計簿から脱退させますか？`)) return;
                             try {
-                              await removeSharedLedgerMember(selectedLedger.id, member.userId);
-                              setSharedMembers(await loadHouseholdMembers(selectedLedger.id));
+                              await removeSharedLedgerMember(modalLedger.id, member.userId);
+                              setSharedMembers(await loadHouseholdMembers(modalLedger.id));
                               setNotice("共有メンバーを脱退させました。");
                             } catch (error) {
                               setNotice(toJapaneseError(error, "共有メンバーの脱退処理に失敗しました。"));
@@ -917,14 +1007,14 @@ function SettingsView({
                     </div>
                   ))}
                 </div>
-                {selectedLedger.memberRole === "owner" ? (
+                {modalLedger.memberRole === "owner" ? (
                   <button
                     className="danger-button"
                     type="button"
                     onClick={async () => {
                       if (!window.confirm("この共有家計簿を削除しますか？取引・口座・固定費・目標もこの画面から見えなくなります。")) return;
                       try {
-                        await deleteSharedLedger(selectedLedger.id);
+                        await deleteSharedLedger(modalLedger.id);
                         await reloadHousehold(personalLedgerId);
                         setSelectedLedgerId(personalLedgerId);
                         setNotice("共有家計簿を削除しました。");
@@ -942,7 +1032,7 @@ function SettingsView({
                     onClick={async () => {
                       if (!window.confirm("この共有家計簿から脱退しますか？")) return;
                       try {
-                        await leaveSharedLedger(selectedLedger.id);
+                        await leaveSharedLedger(modalLedger.id);
                         await reloadHousehold(personalLedgerId);
                         setSelectedLedgerId(personalLedgerId);
                         setNotice("共有家計簿から脱退しました。");
@@ -1082,60 +1172,60 @@ function SettingsView({
       {settingsTab === "categories" && (
       <section className="panel">
         <div className="section-title"><h2>カテゴリ管理</h2><span>親カテゴリと小カテゴリ</span></div>
-        <p className="setting-copy">親カテゴリは「食費」「住居」など大きな分類です。小カテゴリは「スーパー」「外食」など親カテゴリの中に入る細かい分類です。</p>
+        <p className="setting-copy">カテゴリーは「食費」「住居」など大きな分類です。サブカテゴリーは「スーパー」「外食」などカテゴリー内の細かい分類です。</p>
         <button className="full-primary" type="button" onClick={() => setShowCategoryForm(!showCategoryForm)}>{showCategoryForm ? "追加を閉じる" : "カテゴリを追加する"}</button>
         {showCategoryForm && <div className="split-editor">
           <div className="mini-panel">
-            <h3>親カテゴリを追加</h3>
-            <label>親カテゴリ名<input placeholder="例: 食費" value={newParentCategory.name} onChange={(event) => setNewParentCategory({ ...newParentCategory, name: event.target.value })} /></label>
+            <h3>カテゴリーを追加</h3>
+            <label>カテゴリー名<input placeholder="例: 食費" value={newParentCategory.name} onChange={(event) => setNewParentCategory({ ...newParentCategory, name: event.target.value })} /></label>
             <label>色<input type="color" value={newParentCategory.color} onChange={(event) => setNewParentCategory({ ...newParentCategory, color: event.target.value })} /></label>
             <button className="full-primary" type="button" onClick={async () => {
               try {
                 if (!newParentCategory.name.trim()) {
-                  setNotice("親カテゴリ名を入力してください。");
+                  setNotice("カテゴリー名を入力してください。");
                   return;
                 }
                 await createCategory(state.householdId ?? "", { name: newParentCategory.name, color: newParentCategory.color });
                 await reloadHousehold(state.householdId ?? "");
                 setNewParentCategory({ name: "", color: "#0f766e" });
                 setShowCategoryForm(false);
-                setNotice("親カテゴリを追加しました。");
-              } catch (error) { setNotice(toJapaneseError(error, "親カテゴリ追加に失敗しました。")); }
-            }}>親カテゴリを追加</button>
+                setNotice("カテゴリーを追加しました。");
+              } catch (error) { setNotice(toJapaneseError(error, "カテゴリー追加に失敗しました。")); }
+            }}>カテゴリーを追加</button>
           </div>
           <div className="mini-panel">
-            <h3>小カテゴリを追加</h3>
-            <label>親カテゴリ<select value={newChildCategory.parentId} onChange={(event) => setNewChildCategory({ ...newChildCategory, parentId: event.target.value })}>{state.categories.filter((category) => !category.parentId).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label>
-            <label>小カテゴリ名<input placeholder="例: スーパー" value={newChildCategory.name} onChange={(event) => setNewChildCategory({ ...newChildCategory, name: event.target.value })} /></label>
+            <h3>サブカテゴリーを追加</h3>
+            <label>カテゴリー<select value={newChildCategory.parentId} onChange={(event) => setNewChildCategory({ ...newChildCategory, parentId: event.target.value })}>{state.categories.filter((category) => !category.parentId).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label>
+            <label>サブカテゴリー名<input placeholder="例: スーパー" value={newChildCategory.name} onChange={(event) => setNewChildCategory({ ...newChildCategory, name: event.target.value })} /></label>
             <label>色<input type="color" value={newChildCategory.color} onChange={(event) => setNewChildCategory({ ...newChildCategory, color: event.target.value })} /></label>
             <button className="full-primary" type="button" onClick={async () => {
               try {
                 if (!newChildCategory.name.trim()) {
-                  setNotice("小カテゴリ名を入力してください。");
+                  setNotice("サブカテゴリー名を入力してください。");
                   return;
                 }
                 if (!newChildCategory.parentId) {
-                  setNotice("親カテゴリを選んでください。");
+                  setNotice("カテゴリーを選んでください。");
                   return;
                 }
                 await createCategory(state.householdId ?? "", newChildCategory);
                 await reloadHousehold(state.householdId ?? "");
                 setNewChildCategory({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
                 setShowCategoryForm(false);
-                setNotice("小カテゴリを追加しました。");
-              } catch (error) { setNotice(toJapaneseError(error, "小カテゴリ追加に失敗しました。")); }
-            }}>小カテゴリを追加</button>
+                setNotice("サブカテゴリーを追加しました。");
+              } catch (error) { setNotice(toJapaneseError(error, "サブカテゴリー追加に失敗しました。")); }
+            }}>サブカテゴリーを追加</button>
           </div>
         </div>}
         <div className="category-tree">
           {state.categories.filter((category) => !category.parentId).map((parent) => (
             <div key={parent.id}>
-              <strong><i style={{ background: parent.color }} />{parent.name}</strong>
-              {state.categories.filter((category) => category.parentId === parent.id).map((child) => <span key={child.id}><i style={{ background: child.color }} />{child.name}</span>)}
+              <button type="button" onClick={() => setCategoryModalId(parent.id)}><strong><i style={{ background: parent.color }} />{parent.name}</strong></button>
+              {state.categories.filter((category) => category.parentId === parent.id).map((child) => <button type="button" key={child.id} onClick={() => setCategoryModalId(child.id)}><span><i style={{ background: child.color }} />{child.name}</span></button>)}
             </div>
           ))}
         </div>
-        <EditableCategoryList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+        {modalCategory && <CategoryModal category={modalCategory} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onClose={() => setCategoryModalId(null)} />}
       </section>
       )}
       {settingsTab === "fixed" && (
@@ -1225,7 +1315,30 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone
   const [closingDay, setClosingDay] = useState(account.closingDay ?? 25);
   const [withdrawalDay, setWithdrawalDay] = useState(account.withdrawalDay ?? 10);
   const [withdrawalAccountId, setWithdrawalAccountId] = useState(account.withdrawalAccountId ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "");
-  return <div className="edit-row"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  return <div className="edit-row balanced-edit"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+}
+
+function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onClose: () => void }) {
+  const parent = state.categories.find((item) => item.id === category.parentId);
+  const children = state.categories.filter((item) => item.parentId === category.id);
+  const [editing, setEditing] = useState(false);
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="section-title"><h2>{category.name}</h2><span>{category.parentId ? "サブカテゴリー" : "カテゴリー"}</span></div>
+        {!editing ? (
+          <div className="fixed-detail">
+            <span>分類: {category.parentId ? `サブカテゴリー（${parent?.name ?? "カテゴリー未設定"}）` : "カテゴリー"}</span>
+            {!category.parentId && <span>サブカテゴリー: {children.map((child) => child.name).join("、") || "なし"}</span>}
+            <button type="button" onClick={() => setEditing(true)}>編集する</button>
+            <button type="button" onClick={onClose}>閉じる</button>
+          </div>
+        ) : (
+          <EditableCategoryRow category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => { setEditing(false); onClose(); }} />
+        )}
+      </section>
+    </div>
+  );
 }
 
 function EditableCategoryList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
@@ -1271,7 +1384,7 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
   const [name, setName] = useState(category.name);
   const [parentId, setParentId] = useState(category.parentId ?? "");
   const [color, setColor] = useState(category.color);
-  return <div className="edit-row"><label>{category.parentId ? "小カテゴリ名" : "親カテゴリ名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>分類<select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">親カテゴリにする</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name} の小カテゴリにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリ名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリを更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ削除に失敗しました。")); } }}>カテゴリを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  return <div className="edit-row balanced-edit"><label>{category.parentId ? "サブカテゴリー名" : "カテゴリー名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>分類<select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">カテゴリーにする</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name} のサブカテゴリーにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリー名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリーを更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリーを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー削除に失敗しました。")); } }}>カテゴリーを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
 }
 
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
