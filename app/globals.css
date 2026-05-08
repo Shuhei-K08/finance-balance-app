@@ -227,7 +227,7 @@ h2 {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -244,6 +244,12 @@ h2 {
   gap: 8px;
   min-height: 112px;
   padding: 14px;
+}
+
+.home-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .metric svg {
@@ -1071,6 +1077,24 @@ input[type="range"] {
   background: rgba(23, 32, 28, 0.38);
 }
 
+.center-backdrop {
+  align-items: center;
+  padding: 18px;
+}
+
+.modal-panel {
+  display: grid;
+  gap: 12px;
+  width: min(100%, 520px);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
 .bottom-sheet {
   display: grid;
   gap: 12px;
@@ -1232,6 +1256,6 @@ select {
   }
 
   .stat-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
