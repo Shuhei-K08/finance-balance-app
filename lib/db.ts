@@ -207,6 +207,7 @@ export async function createSharedLedger(name: string) {
 
 export async function joinSharedLedger(inviteCode: string) {
   const client = requireSupabase();
+  await ensurePersonalLedger();
   const { data, error } = await client.rpc("join_shared_ledger", { code: inviteCode.trim().toUpperCase() });
   if (error) throwJapanese(error, "共有家計簿への参加に失敗しました。");
   return data as string;
