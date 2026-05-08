@@ -13,8 +13,8 @@ export const transactionTypeLabel: Record<Transaction["type"], string> = {
 };
 
 export const fixedCostStatusLabel: Record<FixedCost["status"], string> = {
-  planned: "予定",
-  confirmed: "確定",
+  planned: "見込み",
+  confirmed: "金額確定",
   paid: "支払済"
 };
 
@@ -69,7 +69,15 @@ export function pendingCreditWithdrawals(state: LedgerState) {
 }
 
 export function fixedCostForecast(fixedCosts: FixedCost[]) {
-  return fixedCosts.filter((cost) => cost.status !== "paid").reduce((total, cost) => total + cost.amount, 0);
+  const monthKey = todayIso().slice(0, 7);
+  return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((total, cost) => total + cost.amount, 0);
+}
+
+export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
+  const monthStart = `${monthKey}-01`;
+  const monthEnd = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0);
+  const monthEndKey = `${monthEnd.getFullYear()}-${String(monthEnd.getMonth() + 1).padStart(2, "0")}-${String(monthEnd.getDate()).padStart(2, "0")}`;
+  return (!cost.effectiveFrom || cost.effectiveFrom <= monthEndKey) && (!cost.effectiveTo || cost.effectiveTo >= monthStart);
 }
 
 export function projectedMonthEnd(state: LedgerState) {
@@ -92,15 +100,37 @@ export function categoryExpense(state: LedgerState) {
 }
 
 export function balanceTrend(state: LedgerState) {
-  const base = totalAssets(state) - monthlyIncome(state.transactions) + monthlyExpense(state.transactions);
-  const actualExpense = monthlyExpense(monthTransactions(state.transactions));
-  const actualIncome = monthlyIncome(monthTransactions(state.transactions));
-  const forecastOut = fixedCostForecast(state.fixedCosts) + pendingCreditWithdrawals(state);
-  const points = [
-    { label: "月初", actual: base, forecast: base },
-    { label: "今日", actual: base + actualIncome - actualExpense, forecast: base + actualIncome - actualExpense },
-    { label: "月末", actual: undefined, forecast: base + actualIncome - actualExpense - forecastOut }
-  ];
+  const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
+  const base = assetAccounts.reduce((sum, account) => sum + account.openingBalance, 0);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const points: Array<{ label: string; actual?: number; forecast?: number }> = [];
+
+  for (let index = 0; index < 12; index += 1) {
+    const month = new Date(start.getFullYear(), start.getMonth() + index, 1);
+    const nextMonth = new Date(month.getFullYear(), month.getMonth() + 1, 1);
+    const monthEndKey = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
+    const value = state.transactions
+      .filter((transaction) => transaction.date < monthEndKey)
+      .reduce((balance, transaction) => {
+        if (transaction.type === "income" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance + transaction.amount;
+        if (transaction.type === "expense" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance - transaction.amount;
+        if (transaction.type === "transfer") {
+          const fromAsset = assetAccounts.some((account) => account.id === transaction.accountId);
+          const toAsset = assetAccounts.some((account) => account.id === transaction.transferToAccountId);
+          if (fromAsset && !toAsset) return balance - transaction.amount;
+          if (!fromAsset && toAsset) return balance + transaction.amount;
+        }
+        return balance;
+      }, base);
+    points.push({ label: `${month.getMonth() + 1}月`, actual: value, forecast: value });
+  }
+
+  points.push({
+    label: "予測",
+    actual: undefined,
+    forecast: projectedMonthEnd(state)
+  });
   return points;
 }
 

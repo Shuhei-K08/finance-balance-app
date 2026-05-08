@@ -1,4 +1,5 @@
 create extension if not exists pgcrypto;
+create extension if not exists citext;
 
 do $$
 begin
@@ -29,6 +30,11 @@ create table if not exists profiles (
   display_name text,
   role text not null default 'user' check (role in ('user', 'admin')),
   deleted_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists admin_email_allowlist (
+  email citext primary key,
   created_at timestamptz not null default now()
 );
 
@@ -110,6 +116,8 @@ create table if not exists fixed_costs (
   is_variable boolean not null default false,
   due_day int not null check (due_day between 1 and 31),
   status fixed_cost_status not null default 'planned',
+  effective_from date,
+  effective_to date,
   deleted_at timestamptz,
   created_at timestamptz not null default now()
 );
@@ -133,6 +141,9 @@ create index if not exists transactions_household_id_occurred_on_idx on transact
 create index if not exists fixed_costs_household_id_idx on fixed_costs(household_id) where deleted_at is null;
 create index if not exists saving_goals_household_id_idx on saving_goals(household_id) where deleted_at is null;
 create unique index if not exists households_invite_code_uidx on households(invite_code) where invite_code is not null and deleted_at is null;
+
+alter table fixed_costs add column if not exists effective_from date;
+alter table fixed_costs add column if not exists effective_to date;
 
 create or replace function public.is_admin()
 returns boolean
@@ -201,6 +212,37 @@ begin
 end;
 $$;
 
+create or replace function public.claim_configured_admin()
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  current_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
+begin
+  if current_user_id is null then
+    raise exception 'ログインが必要です。';
+  end if;
+
+  if not exists (
+    select 1
+    from admin_email_allowlist
+    where lower(email::text) = current_email
+  ) then
+    raise exception 'このメールアドレスは管理者として許可されていません。';
+  end if;
+
+  insert into profiles (id, display_name, role)
+  values (current_user_id, current_email, 'admin')
+  on conflict (id) do update
+    set role = 'admin',
+        deleted_at = null;
+end;
+$$;
+
 create or replace function public.ensure_personal_ledger()
 returns uuid
 language plpgsql
@@ -234,6 +276,7 @@ begin
   from household_members hm
   join households h on h.id = hm.household_id
   where hm.user_id = current_user_id
+    and h.space_type = 'personal'
     and h.deleted_at is null
   order by hm.created_at
   limit 1;
@@ -377,6 +420,11 @@ begin
     raise exception 'login required';
   end if;
 
+  insert into profiles (id, display_name)
+  values (current_user_id, coalesce(auth.jwt() ->> 'email', 'ユーザー'))
+  on conflict (id) do update
+    set deleted_at = null;
+
   select id into household_id
   from households
   where invite_code = upper(trim(code))
@@ -421,6 +469,9 @@ begin
   end if;
 
   if tg_table_name = 'transactions' then
+    if new.deleted_at is not null then
+      return new;
+    end if;
     if not exists (select 1 from accounts where id = new.account_id and household_id = new.household_id and deleted_at is null) then
       raise exception 'account must belong to the same household';
     end if;
@@ -454,6 +505,83 @@ begin
 end;
 $$;
 
+create or replace function public.update_transaction_safe(
+  target_transaction_id uuid,
+  new_transaction_type transaction_type,
+  new_amount numeric,
+  new_category_id uuid,
+  new_account_id uuid,
+  new_transfer_to_account_id uuid,
+  new_occurred_on date,
+  new_reflected_on date,
+  new_credit_status text,
+  new_memo text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  target_household_id uuid;
+begin
+  select household_id into target_household_id
+  from transactions
+  where id = target_transaction_id
+    and deleted_at is null;
+
+  if target_household_id is null then
+    raise exception '取引が見つかりません。';
+  end if;
+
+  if not public.is_household_member(target_household_id) and not public.is_admin() then
+    raise exception 'この取引を更新する権限がありません。';
+  end if;
+
+  update transactions
+  set transaction_type = new_transaction_type,
+      amount = new_amount,
+      category_id = case when new_transaction_type = 'transfer' then null else new_category_id end,
+      account_id = new_account_id,
+      transfer_to_account_id = case when new_transaction_type = 'transfer' then new_transfer_to_account_id else null end,
+      occurred_on = new_occurred_on,
+      reflected_on = new_reflected_on,
+      credit_status = case when new_transaction_type = 'expense' then new_credit_status else null end,
+      memo = nullif(new_memo, '')
+  where id = target_transaction_id;
+end;
+$$;
+
+create or replace function public.delete_transaction_safe(target_transaction_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  target_household_id uuid;
+begin
+  select household_id into target_household_id
+  from transactions
+  where id = target_transaction_id
+    and deleted_at is null;
+
+  if target_household_id is null then
+    return;
+  end if;
+
+  if not public.is_household_member(target_household_id) and not public.is_admin() then
+    raise exception 'この取引を削除する権限がありません。';
+  end if;
+
+  update transactions
+  set deleted_at = now()
+  where id = target_transaction_id;
+end;
+$$;
+
 drop trigger if exists validate_accounts_household_refs on accounts;
 create trigger validate_accounts_household_refs
 before insert or update on accounts
@@ -480,6 +608,7 @@ before insert or update on saving_goals
 for each row execute function public.validate_household_refs();
 
 alter table profiles enable row level security;
+alter table admin_email_allowlist enable row level security;
 alter table households enable row level security;
 alter table household_members enable row level security;
 alter table accounts enable row level security;
@@ -491,6 +620,7 @@ alter table saving_goals enable row level security;
 drop policy if exists "profiles select own or admin" on profiles;
 drop policy if exists "profiles insert own" on profiles;
 drop policy if exists "profiles update own basic or admin" on profiles;
+drop policy if exists "admin email allowlist admin only" on admin_email_allowlist;
 drop policy if exists "households member select" on households;
 drop policy if exists "households owner bootstrap select" on households;
 drop policy if exists "households owner insert" on households;
@@ -513,6 +643,10 @@ create policy "profiles insert own" on profiles
 create policy "profiles update own basic or admin" on profiles
   for update using (id = auth.uid() or public.is_admin())
   with check ((id = auth.uid() and role = 'user') or public.is_admin());
+
+create policy "admin email allowlist admin only" on admin_email_allowlist
+  for all using (public.is_admin())
+  with check (public.is_admin());
 
 create policy "households member select" on households
   for select using (public.is_household_member(id) or public.is_admin());

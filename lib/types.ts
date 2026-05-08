@@ -48,6 +48,8 @@ export type FixedCost = {
   variable: boolean;
   dueDay: number;
   status: FixedCostStatus;
+  effectiveFrom?: string;
+  effectiveTo?: string;
 };
 
 export type Goal = {

@@ -18,7 +18,6 @@ import {
 import {
   ArrowDownUp,
   BarChart3,
-  CalendarDays,
   Copy,
   CreditCard,
   Goal,
@@ -27,7 +26,6 @@ import {
   ListPlus,
   PiggyBank,
   Settings,
-  Shield,
   Sparkles,
   LogOut,
   Mail,
@@ -41,8 +39,8 @@ import {
   categoryExpense,
   creditStatusLabel,
   fixedCostForecast,
-  fixedCostStatusLabel,
   goalProjection,
+  isFixedCostActiveInMonth,
   monthTransactions,
   monthlyExpense,
   monthlyIncome,
@@ -67,7 +65,6 @@ import {
   deleteFixedCost,
   deleteTransaction,
   insertRemoteTransaction,
-  claimFirstAdmin,
   joinSharedLedger,
   loadRemoteState,
   signInWithEmail,
@@ -79,25 +76,25 @@ import {
   updateFixedCost,
   updateOpeningBalances,
   updateTransaction,
-  updateRemoteGoalBoost
+  updateRemoteGoalBoost,
+  toJapaneseError
 } from "@/lib/db";
-import { AccountType, FixedCostStatus } from "@/lib/types";
+import { AccountType } from "@/lib/types";
 
-type Tab = "home" | "history" | "analysis" | "goals" | "settings" | "admin";
+type Tab = "home" | "analysis" | "goals" | "settings";
 
 const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
-  { id: "history", label: "履歴", icon: CalendarDays },
   { id: "analysis", label: "分析", icon: BarChart3 },
   { id: "goals", label: "目標", icon: Goal },
-  { id: "settings", label: "設定", icon: Settings },
-  { id: "admin", label: "管理", icon: Shield }
+  { id: "settings", label: "設定", icon: Settings }
 ];
 
 export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [quickOpen, setQuickOpen] = useState(false);
+  const [quickDate, setQuickDate] = useState(todayIso());
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [notice, setNotice] = useState("");
@@ -113,7 +110,7 @@ export default function App() {
     let mounted = true;
     bootAuth().catch((error) => {
       if (!mounted) return;
-      setNotice(error instanceof Error ? error.message : "Supabase の初期化に失敗しました。");
+      setNotice(toJapaneseError(error, "Supabase の初期化に失敗しました。"));
       setAuthReady(true);
     });
 
@@ -121,7 +118,7 @@ export default function App() {
       setIsAuthed(Boolean(session));
       if (session) {
         setTimeout(() => {
-          refreshRemoteState().catch((error) => setNotice(error.message));
+          refreshRemoteState().catch((error) => setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。")));
         }, 0);
       } else {
         setState(null);
@@ -133,7 +130,12 @@ export default function App() {
       if (!mounted) return;
       setIsAuthed(Boolean(sessionResult.data.session));
       if (sessionResult.data.session) {
-        await refreshRemoteState();
+        try {
+          await withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。Supabase SQL Editor で最新の schema.sql を実行済みか確認してください。");
+        } catch (error) {
+          setState(null);
+          setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。"));
+        }
       }
       if (mounted) setAuthReady(true);
     }
@@ -148,10 +150,24 @@ export default function App() {
     if (state && !supabase) saveState(state);
   }, [state]);
 
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 4200);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   async function refreshRemoteState() {
     const next = await loadRemoteState(selectedHouseholdId);
     setSelectedHouseholdId(next.householdId);
     setState(next);
+  }
+
+  async function switchHousehold(householdId: string) {
+    setSelectedHouseholdId(householdId);
+    const next = await loadRemoteState(householdId);
+    setSelectedHouseholdId(next.householdId);
+    setState(next);
+    setTab("home");
   }
 
   if (!authReady) return <main className="boot">読み込み中</main>;
@@ -164,7 +180,7 @@ export default function App() {
     return <SetupScreen />;
   }
 
-  if (!state) return <DbErrorScreen notice={notice} onRetry={() => refreshRemoteState().catch((error) => setNotice(error.message))} />;
+  if (!state) return <DbErrorScreen notice={notice} onRetry={() => withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。").catch((error) => setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。")))} />;
 
   if (state.needsOpeningSetup) {
     return <OpeningSetupScreen state={state} setNotice={setNotice} onDone={() => refreshRemoteState()} />;
@@ -180,67 +196,81 @@ export default function App() {
     credit: pendingCreditWithdrawals(state)
   };
 
-  async function addTransaction(form: FormData) {
+  function openQuick(date = todayIso()) {
+    setQuickDate(date);
+    setQuickOpen(true);
+  }
+
+  async function addTransaction(transaction: {
+    type: TransactionType;
+    amount: number;
+    categoryId?: string;
+    accountId: string;
+    transferToAccountId?: string;
+    date: string;
+    memo?: string;
+  }) {
     if (!state) return;
-    const type = form.get("type") as TransactionType;
-    const accountId = String(form.get("accountId"));
-    const amount = Number(form.get("amount"));
-    const creditAccount = state.accounts.find((account) => account.id === accountId && account.type === "credit");
-    const transaction = {
-      type,
-      amount,
-      categoryId: String(form.get("categoryId")),
-      accountId,
-      transferToAccountId: type === "transfer" ? String(form.get("transferToAccountId")) : undefined,
-      date: String(form.get("date")),
-      memo: String(form.get("memo") || ""),
-      reflectedDate: creditAccount ? nextWithdrawalDate(creditAccount.withdrawalDay ?? 10) : undefined,
-      creditStatus: creditAccount ? "unconfirmed" as const : undefined
+    const creditAccount = state.accounts.find((account) => account.id === transaction.accountId && account.type === "credit");
+    const withdrawalDate = transaction.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, transaction.date) : undefined;
+    const payload = {
+      ...transaction,
+      categoryId: transaction.type === "transfer" ? undefined : transaction.categoryId,
+      transferToAccountId: transaction.type === "transfer" ? transaction.transferToAccountId : undefined,
+      date: withdrawalDate ?? transaction.date,
+      reflectedDate: withdrawalDate,
+      creditStatus: transaction.type === "expense" && creditAccount ? "unconfirmed" as const : undefined
     };
     try {
-      const id = await insertRemoteTransaction(state.householdId ?? "", transaction);
-      setState({ ...state, transactions: [{ id, ...transaction }, ...state.transactions] });
+      const id = await insertRemoteTransaction(state.householdId ?? "", payload);
+      setState({ ...state, transactions: [{ id, ...payload }, ...state.transactions] });
       setQuickOpen(false);
       setNotice("登録しました。");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "登録に失敗しました。");
+      setNotice(toJapaneseError(error, "登録に失敗しました。"));
     }
   }
 
-  const visibleTabs = state.profileRole === "admin" ? tabs : tabs.filter((item) => item.id !== "admin");
-
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}>
       <section className="topbar">
         <div>
-          <p className="eyebrow">Mirai Ledger</p>
-          <h1>未来残高を見ながら整える家計簿</h1>
+          <p className="eyebrow">{state.activeSpace === "shared" ? "共有カレンダー" : "Mirai Ledger"}</p>
+          <h1>{state.householdName ?? "未来残高を見ながら整える家計簿"}</h1>
         </div>
         <div className="top-actions">
-          <button className="primary-icon" type="button" onClick={() => setQuickOpen(true)} aria-label="取引を追加">
+          <button className="primary-icon" type="button" onClick={() => openQuick()} aria-label="取引を追加">
             <ListPlus size={22} />
           </button>
-          <button className="ghost-icon" type="button" onClick={() => signOut().catch((error) => setNotice(error.message))} aria-label="ログアウト">
+          <button className="ghost-icon" type="button" onClick={() => signOut().catch((error) => setNotice(toJapaneseError(error)))} aria-label="ログアウト">
             <LogOut size={20} />
           </button>
         </div>
       </section>
+      {(state.households ?? []).length > 1 && (
+        <section className="ledger-switch" aria-label="家計簿切替">
+          {(state.households ?? []).map((household) => (
+            <button
+              className={household.id === state.householdId ? "active" : ""}
+              key={household.id}
+              type="button"
+              onClick={() => switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
+            >
+              <span>{household.spaceType === "shared" ? "共有" : "個人"}</span>
+              {household.name}
+            </button>
+          ))}
+        </section>
+      )}
       {notice && <section className="notice" role="status">{notice}</section>}
 
-      {tab === "home" && <HomeView state={state} stats={stats} onQuick={() => setQuickOpen(true)} />}
-      {tab === "history" && <HistoryView state={state} setNotice={setNotice} reload={() => refreshRemoteState()} />}
+      {tab === "home" && <HomeView state={state} stats={stats} setNotice={setNotice} reload={() => refreshRemoteState()} onQuick={openQuick} />}
       {tab === "analysis" && <AnalysisView state={state} />}
       {tab === "goals" && <GoalsView state={state} setState={setState} setNotice={setNotice} />}
-      {tab === "settings" && <SettingsView state={state} setState={setState} setNotice={setNotice} reloadHousehold={async (householdId) => {
-        setSelectedHouseholdId(householdId);
-        const next = await loadRemoteState(householdId);
-        setSelectedHouseholdId(next.householdId);
-        setState(next);
-      }} />}
-      {tab === "admin" && state.profileRole === "admin" && <AdminView />}
+      {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
 
       <nav className="bottom-nav">
-        {visibleTabs.map((item) => {
+        {tabs.map((item) => {
           const Icon = item.icon;
           return (
             <button
@@ -257,28 +287,7 @@ export default function App() {
         })}
       </nav>
 
-      {quickOpen && (
-        <div className="sheet-backdrop" onClick={() => setQuickOpen(false)}>
-          <form className="bottom-sheet" onSubmit={(event) => { event.preventDefault(); addTransaction(new FormData(event.currentTarget)); }} onClick={(event) => event.stopPropagation()}>
-            <div className="sheet-handle" />
-            <h2>クイック入力</h2>
-            <div className="segmented">
-              <label><input name="type" type="radio" value="expense" defaultChecked />支出</label>
-              <label><input name="type" type="radio" value="income" />収入</label>
-              <label><input name="type" type="radio" value="transfer" />振替</label>
-            </div>
-            <input className="amount-input" name="amount" type="number" min="1" placeholder="0" required />
-            <div className="form-grid">
-              <label>カテゴリー<select name="categoryId">{state.categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></label>
-              <label>支払元<select name="accountId">{state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
-              <label>振替先<select name="transferToAccountId">{state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
-              <label>日付<input name="date" type="date" defaultValue={todayIso()} /></label>
-            </div>
-            <input name="memo" placeholder="メモ" />
-            <button className="full-primary" type="submit">登録</button>
-          </form>
-        </div>
-      )}
+      {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
     </main>
   );
 }
@@ -328,7 +337,7 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
         await signInWithEmail(email, password);
       }
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "認証に失敗しました。");
+      setNotice(toJapaneseError(error, "認証に失敗しました。"));
     } finally {
       setBusy(false);
     }
@@ -349,11 +358,10 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
           <label><Lock size={16} />パスワード<input name="password" type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required placeholder="8文字以上" /></label>
           <button className="full-primary" type="submit" disabled={busy}>{busy ? "処理中" : mode === "login" ? "ログイン" : "作成する"}</button>
         </form>
-        <button className="google-button" type="button" onClick={() => signInWithGoogle().catch((error) => setNotice(error.message))}>Googleで続ける</button>
+        <button className="google-button" type="button" onClick={() => signInWithGoogle().catch((error) => setNotice(toJapaneseError(error)))}>Googleで続ける</button>
         <button className="switch-auth" type="button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
           {mode === "login" ? "アカウントを作成する" : "ログインに戻る"}
         </button>
-        <p className="auth-copy small">初回管理者にする場合は、アカウント作成後にログインしてから設定画面の「初回管理者にする」を押してください。</p>
       </section>
     </main>
   );
@@ -388,7 +396,7 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
       setNotice("初期残高を保存しました。");
       await onDone();
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "初期残高の保存に失敗しました。");
+      setNotice(toJapaneseError(error, "初期残高の保存に失敗しました。"));
     } finally {
       setBusy(false);
     }
@@ -423,7 +431,7 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
   );
 }
 
-function HomeView({ state, stats, onQuick }: { state: LedgerState; stats: Record<string, number>; onQuick: () => void }) {
+function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerState; stats: Record<string, number>; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
   return (
     <div className="view-stack">
       <section className="hero-panel">
@@ -432,7 +440,7 @@ function HomeView({ state, stats, onQuick }: { state: LedgerState; stats: Record
           <strong>{yen.format(stats.assets)}</strong>
           <span>月末予測 {yen.format(stats.forecast)}</span>
         </div>
-        <button type="button" onClick={onQuick}><ListPlus size={18} />入力</button>
+        <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
 
       <div className="stat-grid">
@@ -461,34 +469,149 @@ function HomeView({ state, stats, onQuick }: { state: LedgerState; stats: Record
         <p>{spendingAdvice(state)}</p>
       </section>
 
+      <HomeCalendar state={state} setNotice={setNotice} reload={reload} onQuick={onQuick} />
+
       <section className="panel">
         <div className="section-title"><h2>最近の支出</h2><span>{state.transactions.length}件</span></div>
-        <TransactionList state={state} limit={5} setNotice={() => {}} reload={async () => {}} />
+        <TransactionList state={state} limit={5} setNotice={setNotice} reload={reload} />
       </section>
     </div>
   );
 }
 
-function HistoryView({ state, setNotice, reload }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+function QuickTransactionSheet({
+  state,
+  initialDate,
+  onClose,
+  onSubmit
+}: {
+  state: LedgerState;
+  initialDate: string;
+  onClose: () => void;
+  onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string }) => Promise<void>;
+}) {
+  const usableAccounts = state.accounts;
+  const normalAccounts = state.accounts.filter((account) => account.type !== "credit");
+  const firstExpenseCategory = state.categories.find((category) => category.name !== "給与")?.id ?? state.categories[0]?.id ?? "";
+  const firstIncomeCategory = state.categories.find((category) => category.name === "給与")?.id ?? state.categories[0]?.id ?? "";
+  const [type, setType] = useState<TransactionType>("expense");
+  const [amount, setAmount] = useState("");
+  const [categoryId, setCategoryId] = useState(firstExpenseCategory);
+  const [accountId, setAccountId] = useState(usableAccounts[0]?.id ?? "");
+  const [transferToAccountId, setTransferToAccountId] = useState(normalAccounts.find((account) => account.id !== accountId)?.id ?? normalAccounts[0]?.id ?? "");
+  const [date, setDate] = useState(initialDate);
+  const [memo, setMemo] = useState("");
+
+  function changeType(nextType: TransactionType) {
+    setType(nextType);
+    setCategoryId(nextType === "income" ? firstIncomeCategory : firstExpenseCategory);
+    if (nextType === "transfer") {
+      const from = normalAccounts[0]?.id ?? usableAccounts[0]?.id ?? "";
+      const to = normalAccounts.find((account) => account.id !== from)?.id ?? normalAccounts[1]?.id ?? "";
+      setAccountId(from);
+      setTransferToAccountId(to);
+    }
+  }
+
+  async function submit() {
+    const value = Number(amount);
+    if (!value || value <= 0) return;
+    await onSubmit({
+      type,
+      amount: value,
+      categoryId: type === "transfer" ? undefined : categoryId || undefined,
+      accountId,
+      transferToAccountId: type === "transfer" ? transferToAccountId || undefined : undefined,
+      date,
+      memo
+    });
+  }
+
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <form className="bottom-sheet" onSubmit={(event) => { event.preventDefault(); submit(); }} onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="section-title"><h2>クイック入力</h2><span>{date}</span></div>
+        <div className="segmented" role="tablist" aria-label="取引種別">
+          {(["expense", "income", "transfer"] as TransactionType[]).map((item) => (
+            <button className={type === item ? "selected" : ""} key={item} type="button" onClick={() => changeType(item)}>
+              {transactionTypeLabel[item]}
+            </button>
+          ))}
+        </div>
+        <input className="amount-input" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="1" placeholder="0" required />
+        <div className="form-grid">
+          {type !== "transfer" && (
+            <label>カテゴリー<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>{state.categories.map((category) => <option key={category.id} value={category.id}>{category.parentId ? "└ " : ""}{category.name}</option>)}</select></label>
+          )}
+          <label>{type === "income" ? "入金先" : "支払元"}<select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{(type === "transfer" ? normalAccounts : usableAccounts).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          {type === "transfer" && (
+            <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>{normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          )}
+          <label>日付<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
+        </div>
+        <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
+        <button className="full-primary" type="submit">登録</button>
+      </form>
+    </div>
+  );
+}
+
+function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date: string) => void }) {
+  const [selectedMonth, setSelectedMonth] = useState(todayIso().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(todayIso());
-  const monthKey = selectedDate.slice(0, 7);
+  const monthKey = selectedMonth;
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
-  const dateRows = state.transactions.filter((transaction) => transaction.date === selectedDate);
-  const visibleRows = dateRows.length > 0 ? { ...state, transactions: dateRows } : state;
+  const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
+  const monthRows = state.transactions.filter((transaction) => transaction.date.startsWith(monthKey));
+  const dateRows = monthRows.filter((transaction) => transaction.date === selectedDate);
+  const selectedFixedCosts = state.fixedCosts.filter((cost) => cost.dueDay === Number(selectedDate.slice(8, 10)) && isFixedCostActiveInMonth(cost, monthKey));
+  const monthIncome = monthlyIncome(monthRows);
+  const monthExpense = monthlyExpense(monthRows);
+  const monthFixed = state.fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((sum, cost) => sum + cost.amount, 0);
+
+  function moveMonth(delta: number) {
+    const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
+    const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+    setSelectedMonth(nextKey);
+    setSelectedDate(`${nextKey}-01`);
+  }
 
   return (
     <div className="view-stack">
       <section className="panel">
-        <div className="section-title"><h2>履歴一覧</h2><input className="month-input" type="month" value={monthKey} onChange={(event) => setSelectedDate(`${event.target.value}-01`)} /></div>
+        <div className="section-title calendar-title">
+          <button type="button" onClick={() => moveMonth(-1)}>前月</button>
+          <input className="month-input" type="month" value={monthKey} onChange={(event) => { setSelectedMonth(event.target.value); setSelectedDate(`${event.target.value}-01`); }} />
+          <button type="button" onClick={() => moveMonth(1)}>翌月</button>
+        </div>
+        <div className="month-summary">
+          <span>収入 <strong>{yen.format(monthIncome)}</strong></span>
+          <span>支出 <strong>{yen.format(monthExpense)}</strong></span>
+          <span>固定費 <strong>{yen.format(monthFixed)}</strong></span>
+        </div>
         <div className="calendar-grid">
+          {["日", "月", "火", "水", "木", "金", "土"].map((day) => <b key={day}>{day}</b>)}
+          {Array.from({ length: firstDay }).map((_, index) => <i key={`blank-${index}`} />)}
           {Array.from({ length: days }).map((_, index) => {
             const day = String(index + 1).padStart(2, "0");
             const date = `${monthKey}-${day}`;
-            const total = state.transactions.filter((transaction) => transaction.date === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
-            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => setSelectedDate(date)}><strong>{index + 1}</strong>{total > 0 && <span>{yen.format(total)}</span>}</button>;
+            const income = monthRows.filter((transaction) => transaction.date === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
+            const expense = monthRows.filter((transaction) => transaction.date === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+            const fixed = state.fixedCosts.filter((cost) => cost.dueDay === index + 1 && isFixedCostActiveInMonth(cost, monthKey)).reduce((sum, cost) => sum + cost.amount, 0);
+            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => setSelectedDate(date)}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 {yen.format(fixed)}</span>}</button>;
           })}
         </div>
-        <TransactionList state={visibleRows} setNotice={setNotice} reload={reload} />
+        <button className="full-primary" type="button" onClick={() => onQuick(selectedDate)}>選択日の取引を登録</button>
+      </section>
+      <section className="panel">
+        <div className="section-title"><h2>{selectedDate} の予定</h2><span>{dateRows.length + selectedFixedCosts.length}件</span></div>
+        {selectedFixedCosts.length > 0 && (
+          <div className="fixed-calendar-list">
+            {selectedFixedCosts.map((cost) => <div key={cost.id}><span>{cost.name}</span><strong>{yen.format(cost.amount)}</strong><em>固定費</em></div>)}
+          </div>
+        )}
+        <TransactionList state={{ ...state, transactions: dateRows }} setNotice={setNotice} reload={reload} />
       </section>
     </div>
   );
@@ -555,8 +678,8 @@ function GoalsView({ state, setState, setNotice }: { state: LedgerState; setStat
                   ...state,
                   goals: state.goals.map((item) => item.id === goal.id ? { ...item, monthlyBoost: Number(event.target.value) } : item)
                 })}
-                onMouseUp={(event) => updateRemoteGoalBoost(goal.id, Number(event.currentTarget.value)).catch((error) => setNotice(error.message))}
-                onTouchEnd={(event) => updateRemoteGoalBoost(goal.id, Number(event.currentTarget.value)).catch((error) => setNotice(error.message))}
+                onMouseUp={(event) => updateRemoteGoalBoost(goal.id, Number(event.currentTarget.value)).catch((error) => setNotice(toJapaneseError(error)))}
+                onTouchEnd={(event) => updateRemoteGoalBoost(goal.id, Number(event.currentTarget.value)).catch((error) => setNotice(toJapaneseError(error)))}
               />
             </label>
           </section>
@@ -568,12 +691,10 @@ function GoalsView({ state, setState, setNotice }: { state: LedgerState; setStat
 
 function SettingsView({
   state,
-  setState,
   setNotice,
   reloadHousehold
 }: {
   state: LedgerState;
-  setState: (state: LedgerState) => void;
   setNotice: (message: string) => void;
   reloadHousehold: (householdId: string) => Promise<void>;
 }) {
@@ -582,12 +703,28 @@ function SettingsView({
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
-  const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso() });
-  const [newCategory, setNewCategory] = useState({ name: "", parentId: "", color: "#0f766e" });
-  const [newFixed, setNewFixed] = useState({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as FixedCostStatus });
+  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "categories" | "fixed">("ledger");
+  const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
+  const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
+  const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
+  const [newParentCategory, setNewParentCategory] = useState({ name: "", color: "#0f766e" });
+  const [newChildCategory, setNewChildCategory] = useState({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
+  const [newFixed, setNewFixed] = useState({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
 
   return (
     <div className="view-stack">
+      <div className="settings-tabs">
+        {[
+          ["ledger", "家計簿"],
+          ["accounts", "お金管理"],
+          ["categories", "カテゴリ"],
+          ["fixed", "固定費"]
+        ].map(([id, label]) => (
+          <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
+        ))}
+      </div>
+      {settingsTab === "ledger" && (
+      <>
       <section className="panel">
         <div className="section-title"><h2>家計簿管理</h2><span>{state.householdName ?? (state.activeSpace === "personal" ? "個人" : "共有")}</span></div>
         <div className="ledger-list">
@@ -596,7 +733,7 @@ function SettingsView({
               className={household.id === state.householdId ? "selected-ledger" : ""}
               key={household.id}
               type="button"
-              onClick={() => reloadHousehold(household.id).catch((error) => setNotice(error.message))}
+              onClick={() => reloadHousehold(household.id).catch((error) => setNotice(toJapaneseError(error)))}
             >
               <span>{household.name}</span>
               <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}</em>
@@ -631,7 +768,7 @@ function SettingsView({
                 await reloadHousehold(householdId);
                 setNotice("共有家計簿を作成しました。");
               } catch (error) {
-                setNotice(error instanceof Error ? error.message : "共有家計簿の作成に失敗しました。");
+                setNotice(toJapaneseError(error, "共有家計簿の作成に失敗しました。"));
               }
             }}
           >
@@ -647,7 +784,7 @@ function SettingsView({
                 await reloadHousehold(householdId);
                 setNotice("共有家計簿に参加しました。");
               } catch (error) {
-                setNotice(error instanceof Error ? error.message : "共有家計簿への参加に失敗しました。");
+                setNotice(toJapaneseError(error, "共有家計簿への参加に失敗しました。"));
               }
             }}
           >
@@ -655,8 +792,12 @@ function SettingsView({
           </button>
         </div>
       </section>
+      </>
+      )}
+      {settingsTab === "accounts" && (
+      <>
       <section className="panel">
-        <div className="section-title"><h2>口座</h2><span>{state.mode === "balance" ? "残高管理あり" : "収支のみ"}</span></div>
+        <div className="section-title"><h2>お金の置き場所・支払方法</h2><span>{state.mode === "balance" ? "残高管理あり" : "収支のみ"}</span></div>
         <div className="account-list">
           {state.accounts.map((account) => <div key={account.id}><i style={{ background: account.color }} /><span>{account.name}</span><strong>{yen.format(calculateAccountBalance(account, state.transactions))}</strong></div>)}
         </div>
@@ -688,7 +829,7 @@ function SettingsView({
                 await reloadHousehold(state.householdId ?? "");
                 setNotice("初期残高を更新しました。");
               } catch (error) {
-                setNotice(error instanceof Error ? error.message : "初期残高の更新に失敗しました。");
+                setNotice(toJapaneseError(error, "初期残高の更新に失敗しました。"));
               }
             }}
           >
@@ -697,90 +838,126 @@ function SettingsView({
         </div>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>口座の追加・編集</h2><span>削除は未使用口座向け</span></div>
+        <div className="section-title"><h2>お金の置き場所を追加・編集</h2><span>銀行・現金・カード</span></div>
+        <p className="setting-copy">ここでは「銀行口座」だけでなく、現金、クレジットカード、貯金口座など、お金が出入りする場所や支払方法を登録します。</p>
         <div className="crud-form">
-          <input placeholder="口座名" value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} />
-          <select value={newAccount.type} onChange={(event) => setNewAccount({ ...newAccount, type: event.target.value as AccountType })}>
+          <label>口座名<input placeholder="例: 生活口座 / 楽天カード" value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} /></label>
+          <label>種類<select value={newAccount.type} onChange={(event) => setNewAccount({ ...newAccount, type: event.target.value as AccountType })}>
             <option value="bank">銀行口座</option><option value="cash">現金</option><option value="saving">貯金口座</option><option value="credit">クレジットカード</option>
-          </select>
-          <input type="number" min="0" value={newAccount.openingBalance} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value) })} />
-          <input type="date" value={newAccount.openingBalanceDate} onChange={(event) => setNewAccount({ ...newAccount, openingBalanceDate: event.target.value })} />
+          </select></label>
+          {newAccount.type !== "credit" && (
+            <>
+              <label>初期残高<input type="number" min="0" value={newAccount.openingBalance} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value) })} /></label>
+              <label>初期残高の日付<input type="date" value={newAccount.openingBalanceDate} onChange={(event) => setNewAccount({ ...newAccount, openingBalanceDate: event.target.value })} /></label>
+            </>
+          )}
+          {newAccount.type === "credit" && (
+            <>
+              <label>締め日<input type="number" min="1" max="31" value={newAccount.closingDay} onChange={(event) => setNewAccount({ ...newAccount, closingDay: Number(event.target.value) })} /></label>
+              <label>引落日<input type="number" min="1" max="31" value={newAccount.withdrawalDay} onChange={(event) => setNewAccount({ ...newAccount, withdrawalDay: Number(event.target.value) })} /></label>
+              <label>引落口座<select value={newAccount.withdrawalAccountId} onChange={(event) => setNewAccount({ ...newAccount, withdrawalAccountId: event.target.value })}>{state.accounts.filter((account) => account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+              <p className="setting-copy">このカードで支出登録すると、残高反映日が自動で次回引落日に設定され、未確定のクレカ支出として月末予測に反映されます。</p>
+            </>
+          )}
           <button className="full-primary" type="button" onClick={async () => {
             try {
-              await createAccount(state.householdId ?? "", newAccount);
+              await createAccount(state.householdId ?? "", { ...newAccount, openingBalance: newAccount.type === "credit" ? 0 : newAccount.openingBalance });
               await reloadHousehold(state.householdId ?? "");
-              setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso() });
+              setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
               setNotice("口座を追加しました。");
-            } catch (error) { setNotice(error instanceof Error ? error.message : "口座追加に失敗しました。"); }
+            } catch (error) { setNotice(toJapaneseError(error, "口座追加に失敗しました。")); }
           }}>口座を追加</button>
         </div>
         <EditableAccountList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
       </section>
+      </>
+      )}
+      {settingsTab === "categories" && (
       <section className="panel">
-        <div className="section-title"><h2>カテゴリ管理</h2><span>追加・更新・削除</span></div>
-        <div className="crud-form">
-          <input placeholder="カテゴリ名" value={newCategory.name} onChange={(event) => setNewCategory({ ...newCategory, name: event.target.value })} />
-          <select value={newCategory.parentId} onChange={(event) => setNewCategory({ ...newCategory, parentId: event.target.value })}>
-            <option value="">親カテゴリ</option>{state.categories.filter((category) => !category.parentId).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
-          </select>
-          <input type="color" value={newCategory.color} onChange={(event) => setNewCategory({ ...newCategory, color: event.target.value })} />
-          <button className="full-primary" type="button" onClick={async () => {
-            try {
-              await createCategory(state.householdId ?? "", newCategory);
-              await reloadHousehold(state.householdId ?? "");
-              setNewCategory({ name: "", parentId: "", color: "#0f766e" });
-              setNotice("カテゴリを追加しました。");
-            } catch (error) { setNotice(error instanceof Error ? error.message : "カテゴリ追加に失敗しました。"); }
-          }}>カテゴリを追加</button>
+        <div className="section-title"><h2>カテゴリ管理</h2><span>親カテゴリと小カテゴリ</span></div>
+        <p className="setting-copy">親カテゴリは「食費」「住居」など大きな分類です。小カテゴリは「スーパー」「外食」など親カテゴリの中に入る細かい分類です。</p>
+        <div className="split-editor">
+          <div className="mini-panel">
+            <h3>親カテゴリを追加</h3>
+            <label>親カテゴリ名<input placeholder="例: 食費" value={newParentCategory.name} onChange={(event) => setNewParentCategory({ ...newParentCategory, name: event.target.value })} /></label>
+            <label>色<input type="color" value={newParentCategory.color} onChange={(event) => setNewParentCategory({ ...newParentCategory, color: event.target.value })} /></label>
+            <button className="full-primary" type="button" onClick={async () => {
+              try {
+                if (!newParentCategory.name.trim()) {
+                  setNotice("親カテゴリ名を入力してください。");
+                  return;
+                }
+                await createCategory(state.householdId ?? "", { name: newParentCategory.name, color: newParentCategory.color });
+                await reloadHousehold(state.householdId ?? "");
+                setNewParentCategory({ name: "", color: "#0f766e" });
+                setNotice("親カテゴリを追加しました。");
+              } catch (error) { setNotice(toJapaneseError(error, "親カテゴリ追加に失敗しました。")); }
+            }}>親カテゴリを追加</button>
+          </div>
+          <div className="mini-panel">
+            <h3>小カテゴリを追加</h3>
+            <label>親カテゴリ<select value={newChildCategory.parentId} onChange={(event) => setNewChildCategory({ ...newChildCategory, parentId: event.target.value })}>{state.categories.filter((category) => !category.parentId).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select></label>
+            <label>小カテゴリ名<input placeholder="例: スーパー" value={newChildCategory.name} onChange={(event) => setNewChildCategory({ ...newChildCategory, name: event.target.value })} /></label>
+            <label>色<input type="color" value={newChildCategory.color} onChange={(event) => setNewChildCategory({ ...newChildCategory, color: event.target.value })} /></label>
+            <button className="full-primary" type="button" onClick={async () => {
+              try {
+                if (!newChildCategory.name.trim()) {
+                  setNotice("小カテゴリ名を入力してください。");
+                  return;
+                }
+                if (!newChildCategory.parentId) {
+                  setNotice("親カテゴリを選んでください。");
+                  return;
+                }
+                await createCategory(state.householdId ?? "", newChildCategory);
+                await reloadHousehold(state.householdId ?? "");
+                setNewChildCategory({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
+                setNotice("小カテゴリを追加しました。");
+              } catch (error) { setNotice(toJapaneseError(error, "小カテゴリ追加に失敗しました。")); }
+            }}>小カテゴリを追加</button>
+          </div>
+        </div>
+        <div className="category-tree">
+          {state.categories.filter((category) => !category.parentId).map((parent) => (
+            <div key={parent.id}>
+              <strong><i style={{ background: parent.color }} />{parent.name}</strong>
+              {state.categories.filter((category) => category.parentId === parent.id).map((child) => <span key={child.id}><i style={{ background: child.color }} />{child.name}</span>)}
+            </div>
+          ))}
         </div>
         <EditableCategoryList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
       </section>
+      )}
+      {settingsTab === "fixed" && (
+      <>
       <section className="panel">
         <div className="section-title"><h2>固定費管理</h2><span>追加・更新・削除</span></div>
+        <p className="setting-copy">固定費は毎月ほぼ必ず発生する支払いです。家賃、通信費、保険、サブスクなどを登録します。変更・削除するときは「すべてに反映」か「指定月以降に反映」を選べます。</p>
         <div className="crud-form">
-          <input placeholder="固定費名" value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} />
-          <input type="number" min="0" value={newFixed.amount} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value) })} />
-          <select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}>{state.categories.map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}</select>
-          <select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value })}>{state.accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select>
-          <input type="number" min="1" max="31" value={newFixed.dueDay} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value) })} />
-          <select value={newFixed.status} onChange={(event) => setNewFixed({ ...newFixed, status: event.target.value as FixedCostStatus })}><option value="planned">予定</option><option value="confirmed">確定</option><option value="paid">支払済</option></select>
+          <label>固定費名<input placeholder="例: 家賃 / Netflix / 電気代" value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
+          <label>金額<input type="number" min="0" value={newFixed.amount} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value) })} /></label>
+          <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}>{state.categories.map((category) => <option value={category.id} key={category.id}>{category.parentId ? "└ " : ""}{category.name}</option>)}</select></label>
+          <label>支払元<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value })}>{state.accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+          <label>支払予定日<input type="number" min="1" max="31" value={newFixed.dueDay} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value) })} /></label>
+          <label>開始月<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01` })} /></label>
           <button className="full-primary" type="button" onClick={async () => {
             try {
               await createFixedCost(state.householdId ?? "", newFixed);
               await reloadHousehold(state.householdId ?? "");
-              setNewFixed({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" });
+              setNewFixed({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
               setNotice("固定費を追加しました。");
-            } catch (error) { setNotice(error instanceof Error ? error.message : "固定費追加に失敗しました。"); }
+            } catch (error) { setNotice(toJapaneseError(error, "固定費追加に失敗しました。")); }
           }}>固定費を追加</button>
         </div>
         <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
       </section>
       <section className="panel">
-        <div className="section-title"><h2>固定費</h2><span>予定・確定・支払済</span></div>
+        <div className="section-title"><h2>固定費</h2><span>毎月の支払い</span></div>
         <div className="fixed-list">
-          {state.fixedCosts.map((cost) => <div className={cost.status} key={cost.id}><span>{cost.name}</span><strong>{yen.format(cost.amount)}</strong><em>{fixedCostStatusLabel[cost.status]}</em></div>)}
+          {state.fixedCosts.map((cost) => <div key={cost.id}><span>{cost.name}</span><strong>{yen.format(cost.amount)}</strong><em>{cost.effectiveFrom ? `${cost.effectiveFrom.slice(0, 7)}から` : "毎月"}</em></div>)}
         </div>
       </section>
-      {state.profileRole !== "admin" && (
-        <section className="panel">
-          <div className="section-title"><h2>管理者設定</h2><span>初回のみ</span></div>
-          <p className="setting-copy">まだ管理者がいない場合だけ、このログイン中のアカウントを管理者にできます。</p>
-          <button
-            className="full-primary"
-            type="button"
-            onClick={async () => {
-              try {
-                await claimFirstAdmin();
-                setState({ ...state, profileRole: "admin" });
-                setNotice("このアカウントを管理者にしました。");
-              } catch (error) {
-                setNotice(error instanceof Error ? error.message : "管理者設定に失敗しました。");
-              }
-            }}
-          >
-            初回管理者にする
-          </button>
-        </section>
+      </>
       )}
     </div>
   );
@@ -807,27 +984,85 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold }: { ac
   const [name, setName] = useState(account.name);
   const [openingBalance, setOpeningBalance] = useState(account.openingBalance);
   const [openingBalanceDate, setOpeningBalanceDate] = useState(account.openingBalanceDate ?? todayIso());
-  return <div className="edit-row"><input value={name} onChange={(event) => setName(event.target.value)} /><input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /><input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /><button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance, openingBalanceDate }); await reloadHousehold(state.householdId ?? ""); setNotice("口座を更新しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "口座更新に失敗しました。"); } }}>更新</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); setNotice("口座を削除しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "口座削除に失敗しました。"); } }}>削除</button></div>;
+  const [closingDay, setClosingDay] = useState(account.closingDay ?? 25);
+  const [withdrawalDay, setWithdrawalDay] = useState(account.withdrawalDay ?? 10);
+  const [withdrawalAccountId, setWithdrawalAccountId] = useState(account.withdrawalAccountId ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "");
+  return <div className="edit-row"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>更新</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>削除</button></div>;
 }
 
 function EditableCategoryList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
-  return <div className="edit-list">{state.categories.map((category) => <EditableCategoryRow key={category.id} category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>;
+  const parents = state.categories.filter((category) => !category.parentId);
+  const children = state.categories.filter((category) => category.parentId);
+  return (
+    <div className="category-edit-columns">
+      <div>
+        <h3>親カテゴリを編集</h3>
+        <div className="edit-list">{parents.map((category) => <EditableCategoryRow key={category.id} category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>
+      </div>
+      <div>
+        <h3>小カテゴリを編集</h3>
+        <div className="edit-list">{children.map((category) => <EditableCategoryRow key={category.id} category={category} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>
+      </div>
+    </div>
+  );
 }
 
 function EditableCategoryRow({ category, state, setNotice, reloadHousehold }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const [name, setName] = useState(category.name);
   const [parentId, setParentId] = useState(category.parentId ?? "");
   const [color, setColor] = useState(category.color);
-  return <div className="edit-row"><input value={name} onChange={(event) => setName(event.target.value)} /><select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">親カテゴリ</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select><input type="color" value={color} onChange={(event) => setColor(event.target.value)} /><button onClick={async () => { try { await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを更新しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "カテゴリ更新に失敗しました。"); } }}>更新</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを削除しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "カテゴリ削除に失敗しました。"); } }}>削除</button></div>;
+  return <div className="edit-row"><label>{category.parentId ? "小カテゴリ名" : "親カテゴリ名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>分類<select value={parentId} onChange={(event) => setParentId(event.target.value)}><option value="">親カテゴリにする</option>{state.categories.filter((item) => !item.parentId && item.id !== category.id).map((item) => <option value={item.id} key={item.id}>{item.name} の小カテゴリにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリ名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color }); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); setNotice("カテゴリを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリ削除に失敗しました。")); } }}>カテゴリを削除</button></div>;
 }
 
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
-  return <div className="edit-list">{state.fixedCosts.map((cost) => <EditableFixedCostRow key={cost.id} cost={cost} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />)}</div>;
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  return (
+    <div className="fixed-editor-list">
+      {state.fixedCosts.map((cost) => {
+        const isOpen = selectedId === cost.id;
+        const isEditing = editingId === cost.id;
+        const category = state.categories.find((item) => item.id === cost.categoryId);
+        const account = state.accounts.find((item) => item.id === cost.accountId);
+        return (
+          <div className="fixed-editor-card" key={cost.id}>
+            <button className="fixed-editor-head" type="button" onClick={() => { setSelectedId(isOpen ? null : cost.id); setEditingId(null); }}>
+              <span>{cost.name}</span>
+              <strong>{yen.format(cost.amount)}</strong>
+            </button>
+            {isOpen && !isEditing && (
+              <div className="fixed-detail">
+                <span>支払日: 毎月{cost.dueDay}日</span>
+                <span>カテゴリ: {category?.name ?? "未設定"}</span>
+                <span>支払元: {account?.name ?? "未設定"}</span>
+                <span>反映期間: {cost.effectiveFrom ? cost.effectiveFrom.slice(0, 7) : "開始月なし"} から {cost.effectiveTo ? cost.effectiveTo.slice(0, 7) : "継続中"}</span>
+                <button type="button" onClick={() => setEditingId(cost.id)}>編集する</button>
+              </div>
+            )}
+            {isOpen && isEditing && <EditableFixedCostRow cost={cost} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
-function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
+function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
   const [draft, setDraft] = useState(cost);
-  return <div className="edit-row"><input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /><input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} /><select value={draft.status} onChange={(event) => setDraft({ ...draft, status: event.target.value as FixedCostStatus })}><option value="planned">予定</option><option value="confirmed">確定</option><option value="paid">支払済</option></select><button onClick={async () => { try { await updateFixedCost(cost.id, draft); await reloadHousehold(state.householdId ?? ""); setNotice("固定費を更新しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "固定費更新に失敗しました。"); } }}>更新</button><button onClick={async () => { try { await deleteFixedCost(cost.id); await reloadHousehold(state.householdId ?? ""); setNotice("固定費を削除しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "固定費削除に失敗しました。"); } }}>削除</button></div>;
+  const [scope, setScope] = useState<"all" | "future">("all");
+  const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
+  return (
+    <div className="edit-row">
+      <label>固定費名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+      <label>金額<input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} /></label>
+      <label>支払日<input type="number" min="1" max="31" value={draft.dueDay} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value) })} /></label>
+      <label>反映範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">すべてに反映</option><option value="future">指定月以降に反映</option></select></label>
+      {scope === "future" && <label>開始月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
+      <button onClick={async () => { try { await updateFixedCost(cost.id, { ...draft, status: "planned" }, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を更新しました。" : "固定費を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費更新に失敗しました。")); } }}>変更を保存</button>
+      <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を削除しました。" : "固定費を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費削除に失敗しました。")); } }}>固定費を削除</button>
+      <button type="button" onClick={onDone}>編集をやめる</button>
+    </div>
+  );
 }
 
 function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
@@ -850,34 +1085,52 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   const [draft, setDraft] = useState(transaction);
   const category = state.categories.find((item) => item.id === transaction.categoryId);
   const account = state.accounts.find((item) => item.id === transaction.accountId);
+  const normalAccounts = state.accounts.filter((item) => item.type !== "credit");
+  async function saveDraft() {
+    const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
+    const payload = {
+      ...draft,
+      categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
+      transferToAccountId: draft.type === "transfer" ? draft.transferToAccountId || normalAccounts.find((item) => item.id !== draft.accountId)?.id : undefined,
+      creditStatus: draft.type === "expense" && creditAccount ? draft.creditStatus ?? "unconfirmed" as const : undefined,
+      reflectedDate: draft.type === "expense" && creditAccount ? draft.reflectedDate ?? nextWithdrawalDate(creditAccount, draft.date) : undefined
+    };
+    await updateTransaction(transaction.id, payload);
+    setEditing(false);
+    await reload();
+    setNotice("取引を更新しました。");
+  }
   if (editing) {
     return (
       <article className="tx-edit">
-        <select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select>
-        <input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} />
-        <select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{state.categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-        <select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{state.accounts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
-        <input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} />
-        <input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} />
-        <button onClick={async () => { try { await updateTransaction(transaction.id, draft); setEditing(false); await reload(); setNotice("取引を更新しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "取引更新に失敗しました。"); } }}>保存</button>
-        <button onClick={() => setEditing(false)}>取消</button>
+        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
+        <label>金額<input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} /></label>
+        {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{state.categories.map((item) => <option key={item.id} value={item.id}>{item.parentId ? "└ " : ""}{item.name}</option>)}</select></label>}
+        <label>{draft.type === "income" ? "入金先" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        <label>日付<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+        <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
+        <button onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
+        <button onClick={() => setEditing(false)}>編集をやめる</button>
       </article>
     );
   }
   return (
     <article>
       <div className={`tx-icon ${transaction.type}`}><ArrowDownUp size={16} /></div>
-      <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transaction.date} / {account?.name}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
+      <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transaction.date} / {account?.name}{transaction.reflectedDate ? ` / 反映日 ${transaction.reflectedDate}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
       <em>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
       <button className="mini-button" onClick={() => setEditing(true)}>編集</button>
-      <button className="mini-button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(error instanceof Error ? error.message : "取引削除に失敗しました。"); } }}>削除</button>
+      <button className="mini-button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>取引削除</button>
     </article>
   );
 }
 
-function nextWithdrawalDate(day: number) {
-  const date = new Date();
-  date.setMonth(date.getMonth() + 1);
-  date.setDate(Math.min(day, 28));
-  return date.toISOString().slice(0, 10);
+function nextWithdrawalDate(account: LedgerState["accounts"][number], occurredOn: string) {
+  const closingDay = account.closingDay ?? 25;
+  const withdrawalDay = account.withdrawalDay ?? 10;
+  const usedAt = new Date(`${occurredOn}T00:00:00`);
+  const monthsToAdd = usedAt.getDate() <= closingDay ? 1 : 2;
+  const target = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, Math.min(withdrawalDay, 28));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
