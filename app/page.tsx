@@ -488,7 +488,7 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
 
       <section className="ai-panel">
         <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
-        <AiCommentary state={state} stats={stats} category={category} limit={2} />
+        <AiCommentary state={state} stats={stats} category={category} limit={3} />
       </section>
 
       <section className="panel chart-panel">
@@ -508,25 +508,27 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
       <div className="home-chart-grid">
         <section className="panel chart-panel">
           <div className="section-title"><h2>資産の内訳</h2><span>口座別</span></div>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={176}>
             <PieChart>
-              <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={50} outerRadius={74} paddingAngle={3} labelLine={false} label={(props) => renderCompactPieLabel(props, assetTotal)}>
+              <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
                 {(assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
           </ResponsiveContainer>
+          <PieLegend data={assetBreakdown} total={assetTotal} emptyLabel="資産なし" />
         </section>
         <section className="panel chart-panel">
           <div className="section-title"><h2>支出カテゴリ</h2><span>今月</span></div>
-          <ResponsiveContainer width="100%" height={210}>
+          <ResponsiveContainer width="100%" height={176}>
             <PieChart>
-              <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={50} outerRadius={74} paddingAngle={3} labelLine={false} label={(props) => renderCompactPieLabel(props, categoryTotal)}>
+              <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
                 {(category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
           </ResponsiveContainer>
+          <PieLegend data={category} total={categoryTotal} emptyLabel="支出なし" />
         </section>
       </div>
 
@@ -782,13 +784,26 @@ function FixedCostOccurrenceRow({ row, state }: { row: FixedCostOccurrence; stat
 }
 
 function useFinanceAi(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
-  const [lines, setLines] = useState<string[]>([]);
+  const fallback = buildAiInsights(state, category);
+  const [lines, setLines] = useState<string[]>(fallback);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const top = [...category].sort((a, b) => b.value - a.value)[0];
     const income = stats.income ?? monthlyIncome(monthTransactions(state.transactions));
     const expense = stats.expense ?? monthlyExpenseWithFixed(state);
+    const primaryGoal = state.goals[0];
+    const projection = primaryGoal ? goalProjection(primaryGoal, state) : null;
+    const deadlinePlan = primaryGoal ? goalDeadlinePlan(primaryGoal, state) : null;
+    const categoryBreakdown = [...category]
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 3)
+      .map((item) => `${item.name}:${yen.format(item.value)}`)
+      .join("、") || "支出カテゴリなし";
+    const assetBreakdown = state.accounts
+      .filter((account) => account.type !== "credit")
+      .map((account) => `${account.name}:${yen.format(calculateAccountBalance(account, state.transactions))}`)
+      .join("、") || "資産口座なし";
     const prompt = buildFinancePrompt({
       income,
       expense,
@@ -798,19 +813,26 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       topCategoryAmount: top?.value ?? 0,
       savingRate: Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0),
       averageSaving: averageMonthlySaving(state),
-      creditPending: stats.credit ?? monthlyCreditWithdrawals(state)
+      creditPending: stats.credit ?? monthlyCreditWithdrawals(state),
+      fixedCost: stats.fixed ?? fixedCostForecast(state.fixedCosts),
+      monthlyBalance: income - expense,
+      categoryBreakdown,
+      assetBreakdown,
+      goalSummary: primaryGoal && projection && deadlinePlan
+        ? `${primaryGoal.name}: 不足${yen.format(projection.remaining)}、期限${primaryGoal.deadline}、必要月額${yen.format(deadlinePlan.requiredMonthly)}`
+        : "目標未設定"
     });
     let cancelled = false;
-    setLines([]);
+    setLines(fallback);
     setLoading(true);
     analyzeFinance(prompt)
       .then((text) => {
         if (cancelled) return;
         const next = text.split("\n").map((line) => line.trim()).filter(Boolean);
-        setLines(next.length ? next : ["AI分析を取得できませんでした。"]);
+        setLines(next.length ? next : fallback);
       })
       .catch(() => {
-        if (!cancelled) setLines(["AI分析を取得できませんでした。"]);
+        if (!cancelled) setLines(fallback);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -818,7 +840,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
     return () => {
       cancelled = true;
     };
-  }, [state.householdId, state.transactions.length, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, category.length]);
+  }, [state.householdId, state.transactions.length, state.fixedCosts.length, state.goals.length, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, stats.fixed, category.length]);
 
   return { lines, loading };
 }
@@ -901,9 +923,9 @@ function AnalysisView({ state }: { state: LedgerState }) {
       <section className="panel chart-panel">
         <div className="section-title"><h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2><span>{drillParent ? "戻る" : "今月"}</span></div>
         {drillParent && <button className="google-button" type="button" onClick={() => setDrillParentId(null)}>カテゴリー全体に戻る</button>}
-        <ResponsiveContainer width="100%" height={230}>
+        <ResponsiveContainer width="100%" height={190}>
           <PieChart>
-            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={4} labelLine={false} label={(props) => renderCompactPieLabel(props, drillData.reduce((sum, item) => sum + item.value, 0))} onClick={(entry) => {
+            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={4} onClick={(entry) => {
               const parent = state.categories.find((item) => item.name === entry.name && !item.parentId);
               if (parent) setDrillParentId(parent.id);
             }}>
@@ -912,6 +934,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
             <Tooltip formatter={(value) => yen.format(Number(value))} />
           </PieChart>
         </ResponsiveContainer>
+        <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
       <section className="panel">
         <div className="section-title"><h2>カテゴリー別割合</h2><span>表</span></div>
@@ -991,23 +1014,21 @@ function monthlyTrend(state: LedgerState) {
   });
 }
 
-function compactYen(value: number) {
-  if (value >= 10000) return `${Math.round(value / 10000)}万`;
-  return `${Math.round(value / 1000)}千`;
-}
-
-function renderCompactPieLabel(props: { cx?: number; cy?: number; midAngle?: number; innerRadius?: number; outerRadius?: number; name?: string; value?: number }, total: number) {
-  const { cx = 0, cy = 0, midAngle = 0, outerRadius = 0, name = "", value = 0 } = props;
-  if (!value || !total) return null;
-  const radius = outerRadius + 14;
-  const radian = Math.PI / 180;
-  const x = cx + radius * Math.cos(-midAngle * radian);
-  const y = cy + radius * Math.sin(-midAngle * radian);
-  const percent = Math.round((value / total) * 100);
+function PieLegend({ data, total, emptyLabel }: { data: Array<{ name: string; value: number; fill?: string }>; total: number; emptyLabel: string }) {
+  const rows = data.length ? data : [{ name: emptyLabel, value: 0, fill: "#d6d3d1" }];
   return (
-    <text x={x} y={y} fill="#17201c" textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={10} fontWeight={800}>
-      {`${name} ${percent}% ${compactYen(value)}`}
-    </text>
+    <div className="pie-legend">
+      {rows.slice(0, 6).map((item) => {
+        const percent = total > 0 ? Math.round((item.value / total) * 100) : 0;
+        return (
+          <div key={item.name}>
+            <span><i style={{ background: item.fill ?? "#0f766e" }} />{item.name}</span>
+            <strong>{yen.format(item.value)}</strong>
+            <em>{percent}%</em>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
