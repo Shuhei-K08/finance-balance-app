@@ -377,7 +377,9 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     })),
     transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => {
       const creditAccount = ((accountsResult.data ?? []) as DbAccount[]).find((account) => account.id === transaction.account_id && account.account_type === "credit");
-      const reflectedDate = transaction.reflected_on ?? (transaction.transaction_type === "expense" && creditAccount ? calculateWithdrawalDate(creditAccount, transaction.occurred_on) : undefined);
+      const reflectedDate = transaction.transaction_type === "expense" && creditAccount && transaction.credit_status !== "withdrawn"
+        ? calculateWithdrawalDate(creditAccount, transaction.occurred_on)
+        : transaction.reflected_on ?? undefined;
       return {
         id: transaction.id,
         type: transaction.transaction_type,
@@ -487,6 +489,7 @@ export async function updateOpeningBalances(balances: Record<string, { amount: n
 
 export async function createAccount(householdId: string, input: { name: string; type: AccountType; openingBalance: number; openingBalanceDate: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
   const client = requireSupabase();
+  if (input.type === "credit" && !input.withdrawalAccountId) throw new Error("引落口座を選択してください。");
   const { error } = await client.from("accounts").insert({
     household_id: householdId,
     name: input.name,
@@ -503,6 +506,7 @@ export async function createAccount(householdId: string, input: { name: string; 
 
 export async function updateAccount(accountId: string, input: { name: string; openingBalance: number; openingBalanceDate: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
   const client = requireSupabase();
+  if ((input.closingDay || input.withdrawalDay) && !input.withdrawalAccountId) throw new Error("引落口座を選択してください。");
   const { error } = await client.from("accounts").update({
     name: input.name,
     opening_balance: input.openingBalance,
