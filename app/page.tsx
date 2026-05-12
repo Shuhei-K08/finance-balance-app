@@ -514,6 +514,7 @@ function HomeView({
   const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, isSnapshotConfirmed);
   const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
+  const [homeEntryFilter, setHomeEntryFilter] = useState<"expense" | "income">("expense");
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -531,10 +532,12 @@ function HomeView({
       name: account.name,
       value: Math.max(confirmedAccountBalance(account, state, calendarMonth), 0),
       fill: account.color
-    }))
-    .filter((item) => item.value > 0);
+    }));
   const assetTotal = assetBreakdown.reduce((sum, item) => sum + item.value, 0);
+  const assetPieData = assetBreakdown.filter((item) => item.value > 0);
   const categoryTotal = category.reduce((sum, item) => sum + item.value, 0);
+  const savingAmount = stats.income - stats.expense;
+  const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
   return (
     <div className="view-stack">
       <section className="hero-panel">
@@ -566,11 +569,9 @@ function HomeView({
       )}
 
       <div className="stat-grid">
-        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} />
-        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} />
-        <Metric icon={PiggyBank} label="貯金率" value={`${Math.max(Math.round(((stats.income - stats.expense) / Math.max(stats.income, 1)) * 100), 0)}%`} />
-        <Metric icon={Landmark} label={`${monthLabel} 固定費`} value={yen.format(stats.fixed)} />
-        <Metric icon={Wallet} label={`${monthLabel} 引落予定`} value={yen.format(stats.credit)} />
+        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} active={homeEntryFilter === "expense"} onClick={() => setHomeEntryFilter("expense")} />
+        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} active={homeEntryFilter === "income"} onClick={() => setHomeEntryFilter("income")} />
+        <Metric icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)} / ${savingRate}%`} />
       </div>
 
       <section className="ai-panel">
@@ -597,8 +598,8 @@ function HomeView({
           <div className="section-title"><h2>資産の内訳</h2><span>{monthLabel}</span></div>
           <ResponsiveContainer width="100%" height={176}>
             <PieChart>
-              <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
-                {(assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+              <Pie data={assetPieData.length ? assetPieData : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
+                {(assetPieData.length ? assetPieData : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
@@ -628,6 +629,7 @@ function HomeView({
         setSelectedMonth={setCalendarMonth}
         selectedDate={calendarDate}
         setSelectedDate={setCalendarDate}
+        entryFilter={homeEntryFilter}
       />
     </div>
   );
@@ -863,7 +865,8 @@ function HomeCalendar({
   selectedMonth,
   setSelectedMonth,
   selectedDate,
-  setSelectedDate
+  setSelectedDate,
+  entryFilter
 }: {
   state: LedgerState;
   setNotice: (message: string) => void;
@@ -873,6 +876,7 @@ function HomeCalendar({
   setSelectedMonth: (value: string) => void;
   selectedDate: string;
   setSelectedDate: (value: string) => void;
+  entryFilter: "expense" | "income";
 }) {
   const [modalDate, setModalDate] = useState<string | null>(null);
   const monthKey = selectedMonth;
@@ -883,10 +887,10 @@ function HomeCalendar({
   const monthIncome = monthlyIncome(monthRows);
   const fixedExpense = fixedRows.reduce((sum, row) => sum + row.amount, 0);
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
-  const monthEntries = [
-    ...monthRows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
-    ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
-  ].sort((a, b) => b.date.localeCompare(a.date));
+  const monthEntries = monthRows
+    .filter((transaction) => transaction.type === entryFilter)
+    .map((transaction) => ({ date: transactionLedgerDate(transaction), transaction }))
+    .sort((a, b) => b.date.localeCompare(a.date));
 
   function moveMonth(delta: number) {
     const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
@@ -923,7 +927,7 @@ function HomeCalendar({
         <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>{formatMonthLabel(monthKey)} の収支一覧</h2><span>{monthEntries.length}件</span></div>
+        <div className="section-title"><h2>{formatMonthLabel(monthKey)} の{entryFilter === "income" ? "収入" : "支出"}一覧</h2><span>{monthEntries.length}件</span></div>
         <MonthEntryList entries={monthEntries} state={state} setNotice={setNotice} reload={reload} />
       </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
@@ -960,33 +964,15 @@ function MonthEntryList({
   setNotice,
   reload
 }: {
-  entries: Array<{ kind: "transaction"; date: string; transaction: LedgerState["transactions"][number] } | { kind: "fixed"; date: string; fixedCost: FixedCostOccurrence }>;
+  entries: Array<{ date: string; transaction: LedgerState["transactions"][number] }>;
   state: LedgerState;
   setNotice: (message: string) => void;
   reload: () => Promise<void>;
 }) {
   if (entries.length === 0) return <div className="empty-state"><span>この月の収支はまだありません。</span></div>;
-  const compactEntries = entries.slice(0, 12);
-  const remaining = Math.max(entries.length - compactEntries.length, 0);
   return (
     <div className="transaction-list month-entry-list">
-      {compactEntries.map((entry) => (
-        entry.kind === "fixed"
-          ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
-          : <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
-      ))}
-      {remaining > 0 && (
-        <details className="more-entries">
-          <summary>さらに{remaining}件を見る</summary>
-          <div className="transaction-list">
-            {entries.slice(12).map((entry) => (
-              entry.kind === "fixed"
-                ? <FixedCostOccurrenceRow key={`fixed-more-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
-                : <TransactionRow key={`more-${entry.transaction.id}`} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
-            ))}
-          </div>
-        </details>
-      )}
+      {entries.map((entry) => <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />)}
     </div>
   );
 }
@@ -1003,7 +989,6 @@ function FixedCostOccurrenceRow({ row, state }: { row: FixedCostOccurrence; stat
       <div className="tx-icon fixed"><Landmark size={16} /></div>
       <div><strong>{row.name}</strong><span>{row.date} / 固定費 / {category?.name ?? "未設定"} / {account?.name ?? "未設定"}</span></div>
       <em>-{yen.format(row.amount)}</em>
-      <span className="fixed-badge">予定</span>
     </article>
   );
 }
@@ -2095,8 +2080,10 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
   );
 }
 
-function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
-  return <section className="metric"><Icon size={19} /><span>{label}</span><strong>{value}</strong></section>;
+function Metric({ icon: Icon, label, value, active, onClick }: { icon: React.ElementType; label: string; value: string; active?: boolean; onClick?: () => void }) {
+  const content = <><Icon size={19} /><span>{label}</span><strong>{value}</strong></>;
+  if (onClick) return <button type="button" className={`metric metric-button${active ? " active" : ""}`} onClick={onClick}>{content}</button>;
+  return <section className="metric">{content}</section>;
 }
 
 function shouldShowAssetSnapshotPanel(monthKey: string, confirmed: boolean) {
@@ -2175,6 +2162,7 @@ function TransactionList({ state, limit, setNotice, reload }: { state: LedgerSta
 
 function TransactionRow({ transaction, state, setNotice, reload }: { transaction: LedgerState["transactions"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
   const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(transaction);
   const category = state.categories.find((item) => item.id === transaction.categoryId);
   const account = state.accounts.find((item) => item.id === transaction.accountId);
@@ -2262,12 +2250,18 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
     );
   }
   return (
-    <article>
-      <div className={`tx-icon ${transaction.type}`}><ArrowDownUp size={16} /></div>
-      <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transactionLedgerDate(transaction)} / {account?.name}{transaction.reflectedDate ? ` / 使用日 ${transaction.date}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
-      <em>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
-      <button className="mini-button" onClick={() => setEditing(true)}>編集</button>
-      <button className="mini-button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>取引削除</button>
+    <article className={`tx-row${expanded ? " expanded" : ""}`}>
+      <button className="tx-main" type="button" onClick={() => setExpanded(!expanded)}>
+        <div className={`tx-icon ${transaction.type}`}><ArrowDownUp size={16} /></div>
+        <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transactionLedgerDate(transaction)} / {account?.name}{transaction.reflectedDate ? ` / 使用日 ${transaction.date}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
+        <em>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
+      </button>
+      {expanded && (
+        <div className="tx-row-actions">
+          <button className="mini-button" type="button" onClick={() => setEditing(true)}>編集する</button>
+          <button className="mini-button danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除する</button>
+        </div>
+      )}
     </article>
   );
 }
