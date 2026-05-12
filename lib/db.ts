@@ -207,8 +207,13 @@ export async function createSharedLedger(name: string) {
 
 export async function joinSharedLedger(inviteCode: string) {
   const client = requireSupabase();
-  await ensurePersonalLedger();
-  const { data, error } = await client.rpc("join_shared_ledger", { code: inviteCode.trim().toUpperCase() });
+  const normalizedCode = inviteCode
+    .trim()
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[^a-z0-9]/gi, "")
+    .toUpperCase();
+  if (!normalizedCode) throw new Error("招待コードを入力してください。");
+  const { data, error } = await client.rpc("join_shared_ledger", { code: normalizedCode });
   if (error) throwJapanese(error, "共有家計簿への参加に失敗しました。");
   return data as string;
 }

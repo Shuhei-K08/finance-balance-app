@@ -439,32 +439,6 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
   );
 }
 
-function useAiInsights(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
-  const [aiText, setAiText] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    const top = [...category].sort((a, b) => b.value - a.value)[0];
-    const income = stats.income ?? 0;
-    const expense = stats.expense ?? 0;
-    const savingRate = Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0);
-    const prompt = buildFinancePrompt({
-      income,
-      expense,
-      assets: stats.assets ?? 0,
-      forecast: stats.forecast ?? 0,
-      topCategory: top?.name ?? "なし",
-      topCategoryAmount: top?.value ?? 0,
-      savingRate
-    });
-    setLoading(true);
-    analyzeFinance(prompt)
-      .then(setAiText)
-      .catch(() => setAiText("AI分析を取得できませんでした。"))
-      .finally(() => setLoading(false));
-  }, []);
-  return { aiText, loading };
-}
-
 function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerState; stats: Record<string, number>; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
   const category = categoryExpense(state);
   const assetBreakdown = state.accounts.map((account) => ({
@@ -472,7 +446,6 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
     value: Math.max(calculateAccountBalance(account, state.transactions), 0),
     fill: account.color
   })).filter((item) => item.value > 0);
-  const aiInsights = buildAiInsights(state, category).slice(0, 2);
   const assetTotal = assetBreakdown.reduce((sum, item) => sum + item.value, 0);
   const categoryTotal = category.reduce((sum, item) => sum + item.value, 0);
   return (
@@ -494,7 +467,10 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         <Metric icon={Wallet} label="引落予定" value={yen.format(stats.credit)} />
       </div>
 
-      <AiPanel state={state} stats={stats} category={category} />
+      <section className="ai-panel">
+        <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
+        <AiCommentary state={state} stats={stats} category={category} limit={2} />
+      </section>
 
       <section className="panel chart-panel">
         <div className="section-title"><h2>残高推移</h2><span>予測は点線</span></div>
@@ -542,17 +518,6 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         <TransactionList state={state} limit={5} setNotice={setNotice} reload={reload} />
       </section>
     </div>
-  );
-}
-
-function AiPanel({ state, stats, category }: { state: LedgerState; stats: Record<string, number>; category: Array<{ name: string; value: number }> }) {
-  const { aiText, loading } = useAiInsights(state, stats, category);
-  const lines = aiText.split("\n").filter(Boolean);
-  return (
-    <section className="ai-panel">
-      <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
-      {loading ? <p>分析中...</p> : lines.map((line, i) => <p key={i}>{line}</p>)}
-    </section>
   );
 }
 
@@ -703,6 +668,58 @@ function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: 
   );
 }
 
+function useFinanceAi(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
+  const fallback = buildAiInsights(state, category);
+  const [lines, setLines] = useState(fallback);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const top = [...category].sort((a, b) => b.value - a.value)[0];
+    const income = stats.income ?? monthlyIncome(monthTransactions(state.transactions));
+    const expense = stats.expense ?? monthlyExpense(monthTransactions(state.transactions));
+    const prompt = buildFinancePrompt({
+      income,
+      expense,
+      assets: stats.assets ?? totalAssets(state),
+      forecast: stats.forecast ?? projectedMonthEnd(state),
+      topCategory: top?.name ?? "なし",
+      topCategoryAmount: top?.value ?? 0,
+      savingRate: Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0),
+      averageSaving: averageMonthlySaving(state),
+      creditPending: stats.credit ?? pendingCreditWithdrawals(state)
+    });
+    let cancelled = false;
+    setLoading(true);
+    analyzeFinance(prompt)
+      .then((text) => {
+        if (cancelled) return;
+        const next = text.split("\n").map((line) => line.trim()).filter(Boolean);
+        setLines(next.length ? next : fallback);
+      })
+      .catch(() => {
+        if (!cancelled) setLines(fallback);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.householdId, state.transactions.length, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, category.length]);
+
+  return { lines, loading };
+}
+
+function AiCommentary({ state, stats, category, limit }: { state: LedgerState; stats: Record<string, number>; category: Array<{ name: string; value: number }>; limit?: number }) {
+  const { lines, loading } = useFinanceAi(state, stats, category);
+  return (
+    <>
+      {loading && <p>AIが分析中です...</p>}
+      {lines.slice(0, limit).map((line) => <p key={line}>{line}</p>)}
+    </>
+  );
+}
+
 function AnalysisView({ state }: { state: LedgerState }) {
   const category = categoryExpense(state);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
@@ -714,20 +731,45 @@ function AnalysisView({ state }: { state: LedgerState }) {
     { name: "支出", value: monthlyExpense(monthTransactions(state.transactions)), fill: "#dc2626" },
     { name: "貯金", value: Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpense(monthTransactions(state.transactions)), 0), fill: "#0f766e" }
   ];
-  const aiInsights = buildAiInsights(state, category);
   const trend = monthlyTrend(state);
   const savingAverage = averageMonthlySaving(state);
-  const savingRate = Math.round((monthlyIncome(monthTransactions(state.transactions)) - monthlyExpense(monthTransactions(state.transactions))) / Math.max(monthlyIncome(monthTransactions(state.transactions)), 1) * 100);
+  const month = monthTransactions(state.transactions);
+  const income = monthlyIncome(month);
+  const expense = monthlyExpense(month);
+  const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
+  const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
+  const suggestedCut = topCategory ? Math.min(Math.ceil(topCategory.value * 0.15 / 1000) * 1000, 30000) : 0;
+  const analysisStats = {
+    assets: totalAssets(state),
+    expense,
+    income,
+    forecast: projectedMonthEnd(state),
+    fixed: fixedCostForecast(state.fixedCosts),
+    credit: pendingCreditWithdrawals(state)
+  };
   return (
     <div className="view-stack">
-      <div className="stat-grid">
-        <Metric icon={Wallet} label="平均貯金額" value={yen.format(savingAverage)} />
-        <Metric icon={PiggyBank} label="今月貯金率" value={`${Math.max(savingRate, 0)}%`} />
-        <Metric icon={BarChart3} label="支出カテゴリ数" value={`${category.length}件`} />
-      </div>
-      <section className="ai-panel">
-        <div className="section-title"><h2>AI分析</h2><span>今月の傾向</span></div>
-        {aiInsights.map((insight) => <p key={insight}>{insight}</p>)}
+      <section className="insight-grid">
+        <div className="insight-card teal">
+          <PiggyBank size={28} />
+          <span>年間でいくら貯金できるか予測</span>
+          <p>これまでの収入・支出の傾向から、年間でどれくらい貯金できるかを自動で予測します。</p>
+          <strong>{yen.format(savingAverage * 12)}</strong>
+          <div className="mini-bars">{[0.42, 0.52, 0.61, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
+        </div>
+        <div className="insight-card orange">
+          <Goal size={30} />
+          <span>AIが支出を分析</span>
+          <AiCommentary state={state} stats={analysisStats} category={category} limit={1} />
+          <strong>{Math.max(savingRate, 0)}%</strong>
+          <div className="progress"><span style={{ width: `${Math.min(Math.max(savingRate, 0), 100)}%` }} /></div>
+        </div>
+        <div className="insight-card warn">
+          <Sparkles size={30} />
+          <span>改善アドバイス</span>
+          <p>{topCategory ? `${topCategory.name}を月${yen.format(suggestedCut)}減らすと、貯金余力が上がります。` : "支出データが増えると、より具体的に改善提案できます。"}</p>
+          <strong>{topCategory ? `${topCategory.name}` : "分析待ち"}</strong>
+        </div>
       </section>
       <section className="panel chart-panel">
         <div className="section-title"><h2>収支推移</h2><span>直近6ヶ月</span></div>
@@ -885,6 +927,11 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
+  const primaryGoal = state.goals[0];
+  const primaryProjection = primaryGoal ? goalProjection(primaryGoal, state) : null;
+  const savingAverage = averageMonthlySaving(state);
+  const topCategory = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
+  const suggestedCut = topCategory ? Math.min(Math.ceil(topCategory.value * 0.15 / 1000) * 1000, 30000) : 0;
   async function saveGoal(goalId?: string) {
     if (!draft.name.trim()) {
       setNotice("目標名を入力してください。");
@@ -904,6 +951,28 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
   }
   return (
     <div className="view-stack">
+      <section className="insight-grid">
+        <div className="insight-card teal">
+          <PiggyBank size={30} />
+          <span>年間でいくら貯金できるか予測</span>
+          <p>これまでの収入・支出の傾向から、年間でどれくらい貯金できるかを自動で予測します。</p>
+          <strong>{yen.format(savingAverage * 12)}</strong>
+          <div className="mini-bars">{[0.38, 0.48, 0.58, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
+        </div>
+        <div className="insight-card orange">
+          <Goal size={32} />
+          <span>目標達成をAIがサポート</span>
+          <p>{primaryGoal ? `${primaryGoal.name}は、このペースなら${primaryProjection?.projectedDate}ごろ達成見込みです。` : "目標を設定すると、達成可能性を自動判定します。"}</p>
+          <strong>{primaryProjection ? `${Math.round(primaryProjection.progress)}%` : "未設定"}</strong>
+          <div className="progress"><span style={{ width: `${primaryProjection ? primaryProjection.progress : 0}%` }} /></div>
+        </div>
+        <div className="insight-card warn">
+          <Sparkles size={32} />
+          <span>達成が難しい場合はアドバイス</span>
+          <p>{topCategory ? `${topCategory.name}を月${yen.format(suggestedCut)}減らすと、達成確率を上げられます。` : "支出を登録すると、改善ポイントを具体的に提案します。"}</p>
+          <strong>{topCategory ? `${topCategory.name}` : "分析待ち"}</strong>
+        </div>
+      </section>
       <section className="panel">
         <div className="section-title"><h2>目標貯金</h2><span>追加・達成予測</span></div>
         <button className="full-primary" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}>目標を追加する</button>
@@ -1160,6 +1229,7 @@ function SettingsView({
               try {
                 const householdId = await joinSharedLedger(inviteCode);
                 await reloadHousehold(householdId);
+                setInviteCode("");
                 setNotice("共有家計簿に参加しました。");
               } catch (error) {
                 setNotice(toJapaneseError(error, "共有家計簿への参加に失敗しました。"));
@@ -1554,12 +1624,14 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   const editCategories = state.categories.filter((item) => item.kind === (draft.type === "income" ? "income" : "expense"));
   async function saveDraft() {
     const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
+    const withdrawalDate = draft.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, draft.date) : undefined;
     const payload = {
       ...draft,
       categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
       transferToAccountId: draft.type === "transfer" ? draft.transferToAccountId || normalAccounts.find((item) => item.id !== draft.accountId)?.id : undefined,
       creditStatus: draft.type === "expense" && creditAccount ? draft.creditStatus ?? "unconfirmed" as const : undefined,
-      reflectedDate: draft.type === "expense" && creditAccount ? draft.reflectedDate ?? nextWithdrawalDate(creditAccount, draft.date) : undefined
+      date: withdrawalDate ?? draft.date,
+      reflectedDate: withdrawalDate
     };
     await updateTransaction(transaction.id, payload);
     setEditing(false);

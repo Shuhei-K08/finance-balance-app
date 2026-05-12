@@ -894,6 +894,60 @@ input[type="range"] {
   line-height: 1.6;
 }
 
+.insight-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.insight-card {
+  display: grid;
+  gap: 10px;
+  min-height: 178px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.insight-card svg {
+  color: var(--brand);
+}
+
+.insight-card span {
+  font-weight: 900;
+}
+
+.insight-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.insight-card strong {
+  color: var(--brand-dark);
+  font-size: 24px;
+}
+
+.insight-card.orange svg,
+.insight-card.orange strong,
+.insight-card.warn svg,
+.insight-card.warn strong {
+  color: #ea580c;
+}
+
+.mini-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 36px;
+}
+
+.mini-bars i {
+  width: 18px;
+  border-radius: 5px 5px 2px 2px;
+  background: linear-gradient(180deg, #14b8a6, #0f766e);
+}
+
 .analysis-table {
   display: grid;
   gap: 6px;
@@ -1343,5 +1397,9 @@ select {
 
   .stat-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .insight-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
