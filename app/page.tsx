@@ -509,7 +509,8 @@ function HomeView({
   const monthLabel = formatMonthLabel(calendarMonth);
   const isCurrentMonth = calendarMonth === todayIso().slice(0, 7);
   const confirmedSnapshots = state.assetSnapshots.filter((snapshot) => snapshot.month === calendarMonth);
-  const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, confirmedSnapshots.length > 0);
+  const isSnapshotConfirmed = isAssetSnapshotConfirmed(state, calendarMonth);
+  const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, isSnapshotConfirmed);
   const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
   useEffect(() => {
@@ -519,6 +520,9 @@ function HomeView({
     setPromptMonth(suggestedPromptMonth);
     window.localStorage.setItem(key, "shown");
   }, [state.householdId, suggestedPromptMonth]);
+  useEffect(() => {
+    if (promptMonth && isAssetSnapshotConfirmed(state, promptMonth)) setPromptMonth(null);
+  }, [state.assetSnapshots.length, promptMonth]);
   const category = categoryExpense(state, calendarMonth);
   const assetBreakdown = state.accounts
     .filter((account) => account.type !== "credit")
@@ -557,7 +561,7 @@ function HomeView({
           snapshotCount={confirmedSnapshots.length}
         />
       )}
-      {promptMonth && (
+      {promptMonth && !isAssetSnapshotConfirmed(state, promptMonth) && (
         <AssetSnapshotPrompt
           state={state}
           monthKey={promptMonth}
@@ -2091,8 +2095,15 @@ function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: 
 function shouldShowAssetSnapshotPanel(monthKey: string, confirmed: boolean) {
   const currentMonth = todayIso().slice(0, 7);
   const day = Number(todayIso().slice(8, 10));
+  if (confirmed) return false;
   if (monthKey < currentMonth) return true;
   return monthKey === currentMonth && !confirmed && day >= 25;
+}
+
+function isAssetSnapshotConfirmed(state: LedgerState, monthKey: string) {
+  const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
+  if (assetAccounts.length === 0) return false;
+  return assetAccounts.every((account) => state.assetSnapshots.some((snapshot) => snapshot.month === monthKey && snapshot.accountId === account.id));
 }
 
 function suggestedAssetSnapshotMonth(state: LedgerState) {
@@ -2101,7 +2112,7 @@ function suggestedAssetSnapshotMonth(state: LedgerState) {
   const previous = shiftMonthKey(currentMonth, -1);
   const month = day <= 5 ? previous : day >= 25 ? currentMonth : "";
   if (!month) return null;
-  return state.assetSnapshots.some((snapshot) => snapshot.month === month) ? null : month;
+  return isAssetSnapshotConfirmed(state, month) ? null : month;
 }
 
 function MonthControl({

@@ -392,6 +392,7 @@ h2 {
 }
 
 .month-control button {
+  width: 100%;
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -399,6 +400,12 @@ h2 {
   color: var(--brand-dark);
   font-size: 12px;
   font-weight: 800;
+}
+
+.month-control input,
+input[type="month"] {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .asset-snapshot-panel {
@@ -1284,7 +1291,8 @@ input[type="range"] {
 }
 
 .month-input {
-  width: auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .settings-tabs {
@@ -1558,10 +1566,13 @@ option {
 
   .month-control {
     grid-template-columns: 1fr;
+    justify-items: stretch;
   }
 
   .month-control > span,
   .month-control input {
+    width: 100%;
+    min-width: 0;
     grid-column: auto;
   }
 
