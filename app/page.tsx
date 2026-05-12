@@ -42,6 +42,7 @@ import {
   creditStatusLabel,
   fixedCostForecast,
   goalProjection,
+  isFixedCostActiveInMonth,
   monthTransactions,
   monthlyCreditWithdrawals,
   monthlyExpense,
@@ -528,11 +529,6 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
       </div>
 
       <HomeCalendar state={state} setNotice={setNotice} reload={reload} onQuick={onQuick} />
-
-      <section className="panel">
-        <div className="section-title"><h2>最近の支出</h2><span>{state.transactions.length}件</span></div>
-        <TransactionList state={state} limit={5} setNotice={setNotice} reload={reload} />
-      </section>
     </div>
   );
 }
@@ -668,8 +664,14 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
+  const fixedRows = fixedCostOccurrences(state, monthKey);
   const monthIncome = monthlyIncome(monthRows);
-  const monthExpense = monthlyExpense(monthRows);
+  const fixedExpense = fixedRows.reduce((sum, row) => sum + row.amount, 0);
+  const monthExpense = monthlyExpense(monthRows) + fixedExpense;
+  const monthEntries = [
+    ...monthRows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
+    ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
+  ].sort((a, b) => b.date.localeCompare(a.date));
 
   function moveMonth(delta: number) {
     const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
@@ -699,10 +701,15 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
             const date = `${monthKey}-${day}`;
             const income = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
             const expense = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
-            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}</button>;
+            const fixed = fixedRows.filter((row) => row.date === date).reduce((sum, row) => sum + row.amount, 0);
+            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 -{yen.format(fixed)}</span>}</button>;
           })}
         </div>
         <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
+      </section>
+      <section className="panel">
+        <div className="section-title"><h2>{monthKey} の収支一覧</h2><span>{monthEntries.length}件</span></div>
+        <MonthEntryList entries={monthEntries} state={state} setNotice={setNotice} reload={reload} />
       </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
     </div>
@@ -711,19 +718,76 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
 
 function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: { date: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onQuick: (date: string) => void }) {
   const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction) === date);
+  const fixedRows = fixedCostOccurrences(state, date.slice(0, 7)).filter((row) => row.date === date);
+  const count = rows.length + fixedRows.length;
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
-        <div className="section-title"><h2>{date} の取引</h2><span>{rows.length}件</span></div>
+        <div className="section-title"><h2>{date} の収支</h2><span>{count}件</span></div>
         <button className="full-primary" type="button" onClick={() => onQuick(date)}>この日に登録</button>
-        {rows.length === 0 ? (
+        {count === 0 ? (
           <div className="empty-state"><span>この日の取引はまだありません。</span></div>
         ) : (
-          <TransactionList state={{ ...state, transactions: rows }} setNotice={setNotice} reload={reload} />
+          <>
+            {fixedRows.length > 0 && <FixedCostOccurrenceList rows={fixedRows} state={state} />}
+            {rows.length > 0 && <TransactionList state={{ ...state, transactions: rows }} setNotice={setNotice} reload={reload} />}
+          </>
         )}
         <button className="google-button" type="button" onClick={onClose}>閉じる</button>
       </section>
     </div>
+  );
+}
+
+type FixedCostOccurrence = LedgerState["fixedCosts"][number] & { date: string };
+
+function fixedCostOccurrences(state: LedgerState, monthKey: string): FixedCostOccurrence[] {
+  const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
+  return state.fixedCosts
+    .filter((cost) => isFixedCostActiveInMonth(cost, monthKey))
+    .map((cost) => ({
+      ...cost,
+      date: `${monthKey}-${String(Math.min(cost.dueDay, lastDay)).padStart(2, "0")}`
+    }));
+}
+
+function MonthEntryList({
+  entries,
+  state,
+  setNotice,
+  reload
+}: {
+  entries: Array<{ kind: "transaction"; date: string; transaction: LedgerState["transactions"][number] } | { kind: "fixed"; date: string; fixedCost: FixedCostOccurrence }>;
+  state: LedgerState;
+  setNotice: (message: string) => void;
+  reload: () => Promise<void>;
+}) {
+  if (entries.length === 0) return <div className="empty-state"><span>この月の収支はまだありません。</span></div>;
+  return (
+    <div className="transaction-list">
+      {entries.map((entry) => (
+        entry.kind === "fixed"
+          ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
+          : <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
+      ))}
+    </div>
+  );
+}
+
+function FixedCostOccurrenceList({ rows, state }: { rows: FixedCostOccurrence[]; state: LedgerState }) {
+  return <div className="transaction-list">{rows.map((row) => <FixedCostOccurrenceRow key={`fixed-${row.id}-${row.date}`} row={row} state={state} />)}</div>;
+}
+
+function FixedCostOccurrenceRow({ row, state }: { row: FixedCostOccurrence; state: LedgerState }) {
+  const category = state.categories.find((item) => item.id === row.categoryId);
+  const account = state.accounts.find((item) => item.id === row.accountId);
+  return (
+    <article className="fixed-occurrence-row">
+      <div className="tx-icon fixed"><Landmark size={16} /></div>
+      <div><strong>{row.name}</strong><span>{row.date} / 固定費 / {category?.name ?? "未設定"} / {account?.name ?? "未設定"}</span></div>
+      <em>-{yen.format(row.amount)}</em>
+      <span className="fixed-badge">予定</span>
+    </article>
   );
 }
 
