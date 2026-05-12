@@ -138,6 +138,17 @@ function toNumber(value: number | string | null | undefined) {
   return Number(value ?? 0);
 }
 
+function calculateWithdrawalDate(account: DbAccount, occurredOn: string) {
+  const closingDay = account.closing_day ?? 25;
+  const withdrawalDay = account.withdrawal_day ?? 10;
+  const usedAt = new Date(`${occurredOn}T00:00:00`);
+  const monthsToAdd = usedAt.getDate() <= closingDay ? 1 : 2;
+  const targetMonth = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, 1);
+  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(withdrawalDay, lastDay));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+}
+
 export async function signInWithEmail(email: string, password: string) {
   const client = requireSupabase();
   const { error } = await client.auth.signInWithPassword({ email, password });
@@ -364,18 +375,22 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       kind: category.category_kind ?? (category.name === "給与" ? "income" : "expense"),
       color: category.color
     })),
-    transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => ({
-      id: transaction.id,
-      type: transaction.transaction_type,
-      amount: toNumber(transaction.amount),
-      categoryId: transaction.category_id ?? undefined,
-      accountId: transaction.account_id,
-      transferToAccountId: transaction.transfer_to_account_id ?? undefined,
-      date: transaction.occurred_on,
-      reflectedDate: transaction.reflected_on ?? undefined,
-      memo: transaction.memo ?? undefined,
-      creditStatus: transaction.credit_status ?? undefined
-    })),
+    transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => {
+      const creditAccount = ((accountsResult.data ?? []) as DbAccount[]).find((account) => account.id === transaction.account_id && account.account_type === "credit");
+      const reflectedDate = transaction.reflected_on ?? (transaction.transaction_type === "expense" && creditAccount ? calculateWithdrawalDate(creditAccount, transaction.occurred_on) : undefined);
+      return {
+        id: transaction.id,
+        type: transaction.transaction_type,
+        amount: toNumber(transaction.amount),
+        categoryId: transaction.category_id ?? undefined,
+        accountId: transaction.account_id,
+        transferToAccountId: transaction.transfer_to_account_id ?? undefined,
+        date: transaction.occurred_on,
+        reflectedDate,
+        memo: transaction.memo ?? undefined,
+        creditStatus: transaction.credit_status ?? undefined
+      };
+    }).sort((a, b) => (b.reflectedDate || b.date).localeCompare(a.reflectedDate || a.date)),
     fixedCosts: ((fixedCostsResult.data ?? []) as DbFixedCost[]).map((cost): FixedCost => ({
       id: cost.id,
       name: cost.name,

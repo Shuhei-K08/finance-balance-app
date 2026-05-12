@@ -32,6 +32,10 @@ export function endOfMonthIso(base = new Date()) {
   return new Date(base.getFullYear(), base.getMonth() + 1, 0).toISOString().slice(0, 10);
 }
 
+export function transactionLedgerDate(transaction: Transaction) {
+  return transaction.reflectedDate || transaction.date;
+}
+
 export function calculateAccountBalance(account: Account, transactions: Transaction[]) {
   return transactions.reduce((balance, transaction) => {
     if (transaction.type === "income" && transaction.accountId === account.id) return balance + transaction.amount;
@@ -50,7 +54,7 @@ export function totalAssets(state: LedgerState) {
 
 export function monthTransactions(transactions: Transaction[], date = new Date()) {
   const key = date.toISOString().slice(0, 7);
-  return transactions.filter((transaction) => transaction.date.startsWith(key));
+  return transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
 }
 
 export function monthlyExpense(transactions: Transaction[]) {
@@ -64,7 +68,7 @@ export function monthlyIncome(transactions: Transaction[]) {
 export function averageMonthlySaving(state: LedgerState) {
   const monthly = new Map<string, { income: number; expense: number; savingTransfer: number }>();
   state.transactions.forEach((transaction) => {
-    const key = transaction.date.slice(0, 7);
+    const key = transactionLedgerDate(transaction).slice(0, 7);
     const current = monthly.get(key) ?? { income: 0, expense: 0, savingTransfer: 0 };
     if (transaction.type === "income") current.income += transaction.amount;
     if (transaction.type === "expense") current.expense += transaction.amount;
@@ -128,7 +132,7 @@ export function balanceTrend(state: LedgerState) {
     const nextMonth = new Date(month.getFullYear(), month.getMonth() + 1, 1);
     const monthEndKey = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
     const value = state.transactions
-      .filter((transaction) => transaction.date < monthEndKey)
+      .filter((transaction) => transactionLedgerDate(transaction) < monthEndKey)
       .reduce((balance, transaction) => {
         if (transaction.type === "income" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance + transaction.amount;
         if (transaction.type === "expense" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance - transaction.amount;

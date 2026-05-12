@@ -50,6 +50,7 @@ import {
   spendingAdvice,
   todayIso,
   totalAssets,
+  transactionLedgerDate,
   transactionTypeLabel,
   yen
 } from "@/lib/finance";
@@ -225,7 +226,7 @@ export default function App() {
       ...transaction,
       categoryId: transaction.type === "transfer" ? undefined : transaction.categoryId,
       transferToAccountId: transaction.type === "transfer" ? transaction.transferToAccountId : undefined,
-      date: withdrawalDate ?? transaction.date,
+      date: transaction.date,
       reflectedDate: withdrawalDate,
       creditStatus: transaction.type === "expense" && creditAccount ? "unconfirmed" as const : undefined
     };
@@ -592,7 +593,7 @@ function QuickTransactionSheet({
           {type === "transfer" && (
             <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>{normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
           )}
-          <label>日付<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
+          <label>{type === "expense" && state.accounts.find((account) => account.id === accountId)?.type === "credit" ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
         </div>
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         <button className="full-primary" type="submit">登録</button>
@@ -608,7 +609,7 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
   const monthKey = selectedMonth;
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
-  const monthRows = state.transactions.filter((transaction) => transaction.date.startsWith(monthKey));
+  const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
   const monthIncome = monthlyIncome(monthRows);
   const monthExpense = monthlyExpense(monthRows);
 
@@ -638,8 +639,8 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
           {Array.from({ length: days }).map((_, index) => {
             const day = String(index + 1).padStart(2, "0");
             const date = `${monthKey}-${day}`;
-            const income = monthRows.filter((transaction) => transaction.date === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
-            const expense = monthRows.filter((transaction) => transaction.date === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+            const income = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
+            const expense = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
             return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}</button>;
           })}
         </div>
@@ -651,7 +652,7 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
 }
 
 function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: { date: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onQuick: (date: string) => void }) {
-  const rows = state.transactions.filter((transaction) => transaction.date === date);
+  const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction) === date);
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
@@ -669,8 +670,7 @@ function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: 
 }
 
 function useFinanceAi(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
-  const fallback = buildAiInsights(state, category);
-  const [lines, setLines] = useState(fallback);
+  const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -689,15 +689,16 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       creditPending: stats.credit ?? pendingCreditWithdrawals(state)
     });
     let cancelled = false;
+    setLines([]);
     setLoading(true);
     analyzeFinance(prompt)
       .then((text) => {
         if (cancelled) return;
         const next = text.split("\n").map((line) => line.trim()).filter(Boolean);
-        setLines(next.length ? next : fallback);
+        setLines(next.length ? next : ["AI分析を取得できませんでした。"]);
       })
       .catch(() => {
-        if (!cancelled) setLines(fallback);
+        if (!cancelled) setLines(["AI分析を取得できませんでした。"]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -868,7 +869,7 @@ function monthlyTrend(state: LedgerState) {
   return Array.from({ length: 6 }).map((_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    const rows = state.transactions.filter((transaction) => transaction.date.startsWith(key));
+    const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
     const income = monthlyIncome(rows);
     const expense = monthlyExpense(rows);
     return { label: `${date.getMonth() + 1}月`, income, expense, saving: Math.max(income - expense, 0) };
@@ -898,10 +899,28 @@ function renderCompactPieLabel(props: { cx?: number; cy?: number; midAngle?: num
 function goalAdvice(goal: LedgerState["goals"][number], state: LedgerState) {
   const projection = goalProjection(goal, state);
   const top = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
+  const deadlinePlan = goalDeadlinePlan(goal, state);
   if (projection.months === 0) return "すでに達成圏内です。次の目標を作ると資産形成を続けやすくなります。";
-  if (!top) return "支出データが増えると、どこを改善すべきかより具体的に提案できます。";
-  const improve = Math.min(Math.ceil(top.value * 0.15 / 1000) * 1000, 30000);
-  return `過去の貯金ペースは月${yen.format(averageMonthlySaving(state))}です。最大支出の「${top.name}」を月${yen.format(improve)}抑えると、達成時期を早められる可能性があります。`;
+  if (deadlinePlan.months <= 0) return "期限が過ぎています。期限を見直すか、目標金額を再設定すると現実的な計画に戻せます。";
+  if (deadlinePlan.gap <= 0) return `期限までに必要な貯金は月${yen.format(deadlinePlan.requiredMonthly)}です。現在の平均ペースなら期限内に届く見込みです。`;
+  if (!top) return `期限までに月${yen.format(deadlinePlan.gap)}ほど上乗せが必要です。支出データが増えると、削減候補を具体的に提案できます。`;
+  const possibleCut = Math.min(top.value, Math.ceil(deadlinePlan.gap / 1000) * 1000);
+  return `期限までに月${yen.format(deadlinePlan.requiredMonthly)}必要です。現在の平均貯金との差は月${yen.format(deadlinePlan.gap)}なので、まず「${top.name}」を月${yen.format(possibleCut)}見直すと達成期限に近づきます。`;
+}
+
+function goalDeadlinePlan(goal: LedgerState["goals"][number], state: LedgerState) {
+  const projection = goalProjection(goal, state);
+  const deadline = new Date(`${goal.deadline}T00:00:00`);
+  const now = new Date();
+  const months = Math.max((deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth() + 1, 0);
+  const requiredMonthly = months > 0 ? Math.ceil(projection.remaining / months) : projection.remaining;
+  const averageSaving = averageMonthlySaving(state);
+  return {
+    months,
+    requiredMonthly,
+    averageSaving,
+    gap: Math.max(requiredMonthly - averageSaving, 0)
+  };
 }
 
 function TransactionDetail({ transaction, state }: { transaction: LedgerState["transactions"][number]; state: LedgerState }) {
@@ -915,8 +934,8 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
       {transaction.type !== "transfer" && <div><span>カテゴリ</span><strong>{category?.name ?? "未設定"}</strong></div>}
       <div><span>{transaction.type === "income" ? "入金先" : "支払元"}</span><strong>{account?.name ?? "未設定"}</strong></div>
       {transaction.type === "transfer" && <div><span>振替先</span><strong>{transferTo?.name ?? "未設定"}</strong></div>}
-      <div><span>日付</span><strong>{transaction.date}</strong></div>
-      {transaction.reflectedDate && <div><span>反映日</span><strong>{transaction.reflectedDate}</strong></div>}
+      <div><span>{transaction.reflectedDate ? "使用日" : "日付"}</span><strong>{transaction.date}</strong></div>
+      {transaction.reflectedDate && <div><span>引落日</span><strong>{transaction.reflectedDate}</strong></div>}
       <div><span>メモ</span><strong>{transaction.memo || "なし"}</strong></div>
     </div>
   );
@@ -929,9 +948,10 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
   const [draft, setDraft] = useState({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
   const primaryGoal = state.goals[0];
   const primaryProjection = primaryGoal ? goalProjection(primaryGoal, state) : null;
+  const primaryDeadlinePlan = primaryGoal ? goalDeadlinePlan(primaryGoal, state) : null;
   const savingAverage = averageMonthlySaving(state);
   const topCategory = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
-  const suggestedCut = topCategory ? Math.min(Math.ceil(topCategory.value * 0.15 / 1000) * 1000, 30000) : 0;
+  const suggestedCut = primaryDeadlinePlan && topCategory ? Math.min(topCategory.value, Math.ceil(primaryDeadlinePlan.gap / 1000) * 1000) : 0;
   async function saveGoal(goalId?: string) {
     if (!draft.name.trim()) {
       setNotice("目標名を入力してください。");
@@ -962,30 +982,31 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
         <div className="insight-card orange">
           <Goal size={32} />
           <span>目標達成をAIがサポート</span>
-          <p>{primaryGoal ? `${primaryGoal.name}は、このペースなら${primaryProjection?.projectedDate}ごろ達成見込みです。` : "目標を設定すると、達成可能性を自動判定します。"}</p>
+          <p>{primaryGoal ? `期限は${primaryGoal.deadline}です。必要な月貯金は${yen.format(primaryDeadlinePlan?.requiredMonthly ?? 0)}、現在ペースでは${primaryProjection?.projectedDate}ごろ達成見込みです。` : "目標を設定すると、期限から逆算して必要な貯金額を自動判定します。"}</p>
           <strong>{primaryProjection ? `${Math.round(primaryProjection.progress)}%` : "未設定"}</strong>
           <div className="progress"><span style={{ width: `${primaryProjection ? primaryProjection.progress : 0}%` }} /></div>
         </div>
         <div className="insight-card warn">
           <Sparkles size={32} />
           <span>達成が難しい場合はアドバイス</span>
-          <p>{topCategory ? `${topCategory.name}を月${yen.format(suggestedCut)}減らすと、達成確率を上げられます。` : "支出を登録すると、改善ポイントを具体的に提案します。"}</p>
-          <strong>{topCategory ? `${topCategory.name}` : "分析待ち"}</strong>
+          <p>{primaryDeadlinePlan?.gap ? `${topCategory?.name ?? "支出"}を中心に月${yen.format(suggestedCut || primaryDeadlinePlan.gap)}改善すると、期限達成に近づきます。` : "現在の平均貯金ペースなら期限内に届く見込みです。"}</p>
+          <strong>{primaryDeadlinePlan?.gap ? `不足 ${yen.format(primaryDeadlinePlan.gap)}/月` : "順調"}</strong>
         </div>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>目標貯金</h2><span>追加・達成予測</span></div>
-        <button className="full-primary" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}>目標を追加する</button>
+        <div className="section-title"><h2>目標貯金</h2><span>1つの目標を集中管理</span></div>
+        {!primaryGoal && <button className="full-primary" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}>目標を設定する</button>}
         {showForm && (
           <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal()} onCancel={() => setShowForm(false)} />
         )}
       </section>
-      {state.goals.map((goal) => {
+      {state.goals.slice(0, 1).map((goal) => {
         const projection = goalProjection(goal, state);
+        const deadlinePlan = goalDeadlinePlan(goal, state);
         const isEditing = editingId === goal.id;
         return (
           <section className="panel goal-panel" key={goal.id}>
-            <div className="section-title"><h2>{goal.name}</h2><span>{projection.projectedDate} 達成予測</span></div>
+            <div className="section-title"><h2>{goal.name}</h2><span>期限 {goal.deadline}</span></div>
             {isEditing ? (
               <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal(goal.id)} onCancel={() => setEditingId(null)} onDelete={async () => { await deleteGoal(goal.id); await reload(); setEditingId(null); setNotice("目標を削除しました。"); }} />
             ) : (
@@ -993,12 +1014,13 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
             <div className="progress"><span style={{ width: `${projection.progress}%` }} /></div>
             <div className="goal-numbers">
               <strong>{Math.round(projection.progress)}%</strong>
-              <span>不足 {yen.format(projection.remaining)} / 約{projection.months}ヶ月</span>
+              <span>不足 {yen.format(projection.remaining)} / 必要 {yen.format(deadlinePlan.requiredMonthly)}/月</span>
             </div>
             <section className="advice goal-advice"><Sparkles size={18} /><p>{goalAdvice(goal, state)}</p></section>
             <div className="goal-auto">
-              <span>過去実績から見た月平均貯金</span>
+              <span>過去実績から見た月平均貯金 / 期限まで</span>
               <strong>{yen.format(averageMonthlySaving(state))}</strong>
+              <span>{deadlinePlan.months}ヶ月</span>
             </div>
             <button className="google-button" type="button" onClick={() => { setEditingId(goal.id); setShowForm(false); setDraft({ name: goal.name, targetAmount: goal.targetAmount, accountId: goal.accountId, deadline: goal.deadline, monthlyBoost: goal.monthlyBoost }); }}>編集する</button>
             </>
@@ -1630,7 +1652,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
       categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
       transferToAccountId: draft.type === "transfer" ? draft.transferToAccountId || normalAccounts.find((item) => item.id !== draft.accountId)?.id : undefined,
       creditStatus: draft.type === "expense" && creditAccount ? draft.creditStatus ?? "unconfirmed" as const : undefined,
-      date: withdrawalDate ?? draft.date,
+      date: draft.date,
       reflectedDate: withdrawalDate
     };
     await updateTransaction(transaction.id, payload);
@@ -1646,7 +1668,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
         {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{editCategories.map((item) => <option key={item.id} value={item.id}>{item.parentId ? "└ " : ""}{item.name}</option>)}</select></label>}
         <label>{draft.type === "income" ? "入金先" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-        <label>日付<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+        <label>{draft.type === "expense" && state.accounts.find((item) => item.id === draft.accountId)?.type === "credit" ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
         <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
         <button onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
         <button onClick={() => setEditing(false)}>編集をやめる</button>
@@ -1656,7 +1678,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   return (
     <article>
       <div className={`tx-icon ${transaction.type}`}><ArrowDownUp size={16} /></div>
-      <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transaction.date} / {account?.name}{transaction.reflectedDate ? ` / 反映日 ${transaction.reflectedDate}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
+      <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transactionLedgerDate(transaction)} / {account?.name}{transaction.reflectedDate ? ` / 使用日 ${transaction.date}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
       <em>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
       <button className="mini-button" onClick={() => setEditing(true)}>編集</button>
       <button className="mini-button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>取引削除</button>
@@ -1669,6 +1691,8 @@ function nextWithdrawalDate(account: LedgerState["accounts"][number], occurredOn
   const withdrawalDay = account.withdrawalDay ?? 10;
   const usedAt = new Date(`${occurredOn}T00:00:00`);
   const monthsToAdd = usedAt.getDate() <= closingDay ? 1 : 2;
-  const target = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, Math.min(withdrawalDay, 28));
+  const targetMonth = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, 1);
+  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(withdrawalDay, lastDay));
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
