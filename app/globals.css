@@ -377,6 +377,12 @@ h2 {
   gap: 10px;
 }
 
+.month-entry-list {
+  max-height: 840px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .transaction-list article {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) auto auto auto;

@@ -44,8 +44,11 @@ import {
   fixedCostForecast,
   goalProjection,
   monthTransactions,
+  monthTransactionsByKey,
   monthlyCreditWithdrawals,
+  monthlyCreditWithdrawalsByKey,
   monthlyExpense,
+  monthlyExpenseWithFixedByKey,
   monthlyExpenseWithFixed,
   monthlyIncome,
   projectedMonthEnd,
@@ -200,14 +203,14 @@ export default function App() {
     return <OpeningSetupScreen state={state} setNotice={setNotice} onDone={() => refreshRemoteState()} />;
   }
 
-  const month = monthTransactions(state.transactions);
+  const month = monthTransactionsByKey(state.transactions, calendarMonth);
   const stats = {
-    assets: totalAssets(state),
-    expense: monthlyExpenseWithFixed(state),
+    assets: totalAssets(state, calendarMonth),
+    expense: monthlyExpenseWithFixedByKey(state, calendarMonth),
     income: monthlyIncome(month),
-    forecast: projectedMonthEnd(state),
-    fixed: fixedCostForecast(state.fixedCosts),
-    credit: monthlyCreditWithdrawals(state)
+    forecast: projectedMonthEnd(state, calendarMonth),
+    fixed: fixedCostForecast(state.fixedCosts, calendarMonth),
+    credit: monthlyCreditWithdrawalsByKey(state, calendarMonth)
   };
 
   function openQuick(date = todayIso()) {
@@ -306,7 +309,7 @@ export default function App() {
           setCalendarDate={setCalendarDate}
         />
       )}
-      {tab === "analysis" && <AnalysisView state={state} />}
+      {tab === "analysis" && <AnalysisView state={state} monthKey={calendarMonth} stats={stats} />}
       {tab === "goals" && <GoalsView state={state} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
 
@@ -493,10 +496,11 @@ function HomeView({
   calendarDate: string;
   setCalendarDate: (value: string) => void;
 }) {
-  const category = categoryExpense(state);
+  const monthLabel = formatMonthLabel(calendarMonth);
+  const category = categoryExpense(state, calendarMonth);
   const assetBreakdown = state.accounts.map((account) => ({
     name: account.name,
-    value: Math.max(calculateAccountBalance(account, state.transactions), 0),
+    value: Math.max(calculateAccountBalance(account, state.transactions, calendarMonth), 0),
     fill: account.color
   })).filter((item) => item.value > 0);
   const assetTotal = assetBreakdown.reduce((sum, item) => sum + item.value, 0);
@@ -507,28 +511,28 @@ function HomeView({
         <div>
           <p>総資産</p>
           <strong>{yen.format(stats.assets)}</strong>
-          <span>月末予測 {yen.format(stats.forecast)}</span>
+          <span>{monthLabel} 月末予測 {yen.format(stats.forecast)}</span>
         </div>
         <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
 
       <div className="stat-grid">
-        <Metric icon={Wallet} label="今月支出" value={yen.format(stats.expense)} />
-        <Metric icon={Landmark} label="今月収入" value={yen.format(stats.income)} />
+        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} />
+        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} />
         <Metric icon={PiggyBank} label="貯金率" value={`${Math.max(Math.round(((stats.income - stats.expense) / Math.max(stats.income, 1)) * 100), 0)}%`} />
-        <Metric icon={Landmark} label="固定費予定" value={yen.format(stats.fixed)} />
-        <Metric icon={Wallet} label="今月の引落予定" value={yen.format(stats.credit)} />
+        <Metric icon={Landmark} label={`${monthLabel} 固定費`} value={yen.format(stats.fixed)} />
+        <Metric icon={Wallet} label={`${monthLabel} 引落予定`} value={yen.format(stats.credit)} />
       </div>
 
       <section className="ai-panel">
-        <div className="section-title"><h2>AIがお金を分析</h2><span>今月</span></div>
-        <AiCommentary state={state} stats={stats} category={category} limit={3} />
+        <div className="section-title"><h2>AIがお金を分析</h2><span>{monthLabel}</span></div>
+        <AiCommentary state={state} stats={stats} category={category} monthKey={calendarMonth} limit={3} />
       </section>
 
       <section className="panel chart-panel">
-        <div className="section-title"><h2>残高推移</h2><span>予測は点線</span></div>
+        <div className="section-title"><h2>残高推移</h2><span>{monthLabel}基準</span></div>
         <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={balanceTrend(state)}>
+          <AreaChart data={balanceTrend(state, calendarMonth)}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
             <YAxis hide domain={["dataMin - 50000", "dataMax + 50000"]} />
@@ -541,7 +545,7 @@ function HomeView({
 
       <div className="home-chart-grid">
         <section className="panel chart-panel">
-          <div className="section-title"><h2>資産の内訳</h2><span>口座別</span></div>
+          <div className="section-title"><h2>資産の内訳</h2><span>{monthLabel}</span></div>
           <ResponsiveContainer width="100%" height={176}>
             <PieChart>
               <Pie data={assetBreakdown.length ? assetBreakdown : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
@@ -553,7 +557,7 @@ function HomeView({
           <PieLegend data={assetBreakdown} total={assetTotal} emptyLabel="資産なし" />
         </section>
         <section className="panel chart-panel">
-          <div className="section-title"><h2>支出カテゴリ</h2><span>今月</span></div>
+          <div className="section-title"><h2>支出カテゴリ</h2><span>{monthLabel}</span></div>
           <ResponsiveContainer width="100%" height={176}>
             <PieChart>
               <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
@@ -771,7 +775,7 @@ function HomeCalendar({
         <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>{monthKey} の収支一覧</h2><span>{monthEntries.length}件</span></div>
+        <div className="section-title"><h2>{formatMonthLabel(monthKey)} の収支一覧</h2><span>{monthEntries.length}件</span></div>
         <MonthEntryList entries={monthEntries} state={state} setNotice={setNotice} reload={reload} />
       </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
@@ -815,7 +819,7 @@ function MonthEntryList({
 }) {
   if (entries.length === 0) return <div className="empty-state"><span>この月の収支はまだありません。</span></div>;
   return (
-    <div className="transaction-list">
+    <div className="transaction-list month-entry-list">
       {entries.map((entry) => (
         entry.kind === "fixed"
           ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
@@ -842,15 +846,15 @@ function FixedCostOccurrenceRow({ row, state }: { row: FixedCostOccurrence; stat
   );
 }
 
-function useFinanceAi(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>) {
-  const fallback = buildAiInsights(state, category);
-  const [lines, setLines] = useState<string[]>(fallback);
+function useFinanceAi(state: LedgerState, stats: Record<string, number>, category: Array<{ name: string; value: number }>, monthKey: string) {
+  const [lines, setLines] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const top = [...category].sort((a, b) => b.value - a.value)[0];
-    const income = stats.income ?? monthlyIncome(monthTransactions(state.transactions));
-    const expense = stats.expense ?? monthlyExpenseWithFixed(state);
+    const monthRows = monthTransactionsByKey(state.transactions, monthKey);
+    const income = stats.income ?? monthlyIncome(monthRows);
+    const expense = stats.expense ?? monthlyExpenseWithFixedByKey(state, monthKey);
     const primaryGoal = state.goals[0];
     const projection = primaryGoal ? goalProjection(primaryGoal, state) : null;
     const deadlinePlan = primaryGoal ? goalDeadlinePlan(primaryGoal, state) : null;
@@ -864,16 +868,17 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       .map((account) => `${account.name}:${yen.format(calculateAccountBalance(account, state.transactions))}`)
       .join("、") || "資産口座なし";
     const prompt = buildFinancePrompt({
+      monthLabel: formatMonthLabel(monthKey),
       income,
       expense,
-      assets: stats.assets ?? totalAssets(state),
-      forecast: stats.forecast ?? projectedMonthEnd(state),
+      assets: stats.assets ?? totalAssets(state, monthKey),
+      forecast: stats.forecast ?? projectedMonthEnd(state, monthKey),
       topCategory: top?.name ?? "なし",
       topCategoryAmount: top?.value ?? 0,
       savingRate: Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0),
       averageSaving: averageMonthlySaving(state),
-      creditPending: stats.credit ?? monthlyCreditWithdrawals(state),
-      fixedCost: stats.fixed ?? fixedCostForecast(state.fixedCosts),
+      creditPending: stats.credit ?? monthlyCreditWithdrawalsByKey(state, monthKey),
+      fixedCost: stats.fixed ?? fixedCostForecast(state.fixedCosts, monthKey),
       monthlyBalance: income - expense,
       categoryBreakdown,
       assetBreakdown,
@@ -882,16 +887,16 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
         : "目標未設定"
     });
     let cancelled = false;
-    setLines(fallback);
+    setLines([]);
     setLoading(true);
     analyzeFinance(prompt)
       .then((text) => {
         if (cancelled) return;
         const next = text.split("\n").map((line) => line.trim()).filter(Boolean);
-        setLines(next.length ? next : fallback);
+        setLines(next);
       })
       .catch(() => {
-        if (!cancelled) setLines(fallback);
+        if (!cancelled) setLines([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -899,13 +904,13 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
     return () => {
       cancelled = true;
     };
-  }, [state.householdId, state.transactions.length, state.fixedCosts.length, state.goals.length, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, stats.fixed, category.length]);
+  }, [state.householdId, state.transactions.length, state.fixedCosts.length, state.goals.length, monthKey, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, stats.fixed, category.length]);
 
   return { lines, loading };
 }
 
-function AiCommentary({ state, stats, category, limit }: { state: LedgerState; stats: Record<string, number>; category: Array<{ name: string; value: number }>; limit?: number }) {
-  const { lines, loading } = useFinanceAi(state, stats, category);
+function AiCommentary({ state, stats, category, monthKey, limit }: { state: LedgerState; stats: Record<string, number>; category: Array<{ name: string; value: number }>; monthKey: string; limit?: number }) {
+  const { lines, loading } = useFinanceAi(state, stats, category, monthKey);
   return (
     <>
       {loading && <p>AIが分析中です...</p>}
@@ -914,59 +919,67 @@ function AiCommentary({ state, stats, category, limit }: { state: LedgerState; s
   );
 }
 
-function AnalysisView({ state }: { state: LedgerState }) {
-  const category = categoryExpense(state);
+function AnalysisView({ state, monthKey, stats }: { state: LedgerState; monthKey: string; stats: Record<string, number> }) {
+  const monthLabel = formatMonthLabel(monthKey);
+  const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
   const drillParent = state.categories.find((item) => item.id === drillParentId);
-  const drillData = drillParent ? subcategoryExpense(state, drillParent.id) : category;
+  const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
   const bars = [
-    { name: "収入", value: monthlyIncome(monthTransactions(state.transactions)), fill: "#16a34a" },
-    { name: "支出", value: monthlyExpenseWithFixed(state), fill: "#dc2626" },
-    { name: "貯金", value: Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpenseWithFixed(state), 0), fill: "#0f766e" }
+    { name: "収入", value: stats.income, fill: "#16a34a" },
+    { name: "支出", value: stats.expense, fill: "#dc2626" },
+    { name: "貯金", value: Math.max(stats.income - stats.expense, 0), fill: "#0f766e" }
   ];
-  const trend = monthlyTrend(state);
+  const trend = monthlyTrend(state, monthKey);
   const savingAverage = averageMonthlySaving(state);
-  const month = monthTransactions(state.transactions);
+  const month = monthTransactionsByKey(state.transactions, monthKey);
   const income = monthlyIncome(month);
-  const expense = monthlyExpenseWithFixed(state);
+  const expense = monthlyExpenseWithFixedByKey(state, monthKey);
   const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
   const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
-  const suggestedCut = topCategory ? Math.min(Math.ceil(topCategory.value * 0.15 / 1000) * 1000, 30000) : 0;
   const analysisStats = {
-    assets: totalAssets(state),
+    assets: totalAssets(state, monthKey),
     expense,
     income,
-    forecast: projectedMonthEnd(state),
-    fixed: fixedCostForecast(state.fixedCosts),
-    credit: monthlyCreditWithdrawals(state)
+    forecast: projectedMonthEnd(state, monthKey),
+    fixed: fixedCostForecast(state.fixedCosts, monthKey),
+    credit: monthlyCreditWithdrawalsByKey(state, monthKey)
   };
   return (
     <div className="view-stack">
+      <section className="panel month-context">
+        <div className="section-title"><h2>{monthLabel} の分析</h2><span>カレンダー選択月と連動</span></div>
+        <div className="month-summary">
+          <span>総資産 <strong>{yen.format(analysisStats.assets)}</strong></span>
+          <span>支出 <strong>{yen.format(expense)}</strong></span>
+          <span>収支 <strong>{yen.format(income - expense)}</strong></span>
+        </div>
+      </section>
       <section className="insight-grid">
         <div className="insight-card teal">
           <PiggyBank size={28} />
-          <span>年間でいくら貯金できるか予測</span>
-          <p>これまでの収入・支出の傾向から、年間でどれくらい貯金できるかを自動で予測します。</p>
+          <span>{monthLabel}基準の年間貯金予測</span>
+          <p>選択月までの収入・支出の傾向から、年間でどれくらい貯金できるかを予測します。</p>
           <strong>{yen.format(savingAverage * 12)}</strong>
           <div className="mini-bars">{[0.42, 0.52, 0.61, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
         </div>
         <div className="insight-card orange">
           <Goal size={30} />
-          <span>AIが支出を分析</span>
-          <AiCommentary state={state} stats={analysisStats} category={category} limit={1} />
+          <span>AIが{monthLabel}の支出を分析</span>
+          <AiCommentary state={state} stats={analysisStats} category={category} monthKey={monthKey} limit={1} />
           <strong>{Math.max(savingRate, 0)}%</strong>
           <div className="progress"><span style={{ width: `${Math.min(Math.max(savingRate, 0), 100)}%` }} /></div>
         </div>
         <div className="insight-card warn">
           <Sparkles size={30} />
-          <span>改善アドバイス</span>
-          <p>{topCategory ? `${topCategory.name}を月${yen.format(suggestedCut)}減らすと、貯金余力が上がります。` : "支出データが増えると、より具体的に改善提案できます。"}</p>
-          <strong>{topCategory ? `${topCategory.name}` : "分析待ち"}</strong>
+          <span>{monthLabel}の支出トップ</span>
+          <p>カテゴリー別の金額と割合を下の表で確認できます。</p>
+          <strong>{topCategory ? `${topCategory.name} ${yen.format(topCategory.value)}` : "支出なし"}</strong>
         </div>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>収支推移</h2><span>直近6ヶ月</span></div>
+        <div className="section-title"><h2>収支推移</h2><span>{monthLabel}までの6ヶ月</span></div>
         <ResponsiveContainer width="100%" height={230}>
           <LineChart data={trend}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
@@ -980,7 +993,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
         </ResponsiveContainer>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2><span>{drillParent ? "戻る" : "今月"}</span></div>
+        <div className="section-title"><h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2><span>{drillParent ? "戻る" : monthLabel}</span></div>
         {drillParent && <button className="google-button" type="button" onClick={() => setDrillParentId(null)}>カテゴリー全体に戻る</button>}
         <ResponsiveContainer width="100%" height={190}>
           <PieChart>
@@ -996,7 +1009,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
         <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
       <section className="panel">
-        <div className="section-title"><h2>カテゴリー別割合</h2><span>表</span></div>
+        <div className="section-title"><h2>カテゴリー別割合</h2><span>{monthLabel}</span></div>
         <div className="analysis-table">
           <div><strong>カテゴリ</strong><strong>金額</strong><strong>割合</strong></div>
           {category.map((item) => (
@@ -1009,7 +1022,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
         </div>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>月別収支</h2><span>前月比の土台</span></div>
+        <div className="section-title"><h2>月別収支</h2><span>{monthLabel}</span></div>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={bars}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
@@ -1020,7 +1033,6 @@ function AnalysisView({ state }: { state: LedgerState }) {
           </BarChart>
         </ResponsiveContainer>
       </section>
-      <section className="advice"><Sparkles size={20} /><p>{spendingAdvice(state)}</p></section>
     </div>
   );
 }
@@ -1044,16 +1056,16 @@ function buildAiInsights(state: LedgerState, category: Array<{ name: string; val
   return insights;
 }
 
-function subcategoryExpense(state: LedgerState, parentId: string) {
+function subcategoryExpense(state: LedgerState, parentId: string, monthKey: string) {
   const childIds = state.categories.filter((category) => category.parentId === parentId).map((category) => category.id);
   return state.categories
     .filter((category) => childIds.includes(category.id))
     .map((category) => ({
       name: category.name,
-      value: monthTransactions(state.transactions)
+      value: monthTransactionsByKey(state.transactions, monthKey)
         .filter((transaction) => transaction.type === "expense" && transaction.categoryId === category.id)
         .reduce((sum, transaction) => sum + transaction.amount, 0) +
-        fixedCostOccurrencesForMonth(state.fixedCosts, todayIso().slice(0, 7))
+        fixedCostOccurrencesForMonth(state.fixedCosts, monthKey)
           .filter((cost) => cost.categoryId === category.id)
           .reduce((sum, cost) => sum + cost.amount, 0),
       fill: category.color
@@ -1061,8 +1073,8 @@ function subcategoryExpense(state: LedgerState, parentId: string) {
     .filter((item) => item.value > 0);
 }
 
-function monthlyTrend(state: LedgerState) {
-  const now = new Date();
+function monthlyTrend(state: LedgerState, endMonthKey: string) {
+  const now = new Date(Number(endMonthKey.slice(0, 4)), Number(endMonthKey.slice(5, 7)) - 1, 1);
   return Array.from({ length: 6 }).map((_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -1829,6 +1841,10 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
 
 function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return <section className="metric"><Icon size={19} /><span>{label}</span><strong>{value}</strong></section>;
+}
+
+function formatMonthLabel(monthKey: string) {
+  return `${Number(monthKey.slice(0, 4))}年${Number(monthKey.slice(5, 7))}月`;
 }
 
 function numberInputValue(value: number) {

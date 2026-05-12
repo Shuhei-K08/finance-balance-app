@@ -12,6 +12,7 @@ export async function analyzeFinance(prompt: string): Promise<string> {
 }
 
 export function buildFinancePrompt(stats: {
+  monthLabel: string;
   income: number;
   expense: number;
   assets: number;
@@ -39,9 +40,10 @@ export function buildFinancePrompt(stats: {
 - 厳しすぎず、前向きな助言にする
 - 返答は分析コメントだけにする
 
-今月の収入: ${stats.income.toLocaleString()}円
-今月の支出: ${stats.expense.toLocaleString()}円
-今月の収支: ${stats.monthlyBalance.toLocaleString()}円
+対象月: ${stats.monthLabel}
+対象月の収入: ${stats.income.toLocaleString()}円
+対象月の支出: ${stats.expense.toLocaleString()}円
+対象月の収支: ${stats.monthlyBalance.toLocaleString()}円
 貯金率: ${stats.savingRate}%
 過去平均の月間貯金額: ${stats.averageSaving.toLocaleString()}円
 総資産: ${stats.assets.toLocaleString()}円

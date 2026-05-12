@@ -32,12 +32,27 @@ export function endOfMonthIso(base = new Date()) {
   return new Date(base.getFullYear(), base.getMonth() + 1, 0).toISOString().slice(0, 10);
 }
 
+function monthKeyFromDate(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthKeyToDate(monthKey?: string) {
+  if (!monthKey) return new Date();
+  return new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
+}
+
+function monthEndKey(monthKey: string) {
+  const end = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0);
+  return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+}
+
 export function transactionLedgerDate(transaction: Transaction) {
   return transaction.reflectedDate || transaction.date;
 }
 
-export function calculateAccountBalance(account: Account, transactions: Transaction[]) {
-  return transactions.reduce((balance, transaction) => {
+export function calculateAccountBalance(account: Account, transactions: Transaction[], throughMonthKey?: string) {
+  const rows = throughMonthKey ? transactions.filter((transaction) => transactionLedgerDate(transaction) <= monthEndKey(throughMonthKey)) : transactions;
+  return rows.reduce((balance, transaction) => {
     if (transaction.type === "income" && transaction.accountId === account.id) return balance + transaction.amount;
     if (transaction.type === "expense" && transaction.accountId === account.id && account.type !== "credit") return balance - transaction.amount;
     if (transaction.type === "transfer" && transaction.accountId === account.id) return balance - transaction.amount;
@@ -46,15 +61,19 @@ export function calculateAccountBalance(account: Account, transactions: Transact
   }, account.openingBalance);
 }
 
-export function totalAssets(state: LedgerState) {
+export function totalAssets(state: LedgerState, throughMonthKey?: string) {
   return state.accounts
     .filter((account) => account.type !== "credit")
-    .reduce((total, account) => total + calculateAccountBalance(account, state.transactions), 0);
+    .reduce((total, account) => total + calculateAccountBalance(account, state.transactions, throughMonthKey), 0);
 }
 
 export function monthTransactions(transactions: Transaction[], date = new Date()) {
-  const key = date.toISOString().slice(0, 7);
+  const key = monthKeyFromDate(date);
   return transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
+}
+
+export function monthTransactionsByKey(transactions: Transaction[], monthKey: string) {
+  return transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
 }
 
 export function monthlyExpense(transactions: Transaction[]) {
@@ -78,12 +97,16 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
 }
 
 export function monthlyFixedCostExpense(state: LedgerState, date = new Date()) {
-  const monthKey = date.toISOString().slice(0, 7);
+  const monthKey = monthKeyFromDate(date);
   return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function monthlyExpenseWithFixed(state: LedgerState, date = new Date()) {
   return monthlyExpense(monthTransactions(state.transactions, date)) + monthlyFixedCostExpense(state, date);
+}
+
+export function monthlyExpenseWithFixedByKey(state: LedgerState, monthKey: string) {
+  return monthlyExpense(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function averageMonthlySaving(state: LedgerState) {
@@ -123,7 +146,7 @@ export function pendingCreditWithdrawals(state: LedgerState) {
 }
 
 export function monthlyCreditWithdrawals(state: LedgerState, date = new Date()) {
-  const monthKey = date.toISOString().slice(0, 7);
+  const monthKey = monthKeyFromDate(date);
   const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
   return state.transactions
     .filter((transaction) => (
@@ -135,8 +158,19 @@ export function monthlyCreditWithdrawals(state: LedgerState, date = new Date()) 
     .reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-export function fixedCostForecast(fixedCosts: FixedCost[]) {
-  const monthKey = todayIso().slice(0, 7);
+export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: string) {
+  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
+  return state.transactions
+    .filter((transaction) => (
+      transaction.type === "expense" &&
+      creditIds.has(transaction.accountId) &&
+      transaction.creditStatus !== "withdrawn" &&
+      transactionLedgerDate(transaction).startsWith(monthKey)
+    ))
+    .reduce((total, transaction) => total + transaction.amount, 0);
+}
+
+export function fixedCostForecast(fixedCosts: FixedCost[], monthKey = todayIso().slice(0, 7)) {
   return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((total, cost) => total + cost.amount, 0);
 }
 
@@ -151,13 +185,13 @@ export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
   return (!effectiveFrom || effectiveFrom <= monthEndKey) && (!effectiveTo || effectiveTo >= monthStart);
 }
 
-export function projectedMonthEnd(state: LedgerState) {
-  return totalAssets(state) - fixedCostForecast(state.fixedCosts) - monthlyCreditWithdrawals(state);
+export function projectedMonthEnd(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
+  return totalAssets(state, monthKey) - fixedCostForecast(state.fixedCosts, monthKey) - monthlyCreditWithdrawalsByKey(state, monthKey);
 }
 
-export function categoryExpense(state: LedgerState) {
-  const month = monthTransactions(state.transactions);
-  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, todayIso().slice(0, 7));
+export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
+  const month = monthTransactionsByKey(state.transactions, monthKey);
+  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey);
   return state.categories
     .filter((category) => !category.parentId && category.kind === "expense")
     .map((category) => {
@@ -175,11 +209,11 @@ export function categoryExpense(state: LedgerState) {
     .filter((item) => item.value > 0);
 }
 
-export function balanceTrend(state: LedgerState) {
+export function balanceTrend(state: LedgerState, endMonthKey = todayIso().slice(0, 7)) {
   const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
   const base = assetAccounts.reduce((sum, account) => sum + account.openingBalance, 0);
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const endMonth = monthKeyToDate(endMonthKey);
+  const start = new Date(endMonth.getFullYear(), endMonth.getMonth() - 11, 1);
   const points: Array<{ label: string; actual?: number; forecast?: number }> = [];
 
   for (let index = 0; index < 12; index += 1) {
@@ -205,7 +239,7 @@ export function balanceTrend(state: LedgerState) {
   points.push({
     label: "予測",
     actual: undefined,
-    forecast: projectedMonthEnd(state)
+    forecast: projectedMonthEnd(state, endMonthKey)
   });
   return points;
 }
