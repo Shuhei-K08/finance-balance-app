@@ -55,3 +55,26 @@ export function buildFinancePrompt(stats: {
 資産内訳: ${stats.assetBreakdown}
 目標状況: ${stats.goalSummary}`;
 }
+
+export function buildAnnualSavingsPrompt(input: {
+  monthLabel: string;
+  monthlyRows: string;
+  averageSaving: number;
+  currentAssets: number;
+}) {
+  return `あなたは日本の個人向け家計改善アドバイザーです。過去数ヶ月の収入・支出・貯金推移を分析し、年間貯金予測を日本語で3行返してください。
+条件:
+- 箇条書き記号は使わない
+- 1行は45文字以内を目安にする
+- 1行目に年間貯金予測額を入れる
+- 2行目に予測根拠を入れる
+- 3行目に改善ポイントを入れる
+- データにないことは推測しない
+- 返答は分析コメントだけにする
+
+基準月: ${input.monthLabel}
+現在の総資産: ${input.currentAssets.toLocaleString()}円
+過去平均の月間貯金額: ${input.averageSaving.toLocaleString()}円
+月別データ:
+${input.monthlyRows}`;
+}

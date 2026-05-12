@@ -61,7 +61,7 @@ import {
 } from "@/lib/finance";
 import type { FixedCostOccurrence } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
-import { analyzeFinance, buildFinancePrompt } from "@/lib/gemini";
+import { analyzeFinance, buildAnnualSavingsPrompt, buildFinancePrompt } from "@/lib/gemini";
 import { LedgerState, TransactionType } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
@@ -309,8 +309,16 @@ export default function App() {
           setCalendarDate={setCalendarDate}
         />
       )}
-      {tab === "analysis" && <AnalysisView state={state} monthKey={calendarMonth} stats={stats} />}
-      {tab === "goals" && <GoalsView state={state} setNotice={setNotice} reload={() => refreshRemoteState()} />}
+      {tab === "analysis" && (
+        <AnalysisView
+          state={state}
+          monthKey={calendarMonth}
+          setMonthKey={setCalendarMonth}
+          setSelectedDate={setCalendarDate}
+          stats={stats}
+        />
+      )}
+      {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
 
       <nav className="bottom-nav">
@@ -515,6 +523,13 @@ function HomeView({
         </div>
         <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
+
+      <MonthControl
+        monthKey={calendarMonth}
+        setMonthKey={setCalendarMonth}
+        setSelectedDate={setCalendarDate}
+        label="表示月"
+      />
 
       <div className="stat-grid">
         <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} />
@@ -896,7 +911,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
         setLines(next);
       })
       .catch(() => {
-        if (!cancelled) setLines([]);
+        if (!cancelled) setLines(["AI分析を取得できませんでした。AI APIキーや接続設定を確認してください。"]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -906,6 +921,38 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
     };
   }, [state.householdId, state.transactions.length, state.fixedCosts.length, state.goals.length, monthKey, stats.income, stats.expense, stats.assets, stats.forecast, stats.credit, stats.fixed, category.length]);
 
+  return { lines, loading };
+}
+
+function useAnnualSavingsAi(state: LedgerState, monthKey: string) {
+  const [lines, setLines] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    const rows = monthlyTrend(state, monthKey).map((row) => `${row.label}: 収入${yen.format(row.income)} / 支出${yen.format(row.expense)} / 貯金${yen.format(row.saving)}`).join("\n");
+    const prompt = buildAnnualSavingsPrompt({
+      monthLabel: formatMonthLabel(monthKey),
+      monthlyRows: rows || "月別データなし",
+      averageSaving: averageMonthlySaving(state),
+      currentAssets: totalAssets(state, monthKey)
+    });
+    let cancelled = false;
+    setLines([]);
+    setLoading(true);
+    analyzeFinance(prompt)
+      .then((text) => {
+        if (cancelled) return;
+        setLines(text.split("\n").map((line) => line.trim()).filter(Boolean));
+      })
+      .catch(() => {
+        if (!cancelled) setLines(["年間貯金予測を取得できませんでした。AI APIキーや接続設定を確認してください。"]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [state.householdId, state.transactions.length, state.fixedCosts.length, monthKey]);
   return { lines, loading };
 }
 
@@ -919,7 +966,29 @@ function AiCommentary({ state, stats, category, monthKey, limit }: { state: Ledg
   );
 }
 
-function AnalysisView({ state, monthKey, stats }: { state: LedgerState; monthKey: string; stats: Record<string, number> }) {
+function AnnualSavingsAi({ state, monthKey }: { state: LedgerState; monthKey: string }) {
+  const { lines, loading } = useAnnualSavingsAi(state, monthKey);
+  return (
+    <>
+      {loading && <p>AIが年間貯金予測を作成中です...</p>}
+      {lines.map((line) => <p key={line}>{line}</p>)}
+    </>
+  );
+}
+
+function AnalysisView({
+  state,
+  monthKey,
+  setMonthKey,
+  setSelectedDate,
+  stats
+}: {
+  state: LedgerState;
+  monthKey: string;
+  setMonthKey: (value: string) => void;
+  setSelectedDate: (value: string) => void;
+  stats: Record<string, number>;
+}) {
   const monthLabel = formatMonthLabel(monthKey);
   const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
@@ -948,6 +1017,7 @@ function AnalysisView({ state, monthKey, stats }: { state: LedgerState; monthKey
   };
   return (
     <div className="view-stack">
+      <MonthControl monthKey={monthKey} setMonthKey={setMonthKey} setSelectedDate={setSelectedDate} label="分析月" />
       <section className="panel month-context">
         <div className="section-title"><h2>{monthLabel} の分析</h2><span>カレンダー選択月と連動</span></div>
         <div className="month-summary">
@@ -959,8 +1029,8 @@ function AnalysisView({ state, monthKey, stats }: { state: LedgerState; monthKey
       <section className="insight-grid">
         <div className="insight-card teal">
           <PiggyBank size={28} />
-          <span>{monthLabel}基準の年間貯金予測</span>
-          <p>選択月までの収入・支出の傾向から、年間でどれくらい貯金できるかを予測します。</p>
+          <span>AI年間貯金予測</span>
+          <AnnualSavingsAi state={state} monthKey={monthKey} />
           <strong>{yen.format(savingAverage * 12)}</strong>
           <div className="mini-bars">{[0.42, 0.52, 0.61, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
         </div>
@@ -1081,7 +1151,7 @@ function monthlyTrend(state: LedgerState, endMonthKey: string) {
     const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
     const income = monthlyIncome(rows);
     const expense = monthlyExpense(rows) + fixedCostOccurrencesForMonth(state.fixedCosts, key).reduce((sum, cost) => sum + cost.amount, 0);
-    return { label: `${date.getMonth() + 1}月`, income, expense, saving: Math.max(income - expense, 0) };
+    return { label: `${date.getMonth() + 1}月`, income, expense, saving: income - expense };
   });
 }
 
@@ -1148,7 +1218,7 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
   );
 }
 
-function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+function GoalsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
   const firstAccountId = state.accounts.find((account) => account.type === "saving")?.id ?? state.accounts[0]?.id ?? "";
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1181,8 +1251,8 @@ function GoalsView({ state, setNotice, reload }: { state: LedgerState; setNotice
       <section className="insight-grid">
         <div className="insight-card teal">
           <PiggyBank size={30} />
-          <span>年間でいくら貯金できるか予測</span>
-          <p>これまでの収入・支出の傾向から、年間でどれくらい貯金できるかを自動で予測します。</p>
+          <span>AI年間貯金予測</span>
+          <AnnualSavingsAi state={state} monthKey={monthKey} />
           <strong>{yen.format(savingAverage * 12)}</strong>
           <div className="mini-bars">{[0.38, 0.48, 0.58, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
         </div>
@@ -1843,8 +1913,38 @@ function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: 
   return <section className="metric"><Icon size={19} /><span>{label}</span><strong>{value}</strong></section>;
 }
 
+function MonthControl({
+  monthKey,
+  setMonthKey,
+  setSelectedDate,
+  label
+}: {
+  monthKey: string;
+  setMonthKey: (value: string) => void;
+  setSelectedDate: (value: string) => void;
+  label: string;
+}) {
+  function updateMonth(nextMonth: string) {
+    setMonthKey(nextMonth);
+    setSelectedDate(`${nextMonth}-01`);
+  }
+  return (
+    <section className="month-control" aria-label={label}>
+      <span>{label}</span>
+      <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, -1))}>前月</button>
+      <input type="month" value={monthKey} onChange={(event) => updateMonth(event.target.value)} />
+      <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, 1))}>翌月</button>
+    </section>
+  );
+}
+
 function formatMonthLabel(monthKey: string) {
   return `${Number(monthKey.slice(0, 4))}年${Number(monthKey.slice(5, 7))}月`;
+}
+
+function shiftMonthKey(monthKey: string, delta: number) {
+  const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function numberInputValue(value: number) {
