@@ -963,6 +963,9 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       .filter((account) => account.type !== "credit")
       .map((account) => `${account.name}:${yen.format(confirmedAccountBalance(account, state, monthKey))}`)
       .join("、") || "資産口座なし";
+    const recentTrend = monthlyTrend(state, monthKey)
+      .map((row) => `${row.label}:収入${yen.format(row.income)} 支出${yen.format(row.expense)} 収支${yen.format(row.income - row.expense)}`)
+      .join("、");
     const prompt = buildFinancePrompt({
       monthLabel: formatMonthLabel(monthKey),
       income,
@@ -978,6 +981,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       monthlyBalance: income - expense,
       categoryBreakdown,
       assetBreakdown,
+      recentTrend,
       goalSummary: primaryGoal && projection && deadlinePlan
         ? `${primaryGoal.name}: 不足${yen.format(projection.remaining)}、期限${primaryGoal.deadline}、必要月額${yen.format(deadlinePlan.requiredMonthly)}`
         : "目標未設定"

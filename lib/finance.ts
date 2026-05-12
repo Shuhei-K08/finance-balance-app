@@ -51,6 +51,18 @@ function previousMonthKey(monthKey: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+function monthsBetween(startExclusive: string, endInclusive: string) {
+  const start = startExclusive
+    ? new Date(Number(startExclusive.slice(0, 4)), Number(startExclusive.slice(5, 7)), 1)
+    : new Date(Number(endInclusive.slice(0, 4)), Number(endInclusive.slice(5, 7)) - 1, 1);
+  const end = new Date(Number(endInclusive.slice(0, 4)), Number(endInclusive.slice(5, 7)) - 1, 1);
+  const months: string[] = [];
+  for (let cursor = start; cursor <= end; cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)) {
+    months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return months;
+}
+
 export function transactionLedgerDate(transaction: Transaction) {
   return transaction.reflectedDate || transaction.date;
 }
@@ -74,13 +86,17 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
   const latestSnapshot = snapshots[0];
   const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
   const until = monthEndKey(throughMonthKey);
+  const fixedOccurrences = monthsBetween(latestSnapshot?.month ?? "", throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey));
   const rows = state.transactions.filter((transaction) => {
     const ledgerDate = transactionLedgerDate(transaction);
     return (!since || ledgerDate > since) && ledgerDate <= until;
   });
-  return rows.reduce((balance, transaction) => {
+  const transactionBalance = rows.reduce((balance, transaction) => {
     return balance + transactionAssetDeltaForAccount(transaction, account, state.accounts);
   }, latestSnapshot?.amount ?? account.openingBalance);
+  return fixedOccurrences
+    .filter((cost) => (!since || cost.date > since) && cost.date <= until)
+    .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
 }
 
 export function confirmedAccountBalance(account: Account, state: LedgerState, monthKey: string) {
@@ -108,11 +124,22 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
   return 0;
 }
 
+function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Account, accounts: Account[]) {
+  const sourceAccount = accounts.find((item) => item.id === cost.accountId);
+  if (sourceAccount?.type === "credit") {
+    return sourceAccount.withdrawalAccountId === account.id ? -cost.amount : 0;
+  }
+  return cost.accountId === account.id && account.type !== "credit" ? -cost.amount : 0;
+}
+
 function monthlyAssetMovement(state: LedgerState, monthKey: string) {
   const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
-  return monthTransactionsByKey(state.transactions, monthKey).reduce((sum, transaction) => {
+  const transactionMovement = monthTransactionsByKey(state.transactions, monthKey).reduce((sum, transaction) => {
     return sum + assetAccounts.reduce((accountSum, account) => accountSum + transactionAssetDeltaForAccount(transaction, account, state.accounts), 0);
   }, 0);
+  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((sum, cost) => {
+    return sum + assetAccounts.reduce((accountSum, account) => accountSum + fixedCostAssetDeltaForAccount(cost, account, state.accounts), 0);
+  }, transactionMovement);
 }
 
 export function monthTransactions(transactions: Transaction[], date = new Date()) {
@@ -236,7 +263,7 @@ export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
 export function projectedMonthEnd(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
   const baseMonth = previousMonthKey(monthKey);
   const baseAssets = totalAssets(state, baseMonth);
-  return baseAssets + monthlyAssetMovement(state, monthKey) - fixedCostForecast(state.fixedCosts, monthKey);
+  return baseAssets + monthlyAssetMovement(state, monthKey);
 }
 
 export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
