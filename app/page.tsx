@@ -514,7 +514,7 @@ function HomeView({
   const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, isSnapshotConfirmed);
   const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
-  const [homeEntryFilter, setHomeEntryFilter] = useState<"expense" | "income">("expense");
+  const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | null>(null);
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -569,8 +569,8 @@ function HomeView({
       )}
 
       <div className="stat-grid">
-        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} active={homeEntryFilter === "expense"} onClick={() => setHomeEntryFilter("expense")} />
-        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} active={homeEntryFilter === "income"} onClick={() => setHomeEntryFilter("income")} />
+        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} onClick={() => setHomeEntryModal("expense")} />
+        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} onClick={() => setHomeEntryModal("income")} />
         <Metric icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)} / ${savingRate}%`} />
       </div>
 
@@ -629,8 +629,17 @@ function HomeView({
         setSelectedMonth={setCalendarMonth}
         selectedDate={calendarDate}
         setSelectedDate={setCalendarDate}
-        entryFilter={homeEntryFilter}
       />
+      {homeEntryModal && (
+        <HomeEntryModal
+          type={homeEntryModal}
+          monthKey={calendarMonth}
+          state={state}
+          setNotice={setNotice}
+          reload={reload}
+          onClose={() => setHomeEntryModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -865,8 +874,7 @@ function HomeCalendar({
   selectedMonth,
   setSelectedMonth,
   selectedDate,
-  setSelectedDate,
-  entryFilter
+  setSelectedDate
 }: {
   state: LedgerState;
   setNotice: (message: string) => void;
@@ -876,7 +884,6 @@ function HomeCalendar({
   setSelectedMonth: (value: string) => void;
   selectedDate: string;
   setSelectedDate: (value: string) => void;
-  entryFilter: "expense" | "income";
 }) {
   const [modalDate, setModalDate] = useState<string | null>(null);
   const monthKey = selectedMonth;
@@ -887,10 +894,6 @@ function HomeCalendar({
   const monthIncome = monthlyIncome(monthRows);
   const fixedExpense = fixedRows.reduce((sum, row) => sum + row.amount, 0);
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
-  const monthEntries = monthRows
-    .filter((transaction) => transaction.type === entryFilter)
-    .map((transaction) => ({ date: transactionLedgerDate(transaction), transaction }))
-    .sort((a, b) => b.date.localeCompare(a.date));
 
   function moveMonth(delta: number) {
     const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
@@ -926,11 +929,30 @@ function HomeCalendar({
         </div>
         <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
       </section>
-      <section className="panel">
-        <div className="section-title"><h2>{formatMonthLabel(monthKey)} の{entryFilter === "income" ? "収入" : "支出"}一覧</h2><span>{monthEntries.length}件</span></div>
-        <MonthEntryList entries={monthEntries} state={state} setNotice={setNotice} reload={reload} />
-      </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
+    </div>
+  );
+}
+
+function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: { type: "expense" | "income"; monthKey: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const rows = state.transactions
+    .filter((transaction) => transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey))
+    .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
+  const total = rows.reduce((sum, transaction) => sum + transaction.amount, 0);
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel entry-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="section-title">
+          <h2>{formatMonthLabel(monthKey)}の{type === "income" ? "収入" : "支出"}一覧</h2>
+          <span>{yen.format(total)}</span>
+        </div>
+        {rows.length === 0 ? (
+          <div className="empty-state"><span>この月の{type === "income" ? "収入" : "支出"}はまだありません。</span></div>
+        ) : (
+          <MonthEntryList entries={rows.map((transaction) => ({ date: transactionLedgerDate(transaction), transaction }))} state={state} setNotice={setNotice} reload={reload} />
+        )}
+        <button className="google-button" type="button" onClick={onClose}>閉じる</button>
+      </section>
     </div>
   );
 }
@@ -1476,10 +1498,10 @@ function SettingsView({
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
-  const [newParentCategory, setNewParentCategory] = useState({ name: "", color: "#0f766e", kind: "expense" as "expense" | "income" });
-  const [newChildCategory, setNewChildCategory] = useState({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
+  const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
   const [newFixed, setNewFixed] = useState({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
   const [showAccountForm, setShowAccountForm] = useState(false);
+  const [showOpeningBalances, setShowOpeningBalances] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [showFixedForm, setShowFixedForm] = useState(false);
   const [categoryModalId, setCategoryModalId] = useState<string | null>(null);
@@ -1523,6 +1545,10 @@ function SettingsView({
           <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
         ))}
       </div>
+      <section className="settings-guide">
+        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "銀行口座・現金・カード・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : "毎月発生する支払い"}</strong>
+        <span>上のメニューから編集したい項目を選んでください。</span>
+      </section>
       {settingsTab === "ledger" && (
       <>
       <section className="panel">
@@ -1687,7 +1713,9 @@ function SettingsView({
       </section>
       <section className="panel">
         <div className="section-title"><h2>初期残高</h2><span>口座残高の基準</span></div>
-        <div className="opening-list">
+        <p className="setting-copy">初回登録時の残高です。普段の月末残高調整は「月末資産」から行うのがおすすめです。</p>
+        <button className="google-button" type="button" onClick={() => setShowOpeningBalances(!showOpeningBalances)}>{showOpeningBalances ? "初期残高を閉じる" : "初期残高を開く"}</button>
+        {showOpeningBalances && <div className="opening-list">
           {state.accounts.filter((account) => account.type !== "credit").map((account) => (
             <label key={account.id}>{account.name}
               <input
@@ -1718,7 +1746,7 @@ function SettingsView({
           >
             初期残高を更新
           </button>
-        </div>
+        </div>}
       </section>
       <section className="panel">
         <div className="section-title"><h2>お金の置き場所を追加・編集</h2><span>銀行・現金・カード</span></div>
@@ -1766,53 +1794,50 @@ function SettingsView({
       )}
       {settingsTab === "categories" && (
       <section className="panel">
-        <div className="section-title"><h2>カテゴリ管理</h2><span>親カテゴリと小カテゴリ</span></div>
+        <div className="section-title"><h2>カテゴリ管理</h2><span>カテゴリーとサブカテゴリー</span></div>
         <p className="setting-copy">カテゴリーは「食費」「住居」など大きな分類です。サブカテゴリーは「スーパー」「外食」などカテゴリー内の細かい分類です。</p>
         <button className="full-primary" type="button" onClick={() => setShowCategoryForm(!showCategoryForm)}>{showCategoryForm ? "追加を閉じる" : "カテゴリを追加する"}</button>
-        {showCategoryForm && <div className="split-editor">
-          <div className="mini-panel">
-            <h3>カテゴリーを追加</h3>
-            <label>カテゴリー名<input placeholder="例: 食費" value={newParentCategory.name} onChange={(event) => setNewParentCategory({ ...newParentCategory, name: event.target.value })} /></label>
-            <label>用途<select value={newParentCategory.kind} onChange={(event) => setNewParentCategory({ ...newParentCategory, kind: event.target.value as "expense" | "income" })}><option value="expense">支出</option><option value="income">収入</option></select></label>
-            <label>色<input type="color" value={newParentCategory.color} onChange={(event) => setNewParentCategory({ ...newParentCategory, color: event.target.value })} /></label>
-            <button className="full-primary" type="button" onClick={async () => {
-              try {
-                if (!newParentCategory.name.trim()) {
-                  setNotice("カテゴリー名を入力してください。");
-                  return;
-                }
-                await createCategory(state.householdId ?? "", { name: newParentCategory.name, color: newParentCategory.color, kind: newParentCategory.kind });
-                await reloadHousehold(state.householdId ?? "");
-                setNewParentCategory({ name: "", color: "#0f766e", kind: "expense" });
-                setShowCategoryForm(false);
-                setNotice("カテゴリーを追加しました。");
-              } catch (error) { setNotice(toJapaneseError(error, "カテゴリー追加に失敗しました。")); }
-            }}>カテゴリーを追加</button>
-          </div>
-          <div className="mini-panel">
-            <h3>サブカテゴリーを追加</h3>
-            <label>カテゴリー<select value={newChildCategory.parentId} onChange={(event) => setNewChildCategory({ ...newChildCategory, parentId: event.target.value })}>{state.categories.filter((category) => !category.parentId).map((category) => <option value={category.id} key={category.id}>{category.kind === "income" ? "収入" : "支出"} / {category.name}</option>)}</select></label>
-            <label>サブカテゴリー名<input placeholder="例: スーパー" value={newChildCategory.name} onChange={(event) => setNewChildCategory({ ...newChildCategory, name: event.target.value })} /></label>
-            <label>色<input type="color" value={newChildCategory.color} onChange={(event) => setNewChildCategory({ ...newChildCategory, color: event.target.value })} /></label>
-            <button className="full-primary" type="button" onClick={async () => {
-              try {
-                if (!newChildCategory.name.trim()) {
-                  setNotice("サブカテゴリー名を入力してください。");
-                  return;
-                }
-                if (!newChildCategory.parentId) {
-                  setNotice("カテゴリーを選んでください。");
-                  return;
-                }
-                const parent = state.categories.find((category) => category.id === newChildCategory.parentId);
-                await createCategory(state.householdId ?? "", { ...newChildCategory, kind: parent?.kind ?? "expense" });
-                await reloadHousehold(state.householdId ?? "");
-                setNewChildCategory({ name: "", parentId: firstParentCategoryId, color: "#0ea5e9" });
-                setShowCategoryForm(false);
-                setNotice("サブカテゴリーを追加しました。");
-              } catch (error) { setNotice(toJapaneseError(error, "サブカテゴリー追加に失敗しました。")); }
-            }}>サブカテゴリーを追加</button>
-          </div>
+        {showCategoryForm && <div className="mini-panel category-add-panel">
+          <label>追加するもの<select value={categoryDraft.level} onChange={(event) => setCategoryDraft({ ...categoryDraft, level: event.target.value as "main" | "sub" })}>
+            <option value="main">カテゴリー</option>
+            <option value="sub">サブカテゴリー</option>
+          </select></label>
+          <label>用途<select value={categoryDraft.kind} onChange={(event) => {
+            const nextKind = event.target.value as "expense" | "income";
+            const nextParent = state.categories.find((category) => !category.parentId && category.kind === nextKind)?.id ?? "";
+            setCategoryDraft({ ...categoryDraft, kind: nextKind, parentId: nextParent });
+          }}><option value="expense">支出</option><option value="income">収入</option></select></label>
+          {categoryDraft.level === "sub" && (
+            <label>所属カテゴリー<select value={categoryDraft.parentId} onChange={(event) => setCategoryDraft({ ...categoryDraft, parentId: event.target.value })}>
+              <option value="">選択してください</option>
+              {state.categories.filter((category) => !category.parentId && category.kind === categoryDraft.kind).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
+            </select></label>
+          )}
+          <label>{categoryDraft.level === "sub" ? "サブカテゴリー名" : "カテゴリー名"}<input placeholder={categoryDraft.level === "sub" ? "例: スーパー" : "例: 食費"} value={categoryDraft.name} onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })} /></label>
+          <label>色<input type="color" value={categoryDraft.color} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} /></label>
+          <button className="full-primary" type="button" onClick={async () => {
+            try {
+              if (!categoryDraft.name.trim()) {
+                setNotice(categoryDraft.level === "sub" ? "サブカテゴリー名を入力してください。" : "カテゴリー名を入力してください。");
+                return;
+              }
+              if (categoryDraft.level === "sub" && !categoryDraft.parentId) {
+                setNotice("所属カテゴリーを選択してください。");
+                return;
+              }
+              await createCategory(state.householdId ?? "", {
+                name: categoryDraft.name,
+                color: categoryDraft.color,
+                kind: categoryDraft.kind,
+                parentId: categoryDraft.level === "sub" ? categoryDraft.parentId : undefined
+              });
+              await reloadHousehold(state.householdId ?? "");
+              const resetParent = state.categories.find((category) => !category.parentId && category.kind === categoryDraft.kind)?.id ?? "";
+              setCategoryDraft({ ...categoryDraft, name: "", parentId: resetParent });
+              setShowCategoryForm(false);
+              setNotice(categoryDraft.level === "sub" ? "サブカテゴリーを追加しました。" : "カテゴリーを追加しました。");
+            } catch (error) { setNotice(toJapaneseError(error, "カテゴリー追加に失敗しました。")); }
+          }}>追加する</button>
         </div>}
         <div className="category-tree">
           {(["expense", "income"] as const).map((kind) => (

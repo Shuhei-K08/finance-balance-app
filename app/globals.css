@@ -1435,6 +1435,25 @@ input[type="range"] {
   color: var(--brand-dark);
 }
 
+.settings-guide {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.settings-guide strong {
+  color: var(--ink);
+}
+
+.settings-guide span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .account-list div,
 .fixed-list div {
   display: grid;
@@ -1442,6 +1461,14 @@ input[type="range"] {
   align-items: center;
   gap: 10px;
   min-height: 44px;
+}
+
+.entry-modal .month-entry-list {
+  max-height: min(62vh, 640px);
+}
+
+.category-add-panel {
+  margin-top: 12px;
 }
 
 .account-list i {

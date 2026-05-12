@@ -100,6 +100,8 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
 }
 
 export function confirmedAccountBalance(account: Account, state: LedgerState, monthKey: string) {
+  const currentMonth = todayIso().slice(0, 7);
+  if (monthKey >= currentMonth) return calculateAccountBalanceInState(account, state, monthKey);
   const snapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
   return snapshot?.amount ?? calculateAccountBalanceInState(account, state, monthKey);
 }
