@@ -616,7 +616,13 @@ export async function deleteFixedCost(fixedCostId: string, scope: "all" | "futur
     return;
   }
   const { error } = await client.from("fixed_costs").update({ deleted_at: new Date().toISOString() }).eq("id", fixedCostId);
-  if (error) throwJapanese(error, "固定費削除に失敗しました。");
+  if (!error) return;
+
+  const { error: rpcError } = await client.rpc("delete_fixed_cost_safe", { target_fixed_cost_id: fixedCostId });
+  if (!rpcError) return;
+
+  const { error: hardDeleteError } = await client.from("fixed_costs").delete().eq("id", fixedCostId);
+  if (hardDeleteError) throwJapanese(hardDeleteError, "固定費削除に失敗しました。");
 }
 
 export async function updateTransaction(transactionId: string, transaction: Omit<Transaction, "id">) {

@@ -220,6 +220,18 @@ export default function App() {
     memo?: string;
   }) {
     if (!state) return;
+    if (transaction.type !== "transfer" && !transaction.categoryId) {
+      setNotice("カテゴリーを選択してください。");
+      return;
+    }
+    if (!transaction.accountId) {
+      setNotice(transaction.type === "income" ? "入金先を選択してください。" : transaction.type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
+      return;
+    }
+    if (transaction.type === "transfer" && !transaction.transferToAccountId) {
+      setNotice("振替先を選択してください。");
+      return;
+    }
     const creditAccount = state.accounts.find((account) => account.id === transaction.accountId && account.type === "credit");
     const withdrawalDate = transaction.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, transaction.date) : undefined;
     const payload = {
@@ -426,8 +438,8 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
               <input
                 type="number"
                 min="0"
-                value={balances[account.id]?.amount ?? 0}
-                onChange={(event) => setBalances({ ...balances, [account.id]: { ...(balances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value) } })}
+                value={numberInputValue(balances[account.id]?.amount ?? 0)}
+                onChange={(event) => setBalances({ ...balances, [account.id]: { ...(balances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value || 0) } })}
               />
               <input
                 type="date"
@@ -538,32 +550,46 @@ function QuickTransactionSheet({
 }) {
   const usableAccounts = state.accounts;
   const normalAccounts = state.accounts.filter((account) => account.type !== "credit");
-  const expenseCategories = state.categories.filter((category) => category.kind === "expense");
-  const incomeCategories = state.categories.filter((category) => category.kind === "income");
-  const firstExpenseCategory = expenseCategories[0]?.id ?? state.categories[0]?.id ?? "";
-  const firstIncomeCategory = incomeCategories[0]?.id ?? state.categories[0]?.id ?? "";
   const [type, setType] = useState<TransactionType>("expense");
   const [amount, setAmount] = useState("");
-  const [categoryId, setCategoryId] = useState(firstExpenseCategory);
-  const [accountId, setAccountId] = useState(usableAccounts[0]?.id ?? "");
-  const [transferToAccountId, setTransferToAccountId] = useState(normalAccounts.find((account) => account.id !== accountId)?.id ?? normalAccounts[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [transferToAccountId, setTransferToAccountId] = useState("");
   const [date, setDate] = useState(initialDate);
   const [memo, setMemo] = useState("");
+  const [error, setError] = useState("");
 
   function changeType(nextType: TransactionType) {
     setType(nextType);
-    setCategoryId(nextType === "income" ? firstIncomeCategory : firstExpenseCategory);
-    if (nextType === "transfer") {
-      const from = normalAccounts[0]?.id ?? usableAccounts[0]?.id ?? "";
-      const to = normalAccounts.find((account) => account.id !== from)?.id ?? normalAccounts[1]?.id ?? "";
-      setAccountId(from);
-      setTransferToAccountId(to);
-    }
+    setCategoryId("");
+    setAccountId("");
+    setTransferToAccountId("");
+    setError("");
   }
 
   async function submit() {
     const value = Number(amount);
-    if (!value || value <= 0) return;
+    if (!value || value <= 0) {
+      setError("金額を入力してください。");
+      return;
+    }
+    if (type !== "transfer" && !categoryId) {
+      setError("カテゴリーを選択してください。");
+      return;
+    }
+    if (!accountId) {
+      setError(type === "income" ? "入金先を選択してください。" : type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
+      return;
+    }
+    if (type === "transfer" && !transferToAccountId) {
+      setError("振替先を選択してください。");
+      return;
+    }
+    if (type === "transfer" && accountId === transferToAccountId) {
+      setError("振替元と振替先は別の口座を選択してください。");
+      return;
+    }
+    setError("");
     await onSubmit({
       type,
       amount: value,
@@ -590,18 +616,47 @@ function QuickTransactionSheet({
         <input className="amount-input" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="1" placeholder="0" required />
         <div className="form-grid">
           {type !== "transfer" && (
-            <label>カテゴリー<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>{(type === "income" ? incomeCategories : expenseCategories).map((category) => <option key={category.id} value={category.id}>{category.parentId ? "└ " : ""}{category.name}</option>)}</select></label>
+            <label>カテゴリー<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+              <option value="">選択してください</option>
+              <CategoryOptions categories={state.categories} kind={type === "income" ? "income" : "expense"} />
+            </select></label>
           )}
-          <label>{type === "income" ? "入金先" : "支払元"}<select value={accountId} onChange={(event) => setAccountId(event.target.value)}>{(type === "transfer" ? normalAccounts : usableAccounts).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); }}>
+            <option value="">選択してください</option>
+            {(type === "transfer" ? normalAccounts : usableAccounts).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+          </select></label>
           {type === "transfer" && (
-            <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>{normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+            <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>
+              <option value="">選択してください</option>
+              {normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select></label>
           )}
           <label>{type === "expense" && state.accounts.find((account) => account.id === accountId)?.type === "credit" ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
         </div>
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
+        {error && <p className="form-error">{error}</p>}
         <button className="full-primary" type="submit">登録</button>
       </form>
     </div>
+  );
+}
+
+function CategoryOptions({ categories, kind }: { categories: LedgerState["categories"]; kind: "expense" | "income" }) {
+  const parents = categories.filter((category) => !category.parentId && category.kind === kind);
+  const orphanChildren = categories.filter((category) => category.parentId && category.kind === kind && !categories.some((parent) => parent.id === category.parentId));
+  return (
+    <>
+      {parents.map((parent) => {
+        const children = categories.filter((category) => category.parentId === parent.id);
+        return (
+          <optgroup key={parent.id} label={parent.name}>
+            <option value={parent.id}>{parent.name}</option>
+            {children.map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}
+          </optgroup>
+        );
+      })}
+      {orphanChildren.map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}
+    </>
   );
 }
 
@@ -1039,7 +1094,7 @@ function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { 
   return (
     <div className="edit-row balanced-edit">
       <label>目標名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例: 住宅資金" /></label>
-      <label>目標金額<input type="number" value={draft.targetAmount} onChange={(event) => setDraft({ ...draft, targetAmount: Number(event.target.value) })} /></label>
+      <label>目標金額<input type="number" value={numberInputValue(draft.targetAmount)} onChange={(event) => setDraft({ ...draft, targetAmount: Number(event.target.value || 0) })} /></label>
       <label>対象口座<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
       <label>期限<input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} /></label>
       <button type="button" onClick={onSave}>変更を保存</button>
@@ -1283,8 +1338,8 @@ function SettingsView({
               <input
                 type="number"
                 min="0"
-                value={openingBalances[account.id]?.amount ?? account.openingBalance}
-                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value) } })}
+                value={numberInputValue(openingBalances[account.id]?.amount ?? account.openingBalance)}
+                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value || 0) } })}
               />
               <input
                 type="date"
@@ -1321,14 +1376,14 @@ function SettingsView({
           </select></label>
           {newAccount.type !== "credit" && (
             <>
-              <label>初期残高<input type="number" min="0" value={newAccount.openingBalance} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value) })} /></label>
+              <label>初期残高<input type="number" min="0" value={numberInputValue(newAccount.openingBalance)} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value || 0) })} /></label>
               <label>初期残高の日付<input type="date" value={newAccount.openingBalanceDate} onChange={(event) => setNewAccount({ ...newAccount, openingBalanceDate: event.target.value })} /></label>
             </>
           )}
           {newAccount.type === "credit" && (
             <>
-              <label>締め日<input type="number" min="1" max="31" value={newAccount.closingDay} onChange={(event) => setNewAccount({ ...newAccount, closingDay: Number(event.target.value) })} /></label>
-              <label>引落日<input type="number" min="1" max="31" value={newAccount.withdrawalDay} onChange={(event) => setNewAccount({ ...newAccount, withdrawalDay: Number(event.target.value) })} /></label>
+              <label>締め日<input type="number" min="1" max="31" value={numberInputValue(newAccount.closingDay)} onChange={(event) => setNewAccount({ ...newAccount, closingDay: Number(event.target.value || 0) })} /></label>
+              <label>引落日<input type="number" min="1" max="31" value={numberInputValue(newAccount.withdrawalDay)} onChange={(event) => setNewAccount({ ...newAccount, withdrawalDay: Number(event.target.value || 0) })} /></label>
               <label>引落口座<select value={newAccount.withdrawalAccountId} onChange={(event) => setNewAccount({ ...newAccount, withdrawalAccountId: event.target.value })}>{state.accounts.filter((account) => account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
               <p className="setting-copy">このカードで支出登録すると、残高反映日が自動で次回引落日に設定され、未確定のクレカ支出として月末予測に反映されます。</p>
             </>
@@ -1421,10 +1476,10 @@ function SettingsView({
         <button className="full-primary" type="button" onClick={() => setShowFixedForm(!showFixedForm)}>{showFixedForm ? "追加を閉じる" : "固定費を追加する"}</button>
         {showFixedForm && <div className="crud-form">
           <label>固定費名<input placeholder="例: 家賃 / Netflix / 電気代" value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
-          <label>金額<input type="number" min="0" value={newFixed.amount} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value) })} /></label>
+          <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
           <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}>{state.categories.filter((category) => category.kind === "expense").map((category) => <option value={category.id} key={category.id}>{category.parentId ? "└ " : ""}{category.name}</option>)}</select></label>
           <label>支払元<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value })}>{state.accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
-          <label>支払予定日<input type="number" min="1" max="31" value={newFixed.dueDay} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value) })} /></label>
+          <label>支払予定日<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
           <label>開始月<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01` })} /></label>
           <button className="full-primary" type="button" onClick={async () => {
             try {
@@ -1500,7 +1555,7 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone
   const [closingDay, setClosingDay] = useState(account.closingDay ?? 25);
   const [withdrawalDay, setWithdrawalDay] = useState(account.withdrawalDay ?? 10);
   const [withdrawalAccountId, setWithdrawalAccountId] = useState(account.withdrawalAccountId ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "");
-  return <div className="edit-row balanced-edit"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={openingBalance} onChange={(event) => setOpeningBalance(Number(event.target.value))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))} /></label><label>引落日<input type="number" min="1" max="31" value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  return <div className="edit-row balanced-edit"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={numberInputValue(openingBalance)} onChange={(event) => setOpeningBalance(Number(event.target.value || 0))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={numberInputValue(closingDay)} onChange={(event) => setClosingDay(Number(event.target.value || 0))} /></label><label>引落日<input type="number" min="1" max="31" value={numberInputValue(withdrawalDay)} onChange={(event) => setWithdrawalDay(Number(event.target.value || 0))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
 }
 
 function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onClose: () => void }) {
@@ -1614,9 +1669,9 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
   return (
     <div className="edit-row">
       <label>固定費名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
-      <label>金額<input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} /></label>
-      <label>支払日<input type="number" min="1" max="31" value={draft.dueDay} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value) })} /></label>
-      <label>反映範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">すべてに反映</option><option value="future">指定月以降に反映</option></select></label>
+      <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
+      <label>支払日<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+      <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>開始月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
       <button onClick={async () => { try { await updateFixedCost(cost.id, { ...draft, status: "planned" }, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を更新しました。" : "固定費を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費更新に失敗しました。")); } }}>変更を保存</button>
       <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を削除しました。" : "固定費を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費削除に失敗しました。")); } }}>固定費を削除</button>
@@ -1627,6 +1682,10 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
 
 function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return <section className="metric"><Icon size={19} /><span>{label}</span><strong>{value}</strong></section>;
+}
+
+function numberInputValue(value: number) {
+  return value === 0 ? "" : value;
 }
 
 function TransactionList({ state, limit, setNotice, reload }: { state: LedgerState; limit?: number; setNotice: (message: string) => void; reload: () => Promise<void> }) {
@@ -1646,8 +1705,23 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   const category = state.categories.find((item) => item.id === transaction.categoryId);
   const account = state.accounts.find((item) => item.id === transaction.accountId);
   const normalAccounts = state.accounts.filter((item) => item.type !== "credit");
-  const editCategories = state.categories.filter((item) => item.kind === (draft.type === "income" ? "income" : "expense"));
   async function saveDraft() {
+    if (draft.type !== "transfer" && !draft.categoryId) {
+      setNotice("カテゴリーを選択してください。");
+      return;
+    }
+    if (!draft.accountId) {
+      setNotice(draft.type === "income" ? "入金先を選択してください。" : draft.type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
+      return;
+    }
+    if (draft.type === "transfer" && !draft.transferToAccountId) {
+      setNotice("振替先を選択してください。");
+      return;
+    }
+    if (draft.type === "transfer" && draft.accountId === draft.transferToAccountId) {
+      setNotice("振替元と振替先は別の口座を選択してください。");
+      return;
+    }
     const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
     const withdrawalDate = draft.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, draft.date) : undefined;
     const payload = {
@@ -1666,11 +1740,11 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   if (editing) {
     return (
       <article className="tx-edit">
-        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
-        <label>金額<input type="number" value={draft.amount} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value) })} /></label>
-        {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}>{editCategories.map((item) => <option key={item.id} value={item.id}>{item.parentId ? "└ " : ""}{item.name}</option>)}</select></label>}
-        <label>{draft.type === "income" ? "入金先" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "" })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
+        <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
+        {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} /></select></label>}
+        <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
         <label>{draft.type === "expense" && state.accounts.find((item) => item.id === draft.accountId)?.type === "credit" ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
         <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
         <button onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
