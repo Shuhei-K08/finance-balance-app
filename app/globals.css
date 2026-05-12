@@ -62,7 +62,7 @@ button {
   width: min(100%, 720px);
   min-height: 100vh;
   margin: 0 auto;
-  padding: 18px 16px 104px;
+  padding: 18px 16px 174px;
 }
 
 .app-shell.shared-ledger {
@@ -513,6 +513,24 @@ input[type="month"] {
   padding-right: 4px;
 }
 
+.more-entries {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.more-entries summary {
+  padding: 12px;
+  color: var(--brand-dark);
+  cursor: pointer;
+  font-weight: 800;
+  text-align: center;
+}
+
+.more-entries .transaction-list {
+  padding: 0 10px 10px;
+}
+
 .transaction-list article {
   display: grid;
   grid-template-columns: 38px minmax(0, 1fr) auto auto auto;
@@ -522,10 +540,43 @@ input[type="month"] {
 }
 
 .transaction-list article.tx-edit {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  padding: 10px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
+  background: #fff;
+}
+
+.tx-edit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.tx-edit-head button,
+.tx-edit-actions button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #f8fafc;
+  color: var(--brand-dark);
+  font-weight: 800;
+}
+
+.tx-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tx-edit-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 .credit-date-editor {
@@ -1411,21 +1462,39 @@ input[type="range"] {
   font-weight: 800;
 }
 
-.bottom-nav {
+.bottom-controls {
   position: fixed;
   z-index: 10;
   right: 0;
   bottom: 0;
   left: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
-  gap: 2px;
   width: min(100%, 720px);
   margin: 0 auto;
-  padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+  padding: 8px 8px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
   background: rgba(255, 253, 248, 0.96);
   backdrop-filter: blur(18px);
+}
+
+.bottom-controls .month-control {
+  margin-bottom: 8px;
+  padding: 8px;
+}
+
+.bottom-controls .month-control.compact {
+  grid-template-columns: 54px 58px minmax(0, 1fr) 58px;
+}
+
+.bottom-controls .month-control.compact button,
+.bottom-controls .month-control.compact input {
+  min-height: 34px;
+  font-size: 14px;
+}
+
+.bottom-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(56px, 1fr));
+  gap: 2px;
 }
 
 .bottom-nav button {
@@ -1569,6 +1638,10 @@ option {
     justify-items: stretch;
   }
 
+  .bottom-controls .month-control.compact {
+    grid-template-columns: 48px 56px minmax(0, 1fr) 56px;
+  }
+
   .month-control > span,
   .month-control input {
     width: 100%;
@@ -1577,6 +1650,24 @@ option {
   }
 
   .asset-snapshot-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .transaction-list article {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+  }
+
+  .transaction-list article > .mini-button {
+    grid-column: 2 / 4;
+  }
+
+  .transaction-list article.tx-edit {
+    grid-template-columns: 1fr;
+  }
+
+  .tx-edit-grid,
+  .tx-edit-actions,
+  .date-adjust-actions {
     grid-template-columns: 1fr;
   }
 

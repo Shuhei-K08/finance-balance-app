@@ -37,6 +37,7 @@ const errorTranslations: Array<[RegExp, string]> = [
   [/login required/i, "ログインが必要です。"],
   [/admin already exists/i, "管理者はすでに設定されています。"],
   [/not allowed as admin/i, "このメールアドレスは管理者として許可されていません。"],
+  [/共有家計簿が見つかりません/i, "共有家計簿が見つかりません。共有IDを確認してください。"],
   [/Failed to fetch/i, "Supabase に接続できませんでした。URL、anon key、ネットワーク接続を確認してください。"]
 ];
 

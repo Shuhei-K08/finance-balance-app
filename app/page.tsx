@@ -315,31 +315,32 @@ export default function App() {
         <AnalysisView
           state={state}
           monthKey={calendarMonth}
-          setMonthKey={setCalendarMonth}
-          setSelectedDate={setCalendarDate}
           stats={stats}
         />
       )}
       {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
 
-      <nav className="bottom-nav">
-        {tabs.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className={tab === item.id ? "active" : ""}
-              onClick={() => setTab(item.id)}
-              aria-label={item.label}
-            >
-              <Icon size={20} />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+      <section className="bottom-controls">
+        <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
+        <nav className="bottom-nav">
+          {tabs.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={tab === item.id ? "active" : ""}
+                onClick={() => setTab(item.id)}
+                aria-label={item.label}
+              >
+                <Icon size={20} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </section>
 
       {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
     </main>
@@ -544,13 +545,6 @@ function HomeView({
         </div>
         <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
-
-      <MonthControl
-        monthKey={calendarMonth}
-        setMonthKey={setCalendarMonth}
-        setSelectedDate={setCalendarDate}
-        label="表示月"
-      />
 
       {shouldShowSnapshotPanel && (
         <AssetSnapshotPanel
@@ -906,7 +900,7 @@ function HomeCalendar({
       <section className="panel">
         <div className="section-title calendar-title">
           <button type="button" onClick={() => moveMonth(-1)}>前月</button>
-          <input className="month-input" type="month" value={monthKey} onChange={(event) => { setSelectedMonth(event.target.value); setSelectedDate(`${event.target.value}-01`); }} />
+          <strong>{formatMonthLabel(monthKey)}</strong>
           <button type="button" onClick={() => moveMonth(1)}>翌月</button>
         </div>
         <div className="month-summary">
@@ -972,13 +966,27 @@ function MonthEntryList({
   reload: () => Promise<void>;
 }) {
   if (entries.length === 0) return <div className="empty-state"><span>この月の収支はまだありません。</span></div>;
+  const compactEntries = entries.slice(0, 12);
+  const remaining = Math.max(entries.length - compactEntries.length, 0);
   return (
     <div className="transaction-list month-entry-list">
-      {entries.map((entry) => (
+      {compactEntries.map((entry) => (
         entry.kind === "fixed"
           ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
           : <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
       ))}
+      {remaining > 0 && (
+        <details className="more-entries">
+          <summary>さらに{remaining}件を見る</summary>
+          <div className="transaction-list">
+            {entries.slice(12).map((entry) => (
+              entry.kind === "fixed"
+                ? <FixedCostOccurrenceRow key={`fixed-more-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
+                : <TransactionRow key={`more-${entry.transaction.id}`} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
+            ))}
+          </div>
+        </details>
+      )}
     </div>
   );
 }
@@ -1122,14 +1130,10 @@ function AnnualSavingsAi({ state, monthKey }: { state: LedgerState; monthKey: st
 function AnalysisView({
   state,
   monthKey,
-  setMonthKey,
-  setSelectedDate,
   stats
 }: {
   state: LedgerState;
   monthKey: string;
-  setMonthKey: (value: string) => void;
-  setSelectedDate: (value: string) => void;
   stats: Record<string, number>;
 }) {
   const monthLabel = formatMonthLabel(monthKey);
@@ -1160,7 +1164,6 @@ function AnalysisView({
   };
   return (
     <div className="view-stack">
-      <MonthControl monthKey={monthKey} setMonthKey={setMonthKey} setSelectedDate={setSelectedDate} label="分析月" />
       <section className="panel month-context">
         <div className="section-title"><h2>{monthLabel} の分析</h2><span>カレンダー選択月と連動</span></div>
         <div className="month-summary">
@@ -1669,6 +1672,10 @@ function SettingsView({
             className="google-button"
             type="button"
             onClick={async () => {
+              if (!inviteCode.trim()) {
+                setNotice("共有IDを入力してください。");
+                return;
+              }
               try {
                 const householdId = await joinSharedLedger(inviteCode);
                 await reloadHousehold(householdId);
@@ -2119,19 +2126,21 @@ function MonthControl({
   monthKey,
   setMonthKey,
   setSelectedDate,
-  label
+  label,
+  compact = false
 }: {
   monthKey: string;
   setMonthKey: (value: string) => void;
   setSelectedDate: (value: string) => void;
   label: string;
+  compact?: boolean;
 }) {
   function updateMonth(nextMonth: string) {
     setMonthKey(nextMonth);
     setSelectedDate(`${nextMonth}-01`);
   }
   return (
-    <section className="month-control" aria-label={label}>
+    <section className={`month-control ${compact ? "compact" : ""}`} aria-label={label}>
       <span>{label}</span>
       <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, -1))}>前月</button>
       <input type="month" value={monthKey} onChange={(event) => updateMonth(event.target.value)} />
@@ -2208,26 +2217,32 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   if (editing) {
     return (
       <article className="tx-edit">
-        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "", reflectedDate: undefined, creditStatus: undefined })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
-        <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
-        {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} /></select></label>}
-        <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => {
-          const nextAccountId = event.target.value;
-          const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
-          setDraft({
-            ...draft,
-            accountId: nextAccountId,
-            transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
-            reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
-            creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
-          });
-        }}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-        <label>{isDraftCreditExpense ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => {
-          const nextDate = event.target.value;
-          const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
-          setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
-        }} /></label>
+        <div className="tx-edit-head">
+          <strong>取引を編集</strong>
+          <button type="button" onClick={() => setEditing(false)}>閉じる</button>
+        </div>
+        <div className="tx-edit-grid">
+          <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "", reflectedDate: undefined, creditStatus: undefined })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
+          <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
+          {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} /></select></label>}
+          <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => {
+            const nextAccountId = event.target.value;
+            const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
+            setDraft({
+              ...draft,
+              accountId: nextAccountId,
+              transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
+              reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
+              creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
+            });
+          }}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+          <label>{isDraftCreditExpense ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => {
+            const nextDate = event.target.value;
+            const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
+            setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
+          }} /></label>
+        </div>
         {isDraftCreditExpense && (
           <div className="credit-date-editor">
             <label>引落日<input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(event) => setDraft({ ...draft, reflectedDate: event.target.value })} /></label>
@@ -2239,8 +2254,10 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
           </div>
         )}
         <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
-        <button onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
-        <button onClick={() => setEditing(false)}>編集をやめる</button>
+        <div className="tx-edit-actions">
+          <button className="full-primary" type="button" onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
+          <button type="button" onClick={() => setEditing(false)}>編集をやめる</button>
+        </div>
       </article>
     );
   }
