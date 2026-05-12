@@ -509,6 +509,16 @@ function HomeView({
   const monthLabel = formatMonthLabel(calendarMonth);
   const isCurrentMonth = calendarMonth === todayIso().slice(0, 7);
   const confirmedSnapshots = state.assetSnapshots.filter((snapshot) => snapshot.month === calendarMonth);
+  const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, confirmedSnapshots.length > 0);
+  const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
+  const [promptMonth, setPromptMonth] = useState<string | null>(null);
+  useEffect(() => {
+    if (!suggestedPromptMonth) return;
+    const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
+    if (window.localStorage.getItem(key)) return;
+    setPromptMonth(suggestedPromptMonth);
+    window.localStorage.setItem(key, "shown");
+  }, [state.householdId, suggestedPromptMonth]);
   const category = categoryExpense(state, calendarMonth);
   const assetBreakdown = state.accounts
     .filter((account) => account.type !== "credit")
@@ -538,13 +548,24 @@ function HomeView({
         label="表示月"
       />
 
-      <AssetSnapshotPanel
-        state={state}
-        monthKey={calendarMonth}
-        setNotice={setNotice}
-        reload={reload}
-        snapshotCount={confirmedSnapshots.length}
-      />
+      {shouldShowSnapshotPanel && (
+        <AssetSnapshotPanel
+          state={state}
+          monthKey={calendarMonth}
+          setNotice={setNotice}
+          reload={reload}
+          snapshotCount={confirmedSnapshots.length}
+        />
+      )}
+      {promptMonth && (
+        <AssetSnapshotPrompt
+          state={state}
+          monthKey={promptMonth}
+          setNotice={setNotice}
+          reload={reload}
+          onClose={() => setPromptMonth(null)}
+        />
+      )}
 
       <div className="stat-grid">
         <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} />
@@ -628,6 +649,53 @@ function AssetSnapshotPanel({
   snapshotCount: number;
 }) {
   const [open, setOpen] = useState(false);
+  return (
+    <section className="panel asset-snapshot-panel important">
+      <div>
+        <strong>{formatMonthLabel(monthKey)}の月末資産を確認</strong>
+        <span>{snapshotCount > 0 ? "確定済みです。実残高と違う場合は再確定できます。" : "未確定です。翌月以降の残高計算の基準になります。"}</span>
+      </div>
+      <button type="button" onClick={() => setOpen(true)}>月末資産を確定</button>
+      {open && (
+        <AssetSnapshotModal
+          state={state}
+          monthKey={monthKey}
+          setNotice={setNotice}
+          reload={reload}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </section>
+  );
+}
+
+function AssetSnapshotPrompt({ state, monthKey, setNotice, reload, onClose }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel asset-confirm-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="section-title"><h2>{formatMonthLabel(monthKey)}の月末資産確認</h2><span>残高確定</span></div>
+        <p className="setting-copy">月末・月初は実残高とアプリ残高がズレやすい時期です。口座残高を確定すると、翌月以降の資産推移が正確になります。</p>
+        <button className="full-primary" type="button" onClick={onClose}>あとで確認</button>
+        <AssetSnapshotEditor state={state} monthKey={monthKey} setNotice={setNotice} reload={reload} onDone={onClose} />
+      </section>
+    </div>
+  );
+}
+
+function AssetSnapshotModal({ state, monthKey, setNotice, reload, onClose }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
+        <div className="section-title"><h2>{formatMonthLabel(monthKey)}の資産確定</h2><span>翌月以降の基準</span></div>
+        <p className="setting-copy">ここで保存した口座別残高を、翌月以降の資産計算の起点にします。通帳や実残高と違う場合は調整して保存してください。</p>
+        <AssetSnapshotEditor state={state} monthKey={monthKey} setNotice={setNotice} reload={reload} onDone={onClose} />
+        <button className="google-button" type="button" onClick={onClose}>閉じる</button>
+      </section>
+    </div>
+  );
+}
+
+function AssetSnapshotEditor({ state, monthKey, setNotice, reload, onDone }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onDone?: () => void }) {
   const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
   const [balances, setBalances] = useState<Record<string, number>>({});
   useEffect(() => {
@@ -641,7 +709,7 @@ function AssetSnapshotPanel({
     try {
       await upsertAssetSnapshots(state.householdId ?? "", monthKey, balances);
       await reload();
-      setOpen(false);
+      onDone?.();
       setNotice(`${formatMonthLabel(monthKey)}の月末資産を確定しました。`);
     } catch (error) {
       setNotice(toJapaneseError(error, "月末資産の確定に失敗しました。"));
@@ -649,34 +717,20 @@ function AssetSnapshotPanel({
   }
 
   return (
-    <section className="panel asset-snapshot-panel">
-      <div>
-        <strong>{formatMonthLabel(monthKey)}の月末資産</strong>
-        <span>{snapshotCount > 0 ? "確定済み。必要なら金額を調整できます。" : "未確定。実残高とズレる場合は確定・調整してください。"}</span>
+    <div className="asset-snapshot-editor">
+      <div className="opening-list">
+        {assetAccounts.map((account) => (
+          <label key={account.id}>{account.name}
+            <input
+              type="number"
+              value={numberInputValue(balances[account.id] ?? 0)}
+              onChange={(event) => setBalances({ ...balances, [account.id]: Number(event.target.value || 0) })}
+            />
+          </label>
+        ))}
       </div>
-      <button type="button" onClick={() => setOpen(true)}>{snapshotCount > 0 ? "月末資産を調整" : "月末資産を確定"}</button>
-      {open && (
-        <div className="sheet-backdrop center-backdrop" onClick={() => setOpen(false)}>
-          <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
-            <div className="section-title"><h2>{formatMonthLabel(monthKey)}の資産確定</h2><span>翌月以降の基準</span></div>
-            <p className="setting-copy">ここで保存した口座別残高を、翌月以降の資産計算の起点にします。通帳や実残高と違う場合は調整して保存してください。</p>
-            <div className="opening-list">
-              {assetAccounts.map((account) => (
-                <label key={account.id}>{account.name}
-                  <input
-                    type="number"
-                    value={numberInputValue(balances[account.id] ?? 0)}
-                    onChange={(event) => setBalances({ ...balances, [account.id]: Number(event.target.value || 0) })}
-                  />
-                </label>
-              ))}
-            </div>
-            <button className="full-primary" type="button" onClick={save}>この金額で確定</button>
-            <button className="google-button" type="button" onClick={() => setOpen(false)}>閉じる</button>
-          </section>
-        </div>
-      )}
-    </section>
+      <button className="full-primary" type="button" onClick={save}>この金額で確定</button>
+    </div>
   );
 }
 
@@ -1426,7 +1480,7 @@ function SettingsView({
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
-  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "categories" | "fixed">("ledger");
+  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed">("ledger");
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
@@ -1470,6 +1524,7 @@ function SettingsView({
         {[
           ["ledger", "家計簿"],
           ["accounts", "お金管理"],
+          ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
           ["fixed", "固定費"]
         ].map(([id, label]) => (
@@ -1710,6 +1765,9 @@ function SettingsView({
       </section>
       </>
       )}
+      {settingsTab === "snapshots" && (
+        <AssetSnapshotSettings state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+      )}
       {settingsTab === "categories" && (
       <section className="panel">
         <div className="section-title"><h2>カテゴリ管理</h2><span>親カテゴリと小カテゴリ</span></div>
@@ -1817,6 +1875,38 @@ function AdminView() {
         </div>
       </section>
     </div>
+  );
+}
+
+function AssetSnapshotSettings({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
+  const defaultMonth = state.assetSnapshots[0]?.month ?? todayIso().slice(0, 7);
+  const [targetMonth, setTargetMonth] = useState(defaultMonth);
+  const months = Array.from(new Set([
+    targetMonth,
+    todayIso().slice(0, 7),
+    ...state.assetSnapshots.map((snapshot) => snapshot.month)
+  ])).sort((a, b) => b.localeCompare(a));
+  return (
+    <section className="panel">
+      <div className="section-title"><h2>月末資産一覧</h2><span>確定・再変更</span></div>
+      <p className="setting-copy">確定済みの月末資産を確認できます。金額を変更すると、その月以降の残高計算にも反映されます。</p>
+      <label>追加・変更する月<input type="month" value={targetMonth} onChange={(event) => setTargetMonth(event.target.value)} /></label>
+      <div className="snapshot-settings-list">
+        {months.map((month) => {
+          const count = state.assetSnapshots.filter((snapshot) => snapshot.month === month).length;
+          const total = totalAssets(state, month);
+          return (
+            <details key={month} open={month === targetMonth}>
+              <summary>
+                <strong>{formatMonthLabel(month)}</strong>
+                <span>{count > 0 ? "確定済み" : "未確定"} / {yen.format(total)}</span>
+              </summary>
+              <AssetSnapshotEditor state={state} monthKey={month} setNotice={setNotice} reload={() => reloadHousehold(state.householdId ?? "")} />
+            </details>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -1996,6 +2086,22 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
 
 function Metric({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
   return <section className="metric"><Icon size={19} /><span>{label}</span><strong>{value}</strong></section>;
+}
+
+function shouldShowAssetSnapshotPanel(monthKey: string, confirmed: boolean) {
+  const currentMonth = todayIso().slice(0, 7);
+  const day = Number(todayIso().slice(8, 10));
+  if (monthKey < currentMonth) return true;
+  return monthKey === currentMonth && !confirmed && day >= 25;
+}
+
+function suggestedAssetSnapshotMonth(state: LedgerState) {
+  const currentMonth = todayIso().slice(0, 7);
+  const day = Number(todayIso().slice(8, 10));
+  const previous = shiftMonthKey(currentMonth, -1);
+  const month = day <= 5 ? previous : day >= 25 ? currentMonth : "";
+  if (!month) return null;
+  return state.assetSnapshots.some((snapshot) => snapshot.month === month) ? null : month;
 }
 
 function MonthControl({

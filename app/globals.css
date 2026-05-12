@@ -377,6 +377,8 @@ h2 {
   grid-template-columns: auto 64px minmax(0, 1fr) 64px;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  overflow: hidden;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -427,6 +429,57 @@ h2 {
   color: var(--brand-dark);
   font-size: 12px;
   font-weight: 800;
+}
+
+.asset-snapshot-panel.important {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  box-shadow: 0 12px 28px rgba(180, 83, 9, 0.12);
+}
+
+.asset-snapshot-panel.important strong {
+  color: #92400e;
+  font-size: 18px;
+}
+
+.asset-confirm-modal {
+  border-color: #f59e0b;
+}
+
+.asset-snapshot-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.snapshot-settings-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.snapshot-settings-list details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.snapshot-settings-list summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.snapshot-settings-list summary span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.snapshot-settings-list .asset-snapshot-editor {
+  padding: 0 12px 12px;
 }
 
 .advice {
@@ -1239,8 +1292,9 @@ input[type="range"] {
   z-index: 5;
   top: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(86px, 1fr));
   gap: 6px;
+  overflow-x: auto;
   padding: 8px 0;
   background: var(--bg);
 }
@@ -1503,12 +1557,12 @@ option {
   }
 
   .month-control {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .month-control > span,
   .month-control input {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .asset-snapshot-panel {
