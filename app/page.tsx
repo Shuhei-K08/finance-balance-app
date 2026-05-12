@@ -1554,12 +1554,6 @@ function SettingsView({
         </div>}
         <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
       </section>
-      <section className="panel">
-        <div className="section-title"><h2>固定費</h2><span>毎月の支払い</span></div>
-        <div className="fixed-list">
-          {state.fixedCosts.map((cost) => <div key={cost.id}><span>{cost.name}</span><strong>{yen.format(cost.amount)}</strong><em>{cost.effectiveFrom ? `${cost.effectiveFrom.slice(0, 7)}から` : "毎月"}</em></div>)}
-        </div>
-      </section>
       </>
       )}
     </div>
@@ -1727,14 +1721,26 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
   const [draft, setDraft] = useState(cost);
   const [scope, setScope] = useState<"all" | "future">("all");
   const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
+  const onlyEndMonthChanged = (
+    draft.name === cost.name &&
+    draft.amount === cost.amount &&
+    draft.categoryId === cost.categoryId &&
+    draft.accountId === cost.accountId &&
+    draft.dueDay === cost.dueDay &&
+    draft.variable === cost.variable &&
+    (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") &&
+    (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "")
+  );
   return (
     <div className="edit-row">
       <label>固定費名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       <label>支払日<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+      <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
+      <label>終了月<input type="month" value={(draft.effectiveTo ?? "").slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveTo: event.target.value ? `${event.target.value}-01` : undefined })} /></label>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
-      {scope === "future" && <label>開始月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
-      <button onClick={async () => { try { await updateFixedCost(cost.id, { ...draft, status: "planned" }, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を更新しました。" : "固定費を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費更新に失敗しました。")); } }}>変更を保存</button>
+      {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
+      <button onClick={async () => { try { const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定費を更新しました。" : "固定費を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費更新に失敗しました。")); } }}>変更を保存</button>
       <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を削除しました。" : "固定費を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費削除に失敗しました。")); } }}>固定費を削除</button>
       <button type="button" onClick={onDone}>編集をやめる</button>
     </div>

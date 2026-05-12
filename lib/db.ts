@@ -593,7 +593,8 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
       is_variable: input.variable,
       due_day: input.dueDay,
       status: "planned",
-      effective_from: effectiveFrom
+      effective_from: effectiveFrom,
+      effective_to: input.effectiveTo ?? null
     });
     if (insertError) throwJapanese(insertError, "固定費更新に失敗しました。");
     return;
@@ -605,7 +606,9 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
     amount: input.amount,
     is_variable: input.variable,
     due_day: input.dueDay,
-    status: "planned"
+    status: "planned",
+    effective_from: input.effectiveFrom ?? null,
+    effective_to: input.effectiveTo ?? null
   }).eq("id", fixedCostId);
   if (error) throwJapanese(error, "固定費更新に失敗しました。");
 }
