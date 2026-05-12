@@ -83,6 +83,21 @@ button {
   margin-bottom: 18px;
 }
 
+.brand-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-heading img {
+  width: 48px;
+  height: 48px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(15, 118, 110, 0.22);
+}
+
 .top-actions {
   display: flex;
   align-items: center;
@@ -201,8 +216,8 @@ h2 {
   padding: 22px;
   border-radius: 8px;
   background:
-    linear-gradient(135deg, rgba(15, 118, 110, 0.96), rgba(23, 32, 28, 0.92)),
-    url("https://images.unsplash.com/photo-1554224155-6726b3ff858f?auto=format&fit=crop&w=1200&q=80");
+    linear-gradient(135deg, rgba(15, 118, 110, 0.18), rgba(23, 32, 28, 0.34)),
+    url("/mirai-ledger-banner.svg");
   background-position: center;
   background-size: cover;
   color: white;
@@ -211,8 +226,8 @@ h2 {
 
 .shared-ledger .hero-panel {
   background:
-    linear-gradient(135deg, rgba(234, 88, 12, 0.94), rgba(154, 52, 18, 0.88)),
-    url("https://images.unsplash.com/photo-1554224155-1696413565d3?auto=format&fit=crop&w=1200&q=80");
+    linear-gradient(135deg, rgba(234, 88, 12, 0.2), rgba(154, 52, 18, 0.38)),
+    url("/mirai-ledger-banner.svg");
   background-position: center;
   background-size: cover;
 }

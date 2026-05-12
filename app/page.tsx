@@ -243,9 +243,12 @@ export default function App() {
   return (
     <main className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}>
       <section className="topbar">
-        <div>
-          <p className="eyebrow">{state.activeSpace === "shared" ? "共有カレンダー" : "Mirai Ledger"}</p>
-          <h1>{state.householdName ?? "未来残高を見ながら整える家計簿"}</h1>
+        <div className="brand-heading">
+          <img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" />
+          <div>
+            <p className="eyebrow">{state.activeSpace === "shared" ? "共有カレンダー" : "Mirai Ledger"}</p>
+            <h1>{state.householdName ?? "未来残高を見ながら整える家計簿"}</h1>
+          </div>
         </div>
         <div className="top-actions">
           <button className="primary-icon" type="button" onClick={() => openQuick()} aria-label="取引を追加">
