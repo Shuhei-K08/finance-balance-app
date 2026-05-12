@@ -2,13 +2,16 @@ import { NextResponse } from "next/server";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-2.0-flash,gemini-2.5-flash,gemini-1.5-flash")
+  .split(",")
+  .map((model) => model.trim())
+  .filter(Boolean);
 
 export async function GET() {
   return NextResponse.json({
     ok: Boolean(GEMINI_API_KEY || OPENAI_API_KEY),
     provider: GEMINI_API_KEY ? "gemini" : OPENAI_API_KEY ? "openai" : "none",
-    model: GEMINI_API_KEY ? GEMINI_MODEL : OPENAI_API_KEY ? process.env.OPENAI_MODEL || "gpt-4o-mini" : null,
+    model: GEMINI_API_KEY ? GEMINI_MODELS[0] : OPENAI_API_KEY ? process.env.OPENAI_MODEL || "gpt-4o-mini" : null,
     message: GEMINI_API_KEY || OPENAI_API_KEY
       ? "AI APIキーはVercel環境変数から読み込めています。"
       : "AI APIキーが読み込めていません。VercelのProduction環境変数とRedeployを確認してください。"
@@ -39,27 +42,30 @@ export async function POST(request: Request) {
 }
 
 async function runGemini(prompt: string) {
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 520, temperature: 0.55 }
-    })
-  });
+  const errors: string[] = [];
+  for (const model of GEMINI_MODELS) {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { maxOutputTokens: 520, temperature: 0.55 }
+      })
+    });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    return NextResponse.json({ error: `Gemini APIの呼び出しに失敗しました。${compactApiError(detail)}` }, { status: response.status });
+    if (!response.ok) {
+      const detail = await response.text();
+      errors.push(`${model}: ${compactApiError(detail)}`);
+      continue;
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (text) return NextResponse.json({ text });
+    errors.push(`${model}: Gemini APIの応答が空でした。`);
   }
 
-  const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!text) {
-    return NextResponse.json({ error: "Gemini APIの応答が空でした。" }, { status: 502 });
-  }
-
-  return NextResponse.json({ text });
+  return NextResponse.json({ error: `Gemini APIの呼び出しに失敗しました。${errors.join(" / ").slice(0, 520)}` }, { status: 502 });
 }
 
 async function runOpenAi(prompt: string) {
