@@ -40,12 +40,13 @@ import {
   calculateAccountBalance,
   categoryExpense,
   creditStatusLabel,
+  fixedCostOccurrencesForMonth,
   fixedCostForecast,
   goalProjection,
-  isFixedCostActiveInMonth,
   monthTransactions,
   monthlyCreditWithdrawals,
   monthlyExpense,
+  monthlyExpenseWithFixed,
   monthlyIncome,
   projectedMonthEnd,
   spendingAdvice,
@@ -55,6 +56,7 @@ import {
   transactionTypeLabel,
   yen
 } from "@/lib/finance";
+import type { FixedCostOccurrence } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
 import { analyzeFinance, buildFinancePrompt } from "@/lib/gemini";
 import { LedgerState, TransactionType } from "@/lib/types";
@@ -199,7 +201,7 @@ export default function App() {
   const month = monthTransactions(state.transactions);
   const stats = {
     assets: totalAssets(state),
-    expense: monthlyExpense(month),
+    expense: monthlyExpenseWithFixed(state),
     income: monthlyIncome(month),
     forecast: projectedMonthEnd(state),
     fixed: fixedCostForecast(state.fixedCosts),
@@ -664,7 +666,7 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
-  const fixedRows = fixedCostOccurrences(state, monthKey);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey);
   const monthIncome = monthlyIncome(monthRows);
   const fixedExpense = fixedRows.reduce((sum, row) => sum + row.amount, 0);
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
@@ -718,7 +720,7 @@ function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerStat
 
 function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: { date: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onQuick: (date: string) => void }) {
   const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction) === date);
-  const fixedRows = fixedCostOccurrences(state, date.slice(0, 7)).filter((row) => row.date === date);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, date.slice(0, 7)).filter((row) => row.date === date);
   const count = rows.length + fixedRows.length;
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
@@ -737,18 +739,6 @@ function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: 
       </section>
     </div>
   );
-}
-
-type FixedCostOccurrence = LedgerState["fixedCosts"][number] & { date: string };
-
-function fixedCostOccurrences(state: LedgerState, monthKey: string): FixedCostOccurrence[] {
-  const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
-  return state.fixedCosts
-    .filter((cost) => isFixedCostActiveInMonth(cost, monthKey))
-    .map((cost) => ({
-      ...cost,
-      date: `${monthKey}-${String(Math.min(cost.dueDay, lastDay)).padStart(2, "0")}`
-    }));
 }
 
 function MonthEntryList({
@@ -798,7 +788,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
   useEffect(() => {
     const top = [...category].sort((a, b) => b.value - a.value)[0];
     const income = stats.income ?? monthlyIncome(monthTransactions(state.transactions));
-    const expense = stats.expense ?? monthlyExpense(monthTransactions(state.transactions));
+    const expense = stats.expense ?? monthlyExpenseWithFixed(state);
     const prompt = buildFinancePrompt({
       income,
       expense,
@@ -851,14 +841,14 @@ function AnalysisView({ state }: { state: LedgerState }) {
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
   const bars = [
     { name: "収入", value: monthlyIncome(monthTransactions(state.transactions)), fill: "#16a34a" },
-    { name: "支出", value: monthlyExpense(monthTransactions(state.transactions)), fill: "#dc2626" },
-    { name: "貯金", value: Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpense(monthTransactions(state.transactions)), 0), fill: "#0f766e" }
+    { name: "支出", value: monthlyExpenseWithFixed(state), fill: "#dc2626" },
+    { name: "貯金", value: Math.max(monthlyIncome(monthTransactions(state.transactions)) - monthlyExpenseWithFixed(state), 0), fill: "#0f766e" }
   ];
   const trend = monthlyTrend(state);
   const savingAverage = averageMonthlySaving(state);
   const month = monthTransactions(state.transactions);
   const income = monthlyIncome(month);
-  const expense = monthlyExpense(month);
+  const expense = monthlyExpenseWithFixed(state);
   const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
   const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
   const suggestedCut = topCategory ? Math.min(Math.ceil(topCategory.value * 0.15 / 1000) * 1000, 30000) : 0;
@@ -956,7 +946,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
 function buildAiInsights(state: LedgerState, category: Array<{ name: string; value: number }>) {
   const current = monthTransactions(state.transactions);
   const income = monthlyIncome(current);
-  const expense = monthlyExpense(current);
+  const expense = monthlyExpenseWithFixed(state);
   const saving = income - expense;
   const top = [...category].sort((a, b) => b.value - a.value)[0];
   const insights = [
@@ -980,7 +970,10 @@ function subcategoryExpense(state: LedgerState, parentId: string) {
       name: category.name,
       value: monthTransactions(state.transactions)
         .filter((transaction) => transaction.type === "expense" && transaction.categoryId === category.id)
-        .reduce((sum, transaction) => sum + transaction.amount, 0),
+        .reduce((sum, transaction) => sum + transaction.amount, 0) +
+        fixedCostOccurrencesForMonth(state.fixedCosts, todayIso().slice(0, 7))
+          .filter((cost) => cost.categoryId === category.id)
+          .reduce((sum, cost) => sum + cost.amount, 0),
       fill: category.color
     }))
     .filter((item) => item.value > 0);
@@ -993,7 +986,7 @@ function monthlyTrend(state: LedgerState) {
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
     const income = monthlyIncome(rows);
-    const expense = monthlyExpense(rows);
+    const expense = monthlyExpense(rows) + fixedCostOccurrencesForMonth(state.fixedCosts, key).reduce((sum, cost) => sum + cost.amount, 0);
     return { label: `${date.getMonth() + 1}月`, income, expense, saving: Math.max(income - expense, 0) };
   });
 }
