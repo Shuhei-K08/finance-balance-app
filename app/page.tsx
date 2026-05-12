@@ -43,9 +43,9 @@ import {
   fixedCostForecast,
   goalProjection,
   monthTransactions,
+  monthlyCreditWithdrawals,
   monthlyExpense,
   monthlyIncome,
-  pendingCreditWithdrawals,
   projectedMonthEnd,
   spendingAdvice,
   todayIso,
@@ -202,7 +202,7 @@ export default function App() {
     income: monthlyIncome(month),
     forecast: projectedMonthEnd(state),
     fixed: fixedCostForecast(state.fixedCosts),
-    credit: pendingCreditWithdrawals(state)
+    credit: monthlyCreditWithdrawals(state)
   };
 
   function openQuick(date = todayIso()) {
@@ -465,7 +465,7 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         <Metric icon={Landmark} label="今月収入" value={yen.format(stats.income)} />
         <Metric icon={PiggyBank} label="貯金率" value={`${Math.max(Math.round(((stats.income - stats.expense) / Math.max(stats.income, 1)) * 100), 0)}%`} />
         <Metric icon={Landmark} label="固定費予定" value={yen.format(stats.fixed)} />
-        <Metric icon={Wallet} label="引落予定" value={yen.format(stats.credit)} />
+        <Metric icon={Wallet} label="今月の引落予定" value={yen.format(stats.credit)} />
       </div>
 
       <section className="ai-panel">
@@ -686,7 +686,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       topCategoryAmount: top?.value ?? 0,
       savingRate: Math.max(Math.round(((income - expense) / Math.max(income, 1)) * 100), 0),
       averageSaving: averageMonthlySaving(state),
-      creditPending: stats.credit ?? pendingCreditWithdrawals(state)
+      creditPending: stats.credit ?? monthlyCreditWithdrawals(state)
     });
     let cancelled = false;
     setLines([]);
@@ -746,7 +746,7 @@ function AnalysisView({ state }: { state: LedgerState }) {
     income,
     forecast: projectedMonthEnd(state),
     fixed: fixedCostForecast(state.fixedCosts),
-    credit: pendingCreditWithdrawals(state)
+    credit: monthlyCreditWithdrawals(state)
   };
   return (
     <div className="view-stack">
@@ -844,7 +844,7 @@ function buildAiInsights(state: LedgerState, category: Array<{ name: string; val
     const share = expense ? Math.round((top.value / expense) * 100) : 0;
     insights.push(`支出で一番大きいカテゴリは「${top.name}」で、今月支出の約${share}%です。ここを少し調整すると月末残高への影響が大きいです。`);
   }
-  const credit = pendingCreditWithdrawals(state);
+  const credit = monthlyCreditWithdrawals(state);
   if (credit > 0) insights.push(`クレジットカードの未引落が ${yen.format(credit)} あります。引落月の残高に余裕があるか確認しておくと安心です。`);
   if (insights.length < 3) insights.push(spendingAdvice(state));
   return insights;

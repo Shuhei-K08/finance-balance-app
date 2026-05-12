@@ -89,6 +89,19 @@ export function pendingCreditWithdrawals(state: LedgerState) {
     .reduce((total, transaction) => total + transaction.amount, 0);
 }
 
+export function monthlyCreditWithdrawals(state: LedgerState, date = new Date()) {
+  const monthKey = date.toISOString().slice(0, 7);
+  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
+  return state.transactions
+    .filter((transaction) => (
+      transaction.type === "expense" &&
+      creditIds.has(transaction.accountId) &&
+      transaction.creditStatus !== "withdrawn" &&
+      transactionLedgerDate(transaction).startsWith(monthKey)
+    ))
+    .reduce((total, transaction) => total + transaction.amount, 0);
+}
+
 export function fixedCostForecast(fixedCosts: FixedCost[]) {
   const monthKey = todayIso().slice(0, 7);
   return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((total, cost) => total + cost.amount, 0);
@@ -102,7 +115,7 @@ export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
 }
 
 export function projectedMonthEnd(state: LedgerState) {
-  return totalAssets(state) - fixedCostForecast(state.fixedCosts) - pendingCreditWithdrawals(state);
+  return totalAssets(state) - fixedCostForecast(state.fixedCosts) - monthlyCreditWithdrawals(state);
 }
 
 export function categoryExpense(state: LedgerState) {

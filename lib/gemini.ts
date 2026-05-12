@@ -1,21 +1,12 @@
-const API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-const API_URL = API_KEY
-  ? `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`
-  : "";
-
 export async function analyzeFinance(prompt: string): Promise<string> {
-  if (!API_URL) throw new Error("Gemini API key is not configured.");
-  const res = await fetch(API_URL, {
+  const res = await fetch("/api/finance-analysis", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 420, temperature: 0.65 }
-    })
+    body: JSON.stringify({ prompt })
   });
-  if (!res.ok) throw new Error("Gemini API request failed.");
   const data = await res.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  if (!res.ok) throw new Error(data?.error || "Gemini API request failed.");
+  const text = data?.text;
   if (!text) throw new Error("Gemini API response was empty.");
   return text;
 }
