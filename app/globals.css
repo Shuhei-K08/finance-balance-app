@@ -392,6 +392,27 @@ h2 {
   border-radius: 8px;
 }
 
+.credit-date-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.date-adjust-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.date-adjust-actions button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .mini-button {
   min-height: 32px;
   border: 1px solid var(--line);

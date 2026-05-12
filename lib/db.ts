@@ -377,9 +377,9 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     })),
     transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => {
       const creditAccount = ((accountsResult.data ?? []) as DbAccount[]).find((account) => account.id === transaction.account_id && account.account_type === "credit");
-      const reflectedDate = transaction.transaction_type === "expense" && creditAccount && transaction.credit_status !== "withdrawn"
+      const reflectedDate = transaction.reflected_on ?? (transaction.transaction_type === "expense" && creditAccount
         ? calculateWithdrawalDate(creditAccount, transaction.occurred_on)
-        : transaction.reflected_on ?? undefined;
+        : undefined);
       return {
         id: transaction.id,
         type: transaction.transaction_type,

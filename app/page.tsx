@@ -108,6 +108,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickDate, setQuickDate] = useState(todayIso());
+  const [calendarMonth, setCalendarMonth] = useState(todayIso().slice(0, 7));
+  const [calendarDate, setCalendarDate] = useState(todayIso());
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [notice, setNotice] = useState("");
@@ -291,7 +293,19 @@ export default function App() {
       )}
       {notice && <section className="notice" role="status">{notice}</section>}
 
-      {tab === "home" && <HomeView state={state} stats={stats} setNotice={setNotice} reload={() => refreshRemoteState()} onQuick={openQuick} />}
+      {tab === "home" && (
+        <HomeView
+          state={state}
+          stats={stats}
+          setNotice={setNotice}
+          reload={() => refreshRemoteState()}
+          onQuick={openQuick}
+          calendarMonth={calendarMonth}
+          setCalendarMonth={setCalendarMonth}
+          calendarDate={calendarDate}
+          setCalendarDate={setCalendarDate}
+        />
+      )}
       {tab === "analysis" && <AnalysisView state={state} />}
       {tab === "goals" && <GoalsView state={state} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
@@ -458,7 +472,27 @@ function OpeningSetupScreen({ state, setNotice, onDone }: { state: LedgerState; 
   );
 }
 
-function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerState; stats: Record<string, number>; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
+function HomeView({
+  state,
+  stats,
+  setNotice,
+  reload,
+  onQuick,
+  calendarMonth,
+  setCalendarMonth,
+  calendarDate,
+  setCalendarDate
+}: {
+  state: LedgerState;
+  stats: Record<string, number>;
+  setNotice: (message: string) => void;
+  reload: () => Promise<void>;
+  onQuick: (date?: string) => void;
+  calendarMonth: string;
+  setCalendarMonth: (value: string) => void;
+  calendarDate: string;
+  setCalendarDate: (value: string) => void;
+}) {
   const category = categoryExpense(state);
   const assetBreakdown = state.accounts.map((account) => ({
     name: account.name,
@@ -532,7 +566,16 @@ function HomeView({ state, stats, setNotice, reload, onQuick }: { state: LedgerS
         </section>
       </div>
 
-      <HomeCalendar state={state} setNotice={setNotice} reload={reload} onQuick={onQuick} />
+      <HomeCalendar
+        state={state}
+        setNotice={setNotice}
+        reload={reload}
+        onQuick={onQuick}
+        selectedMonth={calendarMonth}
+        setSelectedMonth={setCalendarMonth}
+        selectedDate={calendarDate}
+        setSelectedDate={setCalendarDate}
+      />
     </div>
   );
 }
@@ -660,9 +703,25 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
   );
 }
 
-function HomeCalendar({ state, setNotice, reload, onQuick }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date: string) => void }) {
-  const [selectedMonth, setSelectedMonth] = useState(todayIso().slice(0, 7));
-  const [selectedDate, setSelectedDate] = useState(todayIso());
+function HomeCalendar({
+  state,
+  setNotice,
+  reload,
+  onQuick,
+  selectedMonth,
+  setSelectedMonth,
+  selectedDate,
+  setSelectedDate
+}: {
+  state: LedgerState;
+  setNotice: (message: string) => void;
+  reload: () => Promise<void>;
+  onQuick: (date: string) => void;
+  selectedMonth: string;
+  setSelectedMonth: (value: string) => void;
+  selectedDate: string;
+  setSelectedDate: (value: string) => void;
+}) {
   const [modalDate, setModalDate] = useState<string | null>(null);
   const monthKey = selectedMonth;
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
@@ -1793,6 +1852,9 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   const category = state.categories.find((item) => item.id === transaction.categoryId);
   const account = state.accounts.find((item) => item.id === transaction.accountId);
   const normalAccounts = state.accounts.filter((item) => item.type !== "credit");
+  const draftCreditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
+  const isDraftCreditExpense = draft.type === "expense" && Boolean(draftCreditAccount);
+  const autoWithdrawalDate = isDraftCreditExpense && draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, draft.date) : undefined;
   async function saveDraft() {
     if (draft.type !== "transfer" && !draft.categoryId) {
       setNotice("カテゴリーを選択してください。");
@@ -1811,7 +1873,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
       return;
     }
     const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
-    const withdrawalDate = draft.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, draft.date) : undefined;
+    const withdrawalDate = draft.type === "expense" && creditAccount ? draft.reflectedDate || nextWithdrawalDate(creditAccount, draft.date) : undefined;
     const payload = {
       ...draft,
       categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
@@ -1828,12 +1890,36 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
   if (editing) {
     return (
       <article className="tx-edit">
-        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "" })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
+        <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "", reflectedDate: undefined, creditStatus: undefined })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
         <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
         {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} /></select></label>}
-        <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => {
+          const nextAccountId = event.target.value;
+          const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
+          setDraft({
+            ...draft,
+            accountId: nextAccountId,
+            transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
+            reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
+            creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
+          });
+        }}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-        <label>{draft.type === "expense" && state.accounts.find((item) => item.id === draft.accountId)?.type === "credit" ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => setDraft({ ...draft, date: event.target.value })} /></label>
+        <label>{isDraftCreditExpense ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => {
+          const nextDate = event.target.value;
+          const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
+          setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
+        }} /></label>
+        {isDraftCreditExpense && (
+          <div className="credit-date-editor">
+            <label>引落日<input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(event) => setDraft({ ...draft, reflectedDate: event.target.value })} /></label>
+            <div className="date-adjust-actions" aria-label="引落日の調整">
+              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, -1) })}>前月へ</button>
+              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>自動計算</button>
+              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, 1) })}>翌月へ</button>
+            </div>
+          </div>
+        )}
         <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
         <button onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
         <button onClick={() => setEditing(false)}>編集をやめる</button>
@@ -1859,5 +1945,13 @@ function nextWithdrawalDate(account: LedgerState["accounts"][number], occurredOn
   const targetMonth = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, 1);
   const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
   const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(withdrawalDay, lastDay));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+}
+
+function shiftMonth(date: string, delta: number) {
+  const base = new Date(`${date}T00:00:00`);
+  const targetMonth = new Date(base.getFullYear(), base.getMonth() + delta, 1);
+  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(base.getDate(), lastDay));
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
