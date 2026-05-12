@@ -961,7 +961,7 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
       .join("、") || "支出カテゴリなし";
     const assetBreakdown = state.accounts
       .filter((account) => account.type !== "credit")
-      .map((account) => `${account.name}:${yen.format(calculateAccountBalance(account, state.transactions))}`)
+      .map((account) => `${account.name}:${yen.format(confirmedAccountBalance(account, state, monthKey))}`)
       .join("、") || "資産口座なし";
     const prompt = buildFinancePrompt({
       monthLabel: formatMonthLabel(monthKey),

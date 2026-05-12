@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
-      return NextResponse.json({ error: "AI APIキーが未設定です。.env.local に GEMINI_API_KEY または OPENAI_API_KEY を設定してください。" }, { status: 500 });
+      return NextResponse.json({ error: "AI APIキーが未設定です。VercelのEnvironment VariablesにGEMINI_API_KEYまたはOPENAI_API_KEYを追加し、ProductionをRedeployしてください。" }, { status: 500 });
     }
 
     const body = await request.json();

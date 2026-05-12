@@ -79,11 +79,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
     return (!since || ledgerDate > since) && ledgerDate <= until;
   });
   return rows.reduce((balance, transaction) => {
-    if (transaction.type === "income" && transaction.accountId === account.id) return balance + transaction.amount;
-    if (transaction.type === "expense" && transaction.accountId === account.id && account.type !== "credit") return balance - transaction.amount;
-    if (transaction.type === "transfer" && transaction.accountId === account.id) return balance - transaction.amount;
-    if (transaction.type === "transfer" && transaction.transferToAccountId === account.id) return balance + transaction.amount;
-    return balance;
+    return balance + transactionAssetDeltaForAccount(transaction, account, state.accounts);
   }, latestSnapshot?.amount ?? account.openingBalance);
 }
 
@@ -96,6 +92,27 @@ export function totalAssets(state: LedgerState, throughMonthKey?: string) {
   return state.accounts
     .filter((account) => account.type !== "credit")
     .reduce((total, account) => total + (throughMonthKey ? confirmedAccountBalance(account, state, throughMonthKey) : calculateAccountBalanceInState(account, state)), 0);
+}
+
+function transactionAssetDeltaForAccount(transaction: Transaction, account: Account, accounts: Account[]) {
+  if (transaction.type === "income" && transaction.accountId === account.id) return transaction.amount;
+  if (transaction.type === "expense") {
+    const sourceAccount = accounts.find((item) => item.id === transaction.accountId);
+    if (sourceAccount?.type === "credit") {
+      return sourceAccount.withdrawalAccountId === account.id ? -transaction.amount : 0;
+    }
+    return transaction.accountId === account.id && account.type !== "credit" ? -transaction.amount : 0;
+  }
+  if (transaction.type === "transfer" && transaction.accountId === account.id) return -transaction.amount;
+  if (transaction.type === "transfer" && transaction.transferToAccountId === account.id) return transaction.amount;
+  return 0;
+}
+
+function monthlyAssetMovement(state: LedgerState, monthKey: string) {
+  const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
+  return monthTransactionsByKey(state.transactions, monthKey).reduce((sum, transaction) => {
+    return sum + assetAccounts.reduce((accountSum, account) => accountSum + transactionAssetDeltaForAccount(transaction, account, state.accounts), 0);
+  }, 0);
 }
 
 export function monthTransactions(transactions: Transaction[], date = new Date()) {
@@ -219,9 +236,7 @@ export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
 export function projectedMonthEnd(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
   const baseMonth = previousMonthKey(monthKey);
   const baseAssets = totalAssets(state, baseMonth);
-  const income = monthlyIncome(monthTransactionsByKey(state.transactions, monthKey));
-  const expense = monthlyExpense(monthTransactionsByKey(state.transactions, monthKey));
-  return baseAssets + income - expense - fixedCostForecast(state.fixedCosts, monthKey) - monthlyCreditWithdrawalsByKey(state, monthKey);
+  return baseAssets + monthlyAssetMovement(state, monthKey) - fixedCostForecast(state.fixedCosts, monthKey);
 }
 
 export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
@@ -245,29 +260,14 @@ export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(
 }
 
 export function balanceTrend(state: LedgerState, endMonthKey = todayIso().slice(0, 7)) {
-  const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
-  const base = assetAccounts.reduce((sum, account) => sum + account.openingBalance, 0);
   const endMonth = monthKeyToDate(endMonthKey);
   const start = new Date(endMonth.getFullYear(), endMonth.getMonth() - 11, 1);
   const points: Array<{ label: string; actual?: number; forecast?: number }> = [];
 
   for (let index = 0; index < 12; index += 1) {
     const month = new Date(start.getFullYear(), start.getMonth() + index, 1);
-    const nextMonth = new Date(month.getFullYear(), month.getMonth() + 1, 1);
-    const monthEndKey = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}-01`;
-    const value = state.transactions
-      .filter((transaction) => transactionLedgerDate(transaction) < monthEndKey)
-      .reduce((balance, transaction) => {
-        if (transaction.type === "income" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance + transaction.amount;
-        if (transaction.type === "expense" && assetAccounts.some((account) => account.id === transaction.accountId)) return balance - transaction.amount;
-        if (transaction.type === "transfer") {
-          const fromAsset = assetAccounts.some((account) => account.id === transaction.accountId);
-          const toAsset = assetAccounts.some((account) => account.id === transaction.transferToAccountId);
-          if (fromAsset && !toAsset) return balance - transaction.amount;
-          if (!fromAsset && toAsset) return balance + transaction.amount;
-        }
-        return balance;
-      }, base);
+    const key = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`;
+    const value = totalAssets(state, key);
     points.push({ label: `${month.getMonth() + 1}月`, actual: value, forecast: value });
   }
 
