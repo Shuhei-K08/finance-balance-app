@@ -62,6 +62,13 @@ export type Goal = {
   monthlyBoost: number;
 };
 
+export type AssetSnapshot = {
+  id: string;
+  accountId: string;
+  month: string;
+  amount: number;
+};
+
 export type HouseholdSummary = {
   id: string;
   name: string;
@@ -91,4 +98,5 @@ export type LedgerState = {
   transactions: Transaction[];
   fixedCosts: FixedCost[];
   goals: Goal[];
+  assetSnapshots: AssetSnapshot[];
 };

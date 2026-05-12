@@ -38,6 +38,7 @@ import {
   balanceTrend,
   averageMonthlySaving,
   calculateAccountBalance,
+  confirmedAccountBalance,
   categoryExpense,
   creditStatusLabel,
   fixedCostOccurrencesForMonth,
@@ -92,6 +93,7 @@ import {
   updateGoal,
   updateOpeningBalances,
   updateTransaction,
+  upsertAssetSnapshots,
   toJapaneseError
 } from "@/lib/db";
 import { AccountType } from "@/lib/types";
@@ -505,12 +507,17 @@ function HomeView({
   setCalendarDate: (value: string) => void;
 }) {
   const monthLabel = formatMonthLabel(calendarMonth);
+  const isCurrentMonth = calendarMonth === todayIso().slice(0, 7);
+  const confirmedSnapshots = state.assetSnapshots.filter((snapshot) => snapshot.month === calendarMonth);
   const category = categoryExpense(state, calendarMonth);
-  const assetBreakdown = state.accounts.map((account) => ({
-    name: account.name,
-    value: Math.max(calculateAccountBalance(account, state.transactions, calendarMonth), 0),
-    fill: account.color
-  })).filter((item) => item.value > 0);
+  const assetBreakdown = state.accounts
+    .filter((account) => account.type !== "credit")
+    .map((account) => ({
+      name: account.name,
+      value: Math.max(confirmedAccountBalance(account, state, calendarMonth), 0),
+      fill: account.color
+    }))
+    .filter((item) => item.value > 0);
   const assetTotal = assetBreakdown.reduce((sum, item) => sum + item.value, 0);
   const categoryTotal = category.reduce((sum, item) => sum + item.value, 0);
   return (
@@ -519,7 +526,7 @@ function HomeView({
         <div>
           <p>総資産</p>
           <strong>{yen.format(stats.assets)}</strong>
-          <span>{monthLabel} 月末予測 {yen.format(stats.forecast)}</span>
+          <span>{monthLabel} {isCurrentMonth ? "月末予測" : "月末資産"} {yen.format(isCurrentMonth ? stats.forecast : stats.assets)}</span>
         </div>
         <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
@@ -529,6 +536,14 @@ function HomeView({
         setMonthKey={setCalendarMonth}
         setSelectedDate={setCalendarDate}
         label="表示月"
+      />
+
+      <AssetSnapshotPanel
+        state={state}
+        monthKey={calendarMonth}
+        setNotice={setNotice}
+        reload={reload}
+        snapshotCount={confirmedSnapshots.length}
       />
 
       <div className="stat-grid">
@@ -596,6 +611,72 @@ function HomeView({
         setSelectedDate={setCalendarDate}
       />
     </div>
+  );
+}
+
+function AssetSnapshotPanel({
+  state,
+  monthKey,
+  setNotice,
+  reload,
+  snapshotCount
+}: {
+  state: LedgerState;
+  monthKey: string;
+  setNotice: (message: string) => void;
+  reload: () => Promise<void>;
+  snapshotCount: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const assetAccounts = state.accounts.filter((account) => account.type !== "credit");
+  const [balances, setBalances] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setBalances(Object.fromEntries(assetAccounts.map((account) => [
+      account.id,
+      confirmedAccountBalance(account, state, monthKey)
+    ])));
+  }, [state.householdId, state.assetSnapshots.length, state.transactions.length, monthKey]);
+
+  async function save() {
+    try {
+      await upsertAssetSnapshots(state.householdId ?? "", monthKey, balances);
+      await reload();
+      setOpen(false);
+      setNotice(`${formatMonthLabel(monthKey)}の月末資産を確定しました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "月末資産の確定に失敗しました。"));
+    }
+  }
+
+  return (
+    <section className="panel asset-snapshot-panel">
+      <div>
+        <strong>{formatMonthLabel(monthKey)}の月末資産</strong>
+        <span>{snapshotCount > 0 ? "確定済み。必要なら金額を調整できます。" : "未確定。実残高とズレる場合は確定・調整してください。"}</span>
+      </div>
+      <button type="button" onClick={() => setOpen(true)}>{snapshotCount > 0 ? "月末資産を調整" : "月末資産を確定"}</button>
+      {open && (
+        <div className="sheet-backdrop center-backdrop" onClick={() => setOpen(false)}>
+          <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
+            <div className="section-title"><h2>{formatMonthLabel(monthKey)}の資産確定</h2><span>翌月以降の基準</span></div>
+            <p className="setting-copy">ここで保存した口座別残高を、翌月以降の資産計算の起点にします。通帳や実残高と違う場合は調整して保存してください。</p>
+            <div className="opening-list">
+              {assetAccounts.map((account) => (
+                <label key={account.id}>{account.name}
+                  <input
+                    type="number"
+                    value={numberInputValue(balances[account.id] ?? 0)}
+                    onChange={(event) => setBalances({ ...balances, [account.id]: Number(event.target.value || 0) })}
+                  />
+                </label>
+              ))}
+            </div>
+            <button className="full-primary" type="button" onClick={save}>この金額で確定</button>
+            <button className="google-button" type="button" onClick={() => setOpen(false)}>閉じる</button>
+          </section>
+        </div>
+      )}
+    </section>
   );
 }
 

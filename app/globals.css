@@ -399,6 +399,36 @@ h2 {
   font-weight: 800;
 }
 
+.asset-snapshot-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.asset-snapshot-panel div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.asset-snapshot-panel span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.asset-snapshot-panel button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .advice {
   display: flex;
   gap: 10px;
@@ -1479,6 +1509,10 @@ option {
   .month-control > span,
   .month-control input {
     grid-column: 1 / -1;
+  }
+
+  .asset-snapshot-panel {
+    grid-template-columns: 1fr;
   }
 
   .pie-legend div {

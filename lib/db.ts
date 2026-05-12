@@ -5,6 +5,7 @@ import { initialState } from "./sample-data";
 import {
   Account,
   AccountType,
+  AssetSnapshot,
   Category,
   FixedCost,
   FixedCostStatus,
@@ -127,6 +128,13 @@ type DbGoal = {
   target_amount: number | string;
   deadline: string;
   monthly_boost: number | string | null;
+};
+
+type DbAssetSnapshot = {
+  id: string;
+  account_id: string;
+  snapshot_month: string;
+  amount: number | string;
 };
 
 function requireSupabase() {
@@ -329,7 +337,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     categoriesResult,
     transactionsResult,
     fixedCostsResult,
-    goalsResult
+    goalsResult,
+    assetSnapshotsResult
   ] = await Promise.all([
     client.from("profiles").select("role").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
@@ -337,12 +346,15 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
-    client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at")
+    client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false })
   ]);
 
+  const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
   for (const result of [profileResult, householdResult, accountsResult, categoriesResult, transactionsResult, fixedCostsResult, goalsResult]) {
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
+  if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
 
   if (!householdResult.data) throw new Error("家計簿が見つかりません。ログアウトして再ログインしてください。");
   const household = householdResult.data as DbHousehold;
@@ -412,6 +424,12 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       targetAmount: toNumber(goal.target_amount),
       deadline: goal.deadline,
       monthlyBoost: toNumber(goal.monthly_boost)
+    })),
+    assetSnapshots: (assetSnapshotTableMissing ? [] : ((assetSnapshotsResult.data ?? []) as DbAssetSnapshot[])).map((snapshot): AssetSnapshot => ({
+      id: snapshot.id,
+      accountId: snapshot.account_id,
+      month: snapshot.snapshot_month.slice(0, 7),
+      amount: toNumber(snapshot.amount)
     }))
   };
 }
@@ -485,6 +503,20 @@ export async function updateOpeningBalances(balances: Record<string, { amount: n
       .eq("id", accountId);
     if (error) throwJapanese(error, "初期残高の更新に失敗しました。");
   }));
+}
+
+export async function upsertAssetSnapshots(householdId: string, month: string, balances: Record<string, number>) {
+  const client = requireSupabase();
+  const rows = Object.entries(balances).map(([accountId, amount]) => ({
+    household_id: householdId,
+    account_id: accountId,
+    snapshot_month: `${month}-01`,
+    amount
+  }));
+  const { error } = await client
+    .from("monthly_asset_snapshots")
+    .upsert(rows, { onConflict: "household_id,account_id,snapshot_month" });
+  if (error) throwJapanese(error, "月末資産の確定に失敗しました。");
 }
 
 export async function createAccount(householdId: string, input: { name: string; type: AccountType; openingBalance: number; openingBalanceDate: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
