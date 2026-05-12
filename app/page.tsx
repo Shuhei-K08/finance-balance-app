@@ -995,9 +995,8 @@ function useFinanceAi(state: LedgerState, stats: Record<string, number>, categor
         const next = text.split("\n").map((line) => line.trim()).filter(Boolean);
         setLines(next);
       })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "AI APIキーや接続設定を確認してください。";
-        if (!cancelled) setLines([`AI分析を取得できませんでした。${message}`]);
+      .catch(() => {
+        if (!cancelled) setLines([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -1029,9 +1028,8 @@ function useAnnualSavingsAi(state: LedgerState, monthKey: string) {
         if (cancelled) return;
         setLines(text.split("\n").map((line) => line.trim()).filter(Boolean));
       })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "AI APIキーや接続設定を確認してください。";
-        if (!cancelled) setLines([`年間貯金予測を取得できませんでした。${message}`]);
+      .catch(() => {
+        if (!cancelled) setLines([]);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

@@ -8,20 +8,13 @@ const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-2.0-flash,gemini-2.5-
   .filter(Boolean);
 
 export async function GET() {
-  return NextResponse.json({
-    ok: Boolean(GEMINI_API_KEY || OPENAI_API_KEY),
-    provider: GEMINI_API_KEY ? "gemini" : OPENAI_API_KEY ? "openai" : "none",
-    model: GEMINI_API_KEY ? GEMINI_MODELS[0] : OPENAI_API_KEY ? process.env.OPENAI_MODEL || "gpt-4o-mini" : null,
-    message: GEMINI_API_KEY || OPENAI_API_KEY
-      ? "AI APIキーはVercel環境変数から読み込めています。"
-      : "AI APIキーが読み込めていません。VercelのProduction環境変数とRedeployを確認してください。"
-  });
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(request: Request) {
   try {
     if (!GEMINI_API_KEY && !OPENAI_API_KEY) {
-      return NextResponse.json({ error: "AI APIキーが未設定です。VercelのEnvironment VariablesにGEMINI_API_KEYまたはOPENAI_API_KEYを追加し、ProductionをRedeployしてください。" }, { status: 500 });
+      return NextResponse.json({ error: "AI分析を取得できませんでした。" }, { status: 500 });
     }
 
     const body = await request.json();
@@ -36,13 +29,11 @@ export async function POST(request: Request) {
 
     return runOpenAi(prompt);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "AI分析に失敗しました。";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: "AI分析を取得できませんでした。" }, { status: 500 });
   }
 }
 
 async function runGemini(prompt: string) {
-  const errors: string[] = [];
   for (const model of GEMINI_MODELS) {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
@@ -54,18 +45,15 @@ async function runGemini(prompt: string) {
     });
 
     if (!response.ok) {
-      const detail = await response.text();
-      errors.push(`${model}: ${compactApiError(detail)}`);
       continue;
     }
 
     const data = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
     if (text) return NextResponse.json({ text });
-    errors.push(`${model}: Gemini APIの応答が空でした。`);
   }
 
-  return NextResponse.json({ error: `Gemini APIの呼び出しに失敗しました。${errors.join(" / ").slice(0, 520)}` }, { status: 502 });
+  return NextResponse.json({ error: "AI分析を取得できませんでした。" }, { status: 502 });
 }
 
 async function runOpenAi(prompt: string) {
@@ -84,26 +72,14 @@ async function runOpenAi(prompt: string) {
     });
 
   if (!response.ok) {
-    const detail = await response.text();
-    return NextResponse.json({ error: `OpenAI APIの呼び出しに失敗しました。${compactApiError(detail)}` }, { status: response.status });
+    return NextResponse.json({ error: "AI分析を取得できませんでした。" }, { status: response.status });
   }
 
   const data = await response.json();
   const text = data.choices?.[0]?.message?.content;
   if (!text) {
-    return NextResponse.json({ error: "OpenAI APIの応答が空でした。" }, { status: 502 });
+    return NextResponse.json({ error: "AI分析を取得できませんでした。" }, { status: 502 });
   }
 
   return NextResponse.json({ text });
-}
-
-function compactApiError(detail: string) {
-  try {
-    const parsed = JSON.parse(detail);
-    const message = parsed?.error?.message || parsed?.message;
-    if (message) return String(message).slice(0, 260);
-  } catch {
-    // Ignore non-JSON API errors.
-  }
-  return detail.replace(/\s+/g, " ").slice(0, 260);
 }
