@@ -2,7 +2,18 @@ import { NextResponse } from "next/server";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || process.env.NEXT_PUBLIC_OPENAI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+
+export async function GET() {
+  return NextResponse.json({
+    ok: Boolean(GEMINI_API_KEY || OPENAI_API_KEY),
+    provider: GEMINI_API_KEY ? "gemini" : OPENAI_API_KEY ? "openai" : "none",
+    model: GEMINI_API_KEY ? GEMINI_MODEL : OPENAI_API_KEY ? process.env.OPENAI_MODEL || "gpt-4o-mini" : null,
+    message: GEMINI_API_KEY || OPENAI_API_KEY
+      ? "AI APIキーはVercel環境変数から読み込めています。"
+      : "AI APIキーが読み込めていません。VercelのProduction環境変数とRedeployを確認してください。"
+  });
+}
 
 export async function POST(request: Request) {
   try {
@@ -39,7 +50,7 @@ async function runGemini(prompt: string) {
 
   if (!response.ok) {
     const detail = await response.text();
-    return NextResponse.json({ error: `Gemini APIの呼び出しに失敗しました。${detail.slice(0, 180)}` }, { status: response.status });
+    return NextResponse.json({ error: `Gemini APIの呼び出しに失敗しました。${compactApiError(detail)}` }, { status: response.status });
   }
 
   const data = await response.json();
@@ -68,7 +79,7 @@ async function runOpenAi(prompt: string) {
 
   if (!response.ok) {
     const detail = await response.text();
-    return NextResponse.json({ error: `OpenAI APIの呼び出しに失敗しました。${detail.slice(0, 180)}` }, { status: response.status });
+    return NextResponse.json({ error: `OpenAI APIの呼び出しに失敗しました。${compactApiError(detail)}` }, { status: response.status });
   }
 
   const data = await response.json();
@@ -78,4 +89,15 @@ async function runOpenAi(prompt: string) {
   }
 
   return NextResponse.json({ text });
+}
+
+function compactApiError(detail: string) {
+  try {
+    const parsed = JSON.parse(detail);
+    const message = parsed?.error?.message || parsed?.message;
+    if (message) return String(message).slice(0, 260);
+  } catch {
+    // Ignore non-JSON API errors.
+  }
+  return detail.replace(/\s+/g, " ").slice(0, 260);
 }
