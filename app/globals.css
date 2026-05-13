@@ -979,6 +979,48 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.ledger-info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.ledger-info-grid div,
+.delete-confirm-box {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.ledger-info-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.delete-confirm-box p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.delete-confirm-box > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.delete-confirm-box button:not(.danger-button) {
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-weight: 800;
+}
+
 .crud-form,
 .edit-list {
   display: grid;

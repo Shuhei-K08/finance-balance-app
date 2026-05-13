@@ -325,6 +325,21 @@ export async function renameSharedLedger(householdId: string, name: string) {
   if (error) throwJapanese(error, "家計簿名の変更に失敗しました。");
 }
 
+export async function deleteOwnedLedger(householdId: string) {
+  const client = requireSupabase();
+  const deletedAt = new Date().toISOString();
+  const { error } = await client.from("households").update({ deleted_at: deletedAt }).eq("id", householdId);
+  if (error) throwJapanese(error, "家計簿の削除に失敗しました。");
+  await Promise.all([
+    client.from("accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+  ]);
+}
+
 export async function removeSharedLedgerMember(householdId: string, userId: string) {
   const client = requireSupabase();
   const { error } = await client.rpc("remove_shared_ledger_member", {

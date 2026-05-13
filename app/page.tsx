@@ -78,6 +78,7 @@ import {
   deleteFixedCost,
   deleteGoal,
   deleteSharedLedger,
+  deleteOwnedLedger,
   deleteTransaction,
   insertRemoteTransaction,
   joinSharedLedger,
@@ -397,6 +398,11 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
       const email = String(form.get("email"));
       const password = String(form.get("password"));
       if (mode === "signup") {
+        const confirmPassword = String(form.get("confirmPassword"));
+        if (password !== confirmPassword) {
+          setNotice("確認用パスワードが一致しません。");
+          return;
+        }
         await signUpWithEmail(email, password, String(form.get("displayName") || ""));
         setNotice("確認メールを送信しました。メール確認後にログインしてください。");
       } else {
@@ -433,6 +439,9 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
           )}
           <label><Mail size={16} />メールアドレス<input name="email" type="email" autoComplete="email" required placeholder="you@example.com" /></label>
           <label><Lock size={16} />パスワード<input name="password" type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required placeholder="8文字以上" /></label>
+          {mode === "signup" && (
+            <label><Lock size={16} />確認用パスワード<input name="confirmPassword" type="password" minLength={8} autoComplete="new-password" required placeholder="もう一度入力" /></label>
+          )}
           <button className="full-primary" type="submit" disabled={busy}>{busy ? "処理中" : mode === "login" ? "ログイン" : "作成する"}</button>
         </form>
         <button className="google-button" type="button" disabled={googleBusy} onClick={continueWithGoogle}>{googleBusy ? "Googleへ移動中" : "Googleで続ける"}</button>
@@ -1522,6 +1531,7 @@ function SettingsView({
   const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
   const [ledgerModalId, setLedgerModalId] = useState<string | null>(null);
   const [ledgerNameDraft, setLedgerNameDraft] = useState("");
+  const [confirmDeleteLedger, setConfirmDeleteLedger] = useState(false);
   const [sharedMembers, setSharedMembers] = useState<HouseholdMember[]>([]);
   const [memberLoading, setMemberLoading] = useState(false);
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
@@ -1544,7 +1554,7 @@ function SettingsView({
   const personalLedgerId = (state.households ?? []).find((household) => household.spaceType === "personal")?.id ?? state.householdId ?? "";
 
   useEffect(() => {
-    if (!modalLedger || modalLedger.spaceType !== "shared") {
+    if (!modalLedger) {
       setSharedMembers([]);
       return;
     }
@@ -1563,10 +1573,11 @@ function SettingsView({
     return () => {
       mounted = false;
     };
-  }, [modalLedger?.id, modalLedger?.spaceType, setNotice]);
+  }, [modalLedger?.id, setNotice]);
 
   useEffect(() => {
     if (modalLedger) setLedgerNameDraft(modalLedger.name);
+    setConfirmDeleteLedger(false);
   }, [modalLedger?.id, modalLedger?.name]);
 
   return (
@@ -1598,7 +1609,7 @@ function SettingsView({
               type="button"
               onClick={() => {
                 setSelectedLedgerId(household.id);
-                if (household.spaceType === "shared") setLedgerModalId(household.id);
+                setLedgerModalId(household.id);
               }}
             >
               <span>{household.name}</span>
@@ -1606,16 +1617,20 @@ function SettingsView({
             </button>
           ))}
         </div>
-        {modalLedger && modalLedger.spaceType === "shared" && (
+        {modalLedger && (
           <div className="ledger-detail">
             <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
             <div>
               <span>家計簿名</span>
               <strong>{modalLedger.name}</strong>
-              <em>共有家計簿 / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+              <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
             </div>
             <>
-                {modalLedger.memberRole === "owner" && (
+                <div className="ledger-info-grid">
+                  <div><span>家計簿ID</span><strong>{modalLedger.id}</strong></div>
+                  <div><span>表示中</span><strong>{modalLedger.id === state.householdId ? "はい" : "いいえ"}</strong></div>
+                </div>
+                {modalLedger.memberRole === "owner" && modalLedger.spaceType === "shared" && (
                   <div className="rename-box">
                     <label>家計簿名<input value={ledgerNameDraft} onChange={(event) => setLedgerNameDraft(event.target.value)} /></label>
                     <button
@@ -1638,7 +1653,7 @@ function SettingsView({
                     </button>
                   </div>
                 )}
-                {modalLedger.inviteCode && (
+                {modalLedger.spaceType === "shared" && modalLedger.inviteCode && (
                   <div className="invite-box">
                     <span>共有ID</span>
                     <strong>{modalLedger.inviteCode}</strong>
@@ -1679,24 +1694,40 @@ function SettingsView({
                   ))}
                 </div>
                 {modalLedger.memberRole === "owner" ? (
-                  <button
-                    className="danger-button"
-                    type="button"
-                    onClick={async () => {
-                      if (!window.confirm("この共有家計簿を削除しますか？取引・口座・固定費・目標もこの画面から見えなくなります。")) return;
-                      try {
-                        await deleteSharedLedger(modalLedger.id);
-                        await reloadHousehold(personalLedgerId);
-                        setSelectedLedgerId(personalLedgerId);
-                        setLedgerModalId(null);
-                        setNotice("共有家計簿を削除しました。");
-                      } catch (error) {
-                        setNotice(toJapaneseError(error, "共有家計簿の削除に失敗しました。"));
-                      }
-                    }}
-                  >
-                    共有家計簿を削除
-                  </button>
+                  <div className="delete-confirm-box">
+                    {!confirmDeleteLedger ? (
+                      <button className="danger-button" type="button" onClick={() => setConfirmDeleteLedger(true)}>家計簿を削除</button>
+                    ) : (
+                      <>
+                        <p>この家計簿を削除します。取引・口座・固定費・目標も見えなくなります。</p>
+                        <div>
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                if (modalLedger.spaceType === "shared") {
+                                  await deleteSharedLedger(modalLedger.id);
+                                } else {
+                                  await deleteOwnedLedger(modalLedger.id);
+                                }
+                                const nextLedgerId = (state.households ?? []).find((item) => item.id !== modalLedger.id)?.id ?? personalLedgerId;
+                                await reloadHousehold(nextLedgerId);
+                                setSelectedLedgerId(nextLedgerId);
+                                setLedgerModalId(null);
+                                setNotice("家計簿を削除しました。");
+                              } catch (error) {
+                                setNotice(toJapaneseError(error, "家計簿の削除に失敗しました。"));
+                              }
+                            }}
+                          >
+                            削除する
+                          </button>
+                          <button type="button" onClick={() => setConfirmDeleteLedger(false)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 ) : (
                   <button
                     className="danger-button"
