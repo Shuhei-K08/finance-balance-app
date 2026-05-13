@@ -113,6 +113,13 @@ type DbAdminHousehold = {
   created_at: string | null;
 };
 
+type DbAdminHouseholdMember = {
+  household_id: string;
+  user_id: string;
+  member_role: "owner" | "member";
+  profiles?: { display_name: string | null } | { display_name: string | null }[] | null;
+};
+
 type DbAccount = {
   id: string;
   name: string;
@@ -395,12 +402,25 @@ export async function adminDeleteHousehold(householdId: string) {
 
 export async function loadAdminDashboard(): Promise<AdminDashboard> {
   const client = requireSupabase();
-  const [profilesResult, householdsResult] = await Promise.all([
+  const [profilesResult, householdsResult, membersResult] = await Promise.all([
     client.from("profiles").select("id,display_name,role,deleted_at,created_at").order("created_at", { ascending: false }),
-    client.from("households").select("id,name,space_type,deleted_at,created_at").order("created_at", { ascending: false })
+    client.from("households").select("id,name,space_type,deleted_at,created_at").order("created_at", { ascending: false }),
+    client.from("household_members").select("household_id,user_id,member_role,profiles(display_name)")
   ]);
   if (profilesResult.error) throwJapanese(profilesResult.error, "ユーザー一覧の取得に失敗しました。");
   if (householdsResult.error) throwJapanese(householdsResult.error, "家計簿一覧の取得に失敗しました。");
+  if (membersResult.error) throwJapanese(membersResult.error, "家計簿メンバー一覧の取得に失敗しました。");
+  const membersByHousehold = new Map<string, AdminDashboard["households"][number]["members"]>();
+  ((membersResult.data ?? []) as DbAdminHouseholdMember[]).forEach((member) => {
+    const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
+    const members = membersByHousehold.get(member.household_id) ?? [];
+    members.push({
+      userId: member.user_id,
+      displayName: profile?.display_name || `ユーザー ${member.user_id.slice(0, 8)}`,
+      memberRole: member.member_role
+    });
+    membersByHousehold.set(member.household_id, members);
+  });
   return {
     users: ((profilesResult.data ?? []) as DbAdminProfile[]).map((profile) => ({
       id: profile.id,
@@ -414,7 +434,8 @@ export async function loadAdminDashboard(): Promise<AdminDashboard> {
       name: household.name,
       spaceType: household.space_type,
       createdAt: household.created_at ?? undefined,
-      deletedAt: household.deleted_at ?? undefined
+      deletedAt: household.deleted_at ?? undefined,
+      members: membersByHousehold.get(household.id) ?? []
     }))
   };
 }

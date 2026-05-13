@@ -2003,6 +2003,8 @@ function SettingsView({
 function AdminView() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [error, setError] = useState("");
+  const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   async function reloadDashboard() {
     setError("");
     setDashboard(await loadAdminDashboard());
@@ -2023,6 +2025,8 @@ function AdminView() {
   const activeUsers = dashboard?.users.filter((user) => !user.deletedAt).length ?? 0;
   const activeHouseholds = dashboard?.households.filter((household) => !household.deletedAt).length ?? 0;
   const sharedHouseholds = dashboard?.households.filter((household) => household.spaceType === "shared" && !household.deletedAt).length ?? 0;
+  const selectedHousehold = dashboard?.households.find((household) => household.id === selectedHouseholdId) ?? null;
+  const formatDateTime = (value?: string) => value ? new Date(value).toLocaleString("ja-JP", { dateStyle: "medium", timeStyle: "short" }) : "未設定";
   return (
     <div className="view-stack">
       <section className="panel">
@@ -2052,31 +2056,79 @@ function AdminView() {
               <div className="section-title"><h2>家計簿管理</h2><span>{dashboard.households.length}件</span></div>
               <div className="admin-table">
                 {dashboard.households.map((household) => (
-                  <div key={household.id}>
+                  <button
+                    className="admin-list-button"
+                    key={household.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedHouseholdId(household.id);
+                      setConfirmDelete(false);
+                    }}
+                  >
                     <strong>{household.name}</strong>
                     <span>{household.spaceType === "shared" ? "共有" : "個人"} / {household.deletedAt ? "削除済み" : "有効"}</span>
                     <em>{household.id.slice(0, 8)}</em>
-                    {!household.deletedAt && (
-                      <button
-                        className="mini-button danger"
-                        type="button"
-                        onClick={async () => {
-                          if (!window.confirm(`${household.name}を削除しますか？`)) return;
-                          try {
-                            await adminDeleteHousehold(household.id);
-                            await reloadDashboard();
-                          } catch (caught) {
-                            setError(toJapaneseError(caught, "家計簿の削除に失敗しました。"));
-                          }
-                        }}
-                      >
-                        削除
-                      </button>
-                    )}
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
+            {selectedHousehold && (
+              <div className="sheet-backdrop center-backdrop" onClick={() => setSelectedHouseholdId(null)}>
+                <section className="modal-panel admin-household-modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="section-title">
+                    <h2>{selectedHousehold.name}</h2>
+                    <span>{selectedHousehold.spaceType === "shared" ? "共有家計簿" : "個人家計簿"}</span>
+                  </div>
+                  <div className="ledger-info-grid">
+                    <div><span>家計簿ID</span><strong>{selectedHousehold.id}</strong></div>
+                    <div><span>状態</span><strong>{selectedHousehold.deletedAt ? "削除済み" : "有効"}</strong></div>
+                    <div><span>作成日時</span><strong>{formatDateTime(selectedHousehold.createdAt)}</strong></div>
+                    <div><span>削除日時</span><strong>{formatDateTime(selectedHousehold.deletedAt)}</strong></div>
+                  </div>
+                  <div className="member-list">
+                    <span>ユーザー</span>
+                    {selectedHousehold.members.length === 0 && <em>ユーザー情報がありません。</em>}
+                    {selectedHousehold.members.map((member) => (
+                      <div key={member.userId}>
+                        <strong>{member.displayName}</strong>
+                        <em>{member.memberRole === "owner" ? "所有者" : "メンバー"} / {member.userId.slice(0, 8)}</em>
+                      </div>
+                    ))}
+                  </div>
+                  {!selectedHousehold.deletedAt && (
+                    <div className="delete-confirm-box">
+                      {!confirmDelete ? (
+                        <button className="danger-button" type="button" onClick={() => setConfirmDelete(true)}>この家計簿を削除</button>
+                      ) : (
+                        <>
+                          <p>本当に「{selectedHousehold.name}」を削除しますか？ 取引・口座・固定費・目標も見えなくなります。</p>
+                          <div>
+                            <button
+                              className="danger-button"
+                              type="button"
+                              onClick={async () => {
+                                try {
+                                  await adminDeleteHousehold(selectedHousehold.id);
+                                  await reloadDashboard();
+                                  setSelectedHouseholdId(null);
+                                  setConfirmDelete(false);
+                                } catch (caught) {
+                                  setError(toJapaneseError(caught, "家計簿の削除に失敗しました。"));
+                                }
+                              }}
+                            >
+                              削除する
+                            </button>
+                            <button type="button" onClick={() => setConfirmDelete(false)}>キャンセル</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <button type="button" onClick={() => setSelectedHouseholdId(null)}>閉じる</button>
+                </section>
+              </div>
+            )}
           </>
         )}
       </section>

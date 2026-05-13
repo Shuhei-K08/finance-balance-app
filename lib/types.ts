@@ -86,7 +86,14 @@ export type HouseholdMember = {
 
 export type AdminDashboard = {
   users: Array<{ id: string; displayName: string; role: "user" | "admin"; createdAt?: string; deletedAt?: string }>;
-  households: Array<{ id: string; name: string; spaceType: SpaceType; createdAt?: string; deletedAt?: string }>;
+  households: Array<{
+    id: string;
+    name: string;
+    spaceType: SpaceType;
+    createdAt?: string;
+    deletedAt?: string;
+    members: Array<{ userId: string; displayName: string; memberRole: "owner" | "member" }>;
+  }>;
 };
 
 export type LedgerState = {

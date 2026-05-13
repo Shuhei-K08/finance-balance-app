@@ -1679,9 +1679,10 @@ input[type="range"] {
   margin-top: 14px;
 }
 
-.admin-table div {
+.admin-table div,
+.admin-list-button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 10px;
@@ -1690,12 +1691,27 @@ input[type="range"] {
   background: #fff;
 }
 
+.admin-list-button {
+  width: 100%;
+  min-height: 58px;
+  text-align: left;
+}
+
+.admin-list-button:active {
+  border-color: var(--brand);
+  background: #f0fdfa;
+}
+
 .admin-table span,
 .admin-table em {
   color: var(--muted);
   font-size: 12px;
   font-style: normal;
   font-weight: 800;
+}
+
+.admin-household-modal {
+  gap: 14px;
 }
 
 .bottom-controls {
