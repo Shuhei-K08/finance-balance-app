@@ -958,6 +958,27 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.rename-box {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.rename-box button {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-weight: 800;
+}
+
 .crud-form,
 .edit-list {
   display: grid;
@@ -1592,10 +1613,46 @@ input[type="range"] {
 }
 
 .admin-grid button {
+  display: grid;
+  gap: 4px;
   min-height: 60px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #f8fafc;
+  font-weight: 800;
+}
+
+.admin-grid strong {
+  color: var(--brand-dark);
+  font-size: 22px;
+}
+
+.admin-section,
+.admin-table {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-section {
+  margin-top: 14px;
+}
+
+.admin-table div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.admin-table span,
+.admin-table em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
   font-weight: 800;
 }
 

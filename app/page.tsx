@@ -64,6 +64,7 @@ import type { FixedCostOccurrence } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
 import { analyzeFinance, buildAnnualSavingsPrompt, buildFinancePrompt } from "@/lib/gemini";
 import { LedgerState, TransactionType } from "@/lib/types";
+import type { AdminDashboard } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
   createSharedLedger,
@@ -80,9 +81,11 @@ import {
   insertRemoteTransaction,
   joinSharedLedger,
   leaveSharedLedger,
+  loadAdminDashboard,
   loadHouseholdMembers,
   loadRemoteState,
   removeSharedLedgerMember,
+  renameSharedLedger,
   signInWithEmail,
   signInWithGoogle,
   signOut,
@@ -1504,6 +1507,7 @@ function SettingsView({
   const [joinDebug, setJoinDebug] = useState<string | null>(null);
   const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
   const [ledgerModalId, setLedgerModalId] = useState<string | null>(null);
+  const [ledgerNameDraft, setLedgerNameDraft] = useState("");
   const [sharedMembers, setSharedMembers] = useState<HouseholdMember[]>([]);
   const [memberLoading, setMemberLoading] = useState(false);
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
@@ -1547,6 +1551,10 @@ function SettingsView({
     };
   }, [modalLedger?.id, modalLedger?.spaceType, setNotice]);
 
+  useEffect(() => {
+    if (modalLedger) setLedgerNameDraft(modalLedger.name);
+  }, [modalLedger?.id, modalLedger?.name]);
+
   return (
     <div className="view-stack">
       <div className="settings-tabs">
@@ -1574,23 +1582,48 @@ function SettingsView({
               className={household.id === selectedLedgerId ? "selected-ledger" : ""}
               key={household.id}
               type="button"
-              onClick={() => { setSelectedLedgerId(household.id); setLedgerModalId(household.id); }}
+              onClick={() => {
+                setSelectedLedgerId(household.id);
+                if (household.spaceType === "shared") setLedgerModalId(household.id);
+              }}
             >
               <span>{household.name}</span>
               <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}{household.id === state.householdId ? " / 表示中" : ""}</em>
             </button>
           ))}
         </div>
-        {modalLedger && (
+        {modalLedger && modalLedger.spaceType === "shared" && (
           <div className="ledger-detail">
             <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
             <div>
               <span>家計簿名</span>
               <strong>{modalLedger.name}</strong>
-              <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+              <em>共有家計簿 / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
             </div>
-            {modalLedger.spaceType === "shared" && (
-              <>
+            <>
+                {modalLedger.memberRole === "owner" && (
+                  <div className="rename-box">
+                    <label>家計簿名<input value={ledgerNameDraft} onChange={(event) => setLedgerNameDraft(event.target.value)} /></label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if (!ledgerNameDraft.trim()) {
+                            setNotice("家計簿名を入力してください。");
+                            return;
+                          }
+                          await renameSharedLedger(modalLedger.id, ledgerNameDraft);
+                          await reloadHousehold(state.householdId ?? modalLedger.id);
+                          setNotice("家計簿名を変更しました。");
+                        } catch (error) {
+                          setNotice(toJapaneseError(error, "家計簿名の変更に失敗しました。"));
+                        }
+                      }}
+                    >
+                      名前を保存
+                    </button>
+                  </div>
+                )}
                 {modalLedger.inviteCode && (
                   <div className="invite-box">
                     <span>共有ID</span>
@@ -1641,6 +1674,7 @@ function SettingsView({
                         await deleteSharedLedger(modalLedger.id);
                         await reloadHousehold(personalLedgerId);
                         setSelectedLedgerId(personalLedgerId);
+                        setLedgerModalId(null);
                         setNotice("共有家計簿を削除しました。");
                       } catch (error) {
                         setNotice(toJapaneseError(error, "共有家計簿の削除に失敗しました。"));
@@ -1669,7 +1703,6 @@ function SettingsView({
                   </button>
                 )}
               </>
-            )}
           </div>
         )}
       </section>
@@ -1911,13 +1944,63 @@ function SettingsView({
 }
 
 function AdminView() {
+  const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let mounted = true;
+    loadAdminDashboard()
+      .then((data) => {
+        if (mounted) setDashboard(data);
+      })
+      .catch((caught) => {
+        if (mounted) setError(toJapaneseError(caught, "管理データの取得に失敗しました。"));
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+  const activeUsers = dashboard?.users.filter((user) => !user.deletedAt).length ?? 0;
+  const activeHouseholds = dashboard?.households.filter((household) => !household.deletedAt).length ?? 0;
+  const sharedHouseholds = dashboard?.households.filter((household) => household.spaceType === "shared" && !household.deletedAt).length ?? 0;
   return (
     <div className="view-stack">
       <section className="panel">
         <div className="section-title"><h2>管理者画面</h2><span>/admin</span></div>
-        <div className="admin-grid">
-          {["ユーザー管理", "問い合わせ管理", "お知らせ管理", "利用状況確認", "エラーログ確認"].map((item) => <button key={item}>{item}</button>)}
-        </div>
+        {error && <div className="form-error">{error}</div>}
+        {!dashboard && !error && <div className="empty-state"><span>管理データを読み込み中です。</span></div>}
+        {dashboard && (
+          <>
+            <div className="admin-grid">
+              <button type="button"><span>ユーザー</span><strong>{activeUsers}人</strong></button>
+              <button type="button"><span>家計簿</span><strong>{activeHouseholds}件</strong></button>
+              <button type="button"><span>共有家計簿</span><strong>{sharedHouseholds}件</strong></button>
+            </div>
+            <div className="admin-section">
+              <div className="section-title"><h2>ユーザー管理</h2><span>{dashboard.users.length}件</span></div>
+              <div className="admin-table">
+                {dashboard.users.map((user) => (
+                  <div key={user.id}>
+                    <strong>{user.displayName}</strong>
+                    <span>{user.role === "admin" ? "管理者" : "一般"} / {user.deletedAt ? "削除済み" : "有効"}</span>
+                    <em>{user.id.slice(0, 8)}</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="admin-section">
+              <div className="section-title"><h2>家計簿管理</h2><span>{dashboard.households.length}件</span></div>
+              <div className="admin-table">
+                {dashboard.households.map((household) => (
+                  <div key={household.id}>
+                    <strong>{household.name}</strong>
+                    <span>{household.spaceType === "shared" ? "共有" : "個人"} / {household.deletedAt ? "削除済み" : "有効"}</span>
+                    <em>{household.id.slice(0, 8)}</em>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </section>
     </div>
   );

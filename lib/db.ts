@@ -5,6 +5,7 @@ import { initialState } from "./sample-data";
 import {
   Account,
   AccountType,
+  AdminDashboard,
   AssetSnapshot,
   Category,
   FixedCost,
@@ -87,8 +88,29 @@ type DbHouseholdMember = {
   profiles?: { display_name: string | null } | { display_name: string | null }[] | null;
 };
 
+type DbHouseholdMemberRpc = {
+  user_id: string;
+  display_name: string | null;
+  member_role: "owner" | "member";
+};
+
 type DbProfile = {
   role: "user" | "admin";
+};
+
+type DbAdminProfile = DbProfile & {
+  id: string;
+  display_name: string | null;
+  deleted_at: string | null;
+  created_at: string | null;
+};
+
+type DbAdminHousehold = {
+  id: string;
+  name: string;
+  space_type: SpaceType;
+  deleted_at: string | null;
+  created_at: string | null;
 };
 
 type DbAccount = {
@@ -258,6 +280,14 @@ export async function joinSharedLedger(inviteCode: string) {
 
 export async function loadHouseholdMembers(householdId: string): Promise<HouseholdMember[]> {
   const client = requireSupabase();
+  const { data: rpcData, error: rpcError } = await client.rpc("get_household_members", { target_household_id: householdId });
+  if (!rpcError) {
+    return ((rpcData ?? []) as DbHouseholdMemberRpc[]).map((member) => ({
+      userId: member.user_id,
+      displayName: member.display_name || `ユーザー ${member.user_id.slice(0, 8)}`,
+      memberRole: member.member_role
+    }));
+  }
   const { data, error } = await client
     .from("household_members")
     .select("user_id,member_role,profiles(display_name)")
@@ -268,10 +298,16 @@ export async function loadHouseholdMembers(householdId: string): Promise<Househo
     const profile = Array.isArray(member.profiles) ? member.profiles[0] : member.profiles;
     return {
     userId: member.user_id,
-    displayName: profile?.display_name || "ユーザー",
+    displayName: profile?.display_name || `ユーザー ${member.user_id.slice(0, 8)}`,
     memberRole: member.member_role
     };
   });
+}
+
+export async function renameSharedLedger(householdId: string, name: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("rename_shared_ledger", { target_household_id: householdId, new_name: name });
+  if (error) throwJapanese(error, "家計簿名の変更に失敗しました。");
 }
 
 export async function removeSharedLedgerMember(householdId: string, userId: string) {
@@ -300,15 +336,42 @@ export async function deleteSharedLedger(householdId: string) {
     .update({ deleted_at: deletedAt })
     .eq("id", householdId)
     .eq("space_type", "shared");
-  if (householdError) throwJapanese(error, "共有家計簿の削除に失敗しました。");
+  if (householdError) throwJapanese(householdError, "共有家計簿の削除に失敗しました。");
 
   await Promise.all([
     client.from("accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
-    client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+    client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
+}
+
+export async function loadAdminDashboard(): Promise<AdminDashboard> {
+  const client = requireSupabase();
+  const [profilesResult, householdsResult] = await Promise.all([
+    client.from("profiles").select("id,display_name,role,deleted_at,created_at").order("created_at", { ascending: false }),
+    client.from("households").select("id,name,space_type,deleted_at,created_at").order("created_at", { ascending: false })
+  ]);
+  if (profilesResult.error) throwJapanese(profilesResult.error, "ユーザー一覧の取得に失敗しました。");
+  if (householdsResult.error) throwJapanese(householdsResult.error, "家計簿一覧の取得に失敗しました。");
+  return {
+    users: ((profilesResult.data ?? []) as DbAdminProfile[]).map((profile) => ({
+      id: profile.id,
+      displayName: profile.display_name || `ユーザー ${profile.id.slice(0, 8)}`,
+      role: profile.role,
+      createdAt: profile.created_at ?? undefined,
+      deletedAt: profile.deleted_at ?? undefined
+    })),
+    households: ((householdsResult.data ?? []) as DbAdminHousehold[]).map((household) => ({
+      id: household.id,
+      name: household.name,
+      spaceType: household.space_type,
+      createdAt: household.created_at ?? undefined,
+      deletedAt: household.deleted_at ?? undefined
+    }))
+  };
 }
 
 async function loadHouseholds(): Promise<HouseholdSummary[]> {
