@@ -96,6 +96,7 @@ type DbHouseholdMemberRpc = {
 
 type DbProfile = {
   role: "user" | "admin";
+  deleted_at: string | null;
 };
 
 type DbAdminProfile = DbProfile & {
@@ -271,6 +272,13 @@ export async function ensurePersonalLedger() {
     .from("profiles")
     .upsert({ id: user.id, display_name: displayName }, { onConflict: "id" });
   if (profileError) throwJapanese(profileError, "プロフィール作成に失敗しました。");
+  const { data: profile, error: profileReadError } = await client
+    .from("profiles")
+    .select("deleted_at")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (profileReadError) throwJapanese(profileReadError, "プロフィール確認に失敗しました。");
+  if ((profile as { deleted_at?: string | null } | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
   const { data: householdId, error: ledgerError } = await client.rpc("ensure_personal_ledger");
   if (ledgerError) throwJapanese(ledgerError, "個人家計簿の初期作成に失敗しました。");
@@ -400,6 +408,37 @@ export async function adminDeleteHousehold(householdId: string) {
   ]);
 }
 
+export async function adminSuspendUser(userId: string) {
+  const client = requireSupabase();
+  const { data: current } = await client.auth.getUser();
+  if (current.user?.id === userId) throw new Error("自分自身のアカウントは停止できません。");
+  const { error } = await client.from("profiles").update({ deleted_at: new Date().toISOString() }).eq("id", userId);
+  if (error) throwJapanese(error, "アカウント停止に失敗しました。");
+}
+
+export async function adminResumeUser(userId: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("profiles").update({ deleted_at: null }).eq("id", userId);
+  if (error) throwJapanese(error, "アカウント再開に失敗しました。");
+}
+
+export async function adminDeleteUser(userId: string) {
+  const client = requireSupabase();
+  const { data: current } = await client.auth.getUser();
+  if (current.user?.id === userId) throw new Error("自分自身のアカウントは削除できません。");
+  const deletedAt = new Date().toISOString();
+  const { error } = await client.from("profiles").update({ deleted_at: deletedAt }).eq("id", userId);
+  if (error) throwJapanese(error, "アカウント削除に失敗しました。");
+
+  const { data: ownedHouseholds, error: householdError } = await client
+    .from("households")
+    .select("id")
+    .eq("owner_id", userId)
+    .is("deleted_at", null);
+  if (householdError) throwJapanese(householdError, "ユーザーの家計簿取得に失敗しました。");
+  await Promise.all(((ownedHouseholds ?? []) as Array<{ id: string }>).map((household) => adminDeleteHousehold(household.id)));
+}
+
 export async function loadAdminDashboard(): Promise<AdminDashboard> {
   const client = requireSupabase();
   const [profilesResult, householdsResult, membersResult] = await Promise.all([
@@ -421,15 +460,31 @@ export async function loadAdminDashboard(): Promise<AdminDashboard> {
     });
     membersByHousehold.set(member.household_id, members);
   });
+  const householdRows = (householdsResult.data ?? []) as DbAdminHousehold[];
+  const householdsByUser = new Map<string, AdminDashboard["users"][number]["households"]>();
+  ((membersResult.data ?? []) as DbAdminHouseholdMember[]).forEach((member) => {
+    const household = householdRows.find((item) => item.id === member.household_id);
+    if (!household) return;
+    const households = householdsByUser.get(member.user_id) ?? [];
+    households.push({
+      id: household.id,
+      name: household.name,
+      spaceType: household.space_type,
+      memberRole: member.member_role,
+      deletedAt: household.deleted_at ?? undefined
+    });
+    householdsByUser.set(member.user_id, households);
+  });
   return {
     users: ((profilesResult.data ?? []) as DbAdminProfile[]).map((profile) => ({
       id: profile.id,
       displayName: profile.display_name || `ユーザー ${profile.id.slice(0, 8)}`,
       role: profile.role,
       createdAt: profile.created_at ?? undefined,
-      deletedAt: profile.deleted_at ?? undefined
+      deletedAt: profile.deleted_at ?? undefined,
+      households: householdsByUser.get(profile.id) ?? []
     })),
-    households: ((householdsResult.data ?? []) as DbAdminHousehold[]).map((household) => ({
+    households: householdRows.map((household) => ({
       id: household.id,
       name: household.name,
       spaceType: household.space_type,
@@ -488,7 +543,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     goalsResult,
     assetSnapshotsResult
   ] = await Promise.all([
-    client.from("profiles").select("role").eq("id", userId).maybeSingle(),
+    client.from("profiles").select("role,deleted_at").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -503,6 +558,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
+  if ((profileResult.data as DbProfile | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
   if (!householdResult.data) throw new Error("家計簿が見つかりません。ログアウトして再ログインしてください。");
   const household = householdResult.data as DbHousehold;

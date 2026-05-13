@@ -69,6 +69,9 @@ import { supabase } from "@/lib/supabase";
 import {
   createSharedLedger,
   adminDeleteHousehold,
+  adminDeleteUser,
+  adminResumeUser,
+  adminSuspendUser,
   createAccount,
   createCategory,
   createFixedCost,
@@ -2003,8 +2006,10 @@ function SettingsView({
 function AdminView() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [error, setError] = useState("");
+  const [adminTab, setAdminTab] = useState<"summary" | "users" | "households">("summary");
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<"deleteHousehold" | "suspendUser" | "resumeUser" | "deleteUser" | null>(null);
   async function reloadDashboard() {
     setError("");
     setDashboard(await loadAdminDashboard());
@@ -2022,56 +2027,150 @@ function AdminView() {
       mounted = false;
     };
   }, []);
-  const activeUsers = dashboard?.users.filter((user) => !user.deletedAt).length ?? 0;
-  const activeHouseholds = dashboard?.households.filter((household) => !household.deletedAt).length ?? 0;
-  const sharedHouseholds = dashboard?.households.filter((household) => household.spaceType === "shared" && !household.deletedAt).length ?? 0;
-  const selectedHousehold = dashboard?.households.find((household) => household.id === selectedHouseholdId) ?? null;
+  const activeUsers = dashboard?.users.filter((user) => !user.deletedAt) ?? [];
+  const stoppedUsers = dashboard?.users.filter((user) => user.deletedAt) ?? [];
+  const activeHouseholds = dashboard?.households.filter((household) => !household.deletedAt) ?? [];
+  const sharedHouseholds = activeHouseholds.filter((household) => household.spaceType === "shared");
+  const selectedUser = dashboard?.users.find((user) => user.id === selectedUserId) ?? null;
+  const selectedHousehold = activeHouseholds.find((household) => household.id === selectedHouseholdId) ?? null;
   const formatDateTime = (value?: string) => value ? new Date(value).toLocaleString("ja-JP", { dateStyle: "medium", timeStyle: "short" }) : "未設定";
   return (
     <div className="view-stack">
-      <section className="panel">
-        <div className="section-title"><h2>管理者画面</h2><span>/admin</span></div>
+      <section className="panel admin-hero">
+        <div className="section-title"><h2>管理者画面</h2><span>運用状況</span></div>
         {error && <div className="form-error">{error}</div>}
         {!dashboard && !error && <div className="empty-state"><span>管理データを読み込み中です。</span></div>}
         {dashboard && (
           <>
             <div className="admin-grid">
-              <button type="button"><span>ユーザー</span><strong>{activeUsers}人</strong></button>
-              <button type="button"><span>家計簿</span><strong>{activeHouseholds}件</strong></button>
-              <button type="button"><span>共有家計簿</span><strong>{sharedHouseholds}件</strong></button>
+              <button type="button" onClick={() => setAdminTab("users")}><span>有効ユーザー</span><strong>{activeUsers.length}人</strong><em>停止中 {stoppedUsers.length}人</em></button>
+              <button type="button" onClick={() => setAdminTab("households")}><span>有効家計簿</span><strong>{activeHouseholds.length}件</strong><em>共有 {sharedHouseholds.length}件</em></button>
+              <button type="button" onClick={() => setAdminTab("households")}><span>共有率</span><strong>{activeHouseholds.length ? Math.round((sharedHouseholds.length / activeHouseholds.length) * 100) : 0}%</strong><em>共有家計簿 / 全家計簿</em></button>
             </div>
+            <div className="admin-tabs">
+              <button className={adminTab === "summary" ? "active" : ""} type="button" onClick={() => setAdminTab("summary")}>概要</button>
+              <button className={adminTab === "users" ? "active" : ""} type="button" onClick={() => setAdminTab("users")}>ユーザー</button>
+              <button className={adminTab === "households" ? "active" : ""} type="button" onClick={() => setAdminTab("households")}>家計簿</button>
+            </div>
+            {adminTab === "summary" && (
+              <div className="admin-section">
+                <div className="section-title"><h2>最近の状況</h2><span>削除済みは非表示</span></div>
+                <div className="admin-overview-grid">
+                  <div><span>最近のユーザー</span>{activeUsers.slice(0, 5).map((user) => <button key={user.id} type="button" onClick={() => setSelectedUserId(user.id)}>{user.displayName}<em>{formatDateTime(user.createdAt)}</em></button>)}</div>
+                  <div><span>最近の家計簿</span>{activeHouseholds.slice(0, 5).map((household) => <button key={household.id} type="button" onClick={() => setSelectedHouseholdId(household.id)}>{household.name}<em>{household.spaceType === "shared" ? "共有" : "個人"}</em></button>)}</div>
+                </div>
+              </div>
+            )}
+            {adminTab === "users" && (
             <div className="admin-section">
               <div className="section-title"><h2>ユーザー管理</h2><span>{dashboard.users.length}件</span></div>
               <div className="admin-table">
                 {dashboard.users.map((user) => (
-                  <div key={user.id}>
+                  <button
+                    className="admin-list-button"
+                    key={user.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedUserId(user.id);
+                      setConfirmAction(null);
+                    }}
+                  >
                     <strong>{user.displayName}</strong>
-                    <span>{user.role === "admin" ? "管理者" : "一般"} / {user.deletedAt ? "削除済み" : "有効"}</span>
+                    <span>{user.role === "admin" ? "管理者" : "一般"} / {user.deletedAt ? "停止中" : "有効"}</span>
                     <em>{user.id.slice(0, 8)}</em>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
+            )}
+            {adminTab === "households" && (
             <div className="admin-section">
-              <div className="section-title"><h2>家計簿管理</h2><span>{dashboard.households.length}件</span></div>
+              <div className="section-title"><h2>家計簿管理</h2><span>{activeHouseholds.length}件</span></div>
               <div className="admin-table">
-                {dashboard.households.map((household) => (
+                {activeHouseholds.map((household) => (
                   <button
                     className="admin-list-button"
                     key={household.id}
                     type="button"
                     onClick={() => {
                       setSelectedHouseholdId(household.id);
-                      setConfirmDelete(false);
+                      setConfirmAction(null);
                     }}
                   >
                     <strong>{household.name}</strong>
-                    <span>{household.spaceType === "shared" ? "共有" : "個人"} / {household.deletedAt ? "削除済み" : "有効"}</span>
+                    <span>{household.spaceType === "shared" ? "共有" : "個人"} / 有効</span>
                     <em>{household.id.slice(0, 8)}</em>
                   </button>
                 ))}
               </div>
             </div>
+            )}
+            {selectedUser && (
+              <div className="sheet-backdrop center-backdrop" onClick={() => setSelectedUserId(null)}>
+                <section className="modal-panel admin-household-modal" onClick={(event) => event.stopPropagation()}>
+                  <div className="section-title">
+                    <h2>{selectedUser.displayName}</h2>
+                    <span>{selectedUser.deletedAt ? "停止中" : selectedUser.role === "admin" ? "管理者" : "一般ユーザー"}</span>
+                  </div>
+                  <div className="ledger-info-grid">
+                    <div><span>ユーザーID</span><strong>{selectedUser.id}</strong></div>
+                    <div><span>権限</span><strong>{selectedUser.role === "admin" ? "管理者" : "一般"}</strong></div>
+                    <div><span>作成日時</span><strong>{formatDateTime(selectedUser.createdAt)}</strong></div>
+                    <div><span>停止日時</span><strong>{formatDateTime(selectedUser.deletedAt)}</strong></div>
+                  </div>
+                  <div className="member-list">
+                    <span>参加中の家計簿</span>
+                    {selectedUser.households.filter((household) => !household.deletedAt).length === 0 && <em>有効な家計簿がありません。</em>}
+                    {selectedUser.households.filter((household) => !household.deletedAt).map((household) => (
+                      <div key={household.id}>
+                        <strong>{household.name}</strong>
+                        <em>{household.spaceType === "shared" ? "共有" : "個人"} / {household.memberRole === "owner" ? "所有者" : "メンバー"} / {household.id.slice(0, 8)}</em>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="delete-confirm-box">
+                    {!confirmAction && (
+                      <div>
+                        {selectedUser.deletedAt ? (
+                          <button type="button" onClick={() => setConfirmAction("resumeUser")}>アカウントを再開</button>
+                        ) : (
+                          <button type="button" onClick={() => setConfirmAction("suspendUser")}>アカウントを停止</button>
+                        )}
+                        <button className="danger-button" type="button" onClick={() => setConfirmAction("deleteUser")}>アカウントを削除</button>
+                      </div>
+                    )}
+                    {confirmAction === "suspendUser" && (
+                      <>
+                        <p>「{selectedUser.displayName}」のアカウントを停止しますか？</p>
+                        <div>
+                          <button className="danger-button" type="button" onClick={async () => { try { await adminSuspendUser(selectedUser.id); await reloadDashboard(); setSelectedUserId(null); setConfirmAction(null); } catch (caught) { setError(toJapaneseError(caught, "アカウント停止に失敗しました。")); } }}>停止する</button>
+                          <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                    {confirmAction === "resumeUser" && (
+                      <>
+                        <p>「{selectedUser.displayName}」のアカウントを再開しますか？</p>
+                        <div>
+                          <button type="button" onClick={async () => { try { await adminResumeUser(selectedUser.id); await reloadDashboard(); setSelectedUserId(null); setConfirmAction(null); } catch (caught) { setError(toJapaneseError(caught, "アカウント再開に失敗しました。")); } }}>再開する</button>
+                          <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                    {confirmAction === "deleteUser" && (
+                      <>
+                        <p>「{selectedUser.displayName}」を削除しますか？ 所有している有効な家計簿も削除されます。</p>
+                        <div>
+                          <button className="danger-button" type="button" onClick={async () => { try { await adminDeleteUser(selectedUser.id); await reloadDashboard(); setSelectedUserId(null); setConfirmAction(null); } catch (caught) { setError(toJapaneseError(caught, "アカウント削除に失敗しました。")); } }}>削除する</button>
+                          <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => setSelectedUserId(null)}>閉じる</button>
+                </section>
+              </div>
+            )}
             {selectedHousehold && (
               <div className="sheet-backdrop center-backdrop" onClick={() => setSelectedHouseholdId(null)}>
                 <section className="modal-panel admin-household-modal" onClick={(event) => event.stopPropagation()}>
@@ -2095,36 +2194,34 @@ function AdminView() {
                       </div>
                     ))}
                   </div>
-                  {!selectedHousehold.deletedAt && (
-                    <div className="delete-confirm-box">
-                      {!confirmDelete ? (
-                        <button className="danger-button" type="button" onClick={() => setConfirmDelete(true)}>この家計簿を削除</button>
-                      ) : (
-                        <>
-                          <p>本当に「{selectedHousehold.name}」を削除しますか？ 取引・口座・固定費・目標も見えなくなります。</p>
-                          <div>
-                            <button
-                              className="danger-button"
-                              type="button"
-                              onClick={async () => {
-                                try {
-                                  await adminDeleteHousehold(selectedHousehold.id);
-                                  await reloadDashboard();
-                                  setSelectedHouseholdId(null);
-                                  setConfirmDelete(false);
-                                } catch (caught) {
-                                  setError(toJapaneseError(caught, "家計簿の削除に失敗しました。"));
-                                }
-                              }}
-                            >
-                              削除する
-                            </button>
-                            <button type="button" onClick={() => setConfirmDelete(false)}>キャンセル</button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  )}
+                  <div className="delete-confirm-box">
+                    {confirmAction !== "deleteHousehold" ? (
+                      <button className="danger-button" type="button" onClick={() => setConfirmAction("deleteHousehold")}>この家計簿を削除</button>
+                    ) : (
+                      <>
+                        <p>本当に「{selectedHousehold.name}」を削除しますか？ 取引・口座・固定費・目標も見えなくなります。</p>
+                        <div>
+                          <button
+                            className="danger-button"
+                            type="button"
+                            onClick={async () => {
+                              try {
+                                await adminDeleteHousehold(selectedHousehold.id);
+                                await reloadDashboard();
+                                setSelectedHouseholdId(null);
+                                setConfirmAction(null);
+                              } catch (caught) {
+                                setError(toJapaneseError(caught, "家計簿の削除に失敗しました。"));
+                              }
+                            }}
+                          >
+                            削除する
+                          </button>
+                          <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                   <button type="button" onClick={() => setSelectedHouseholdId(null)}>閉じる</button>
                 </section>
               </div>
