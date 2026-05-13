@@ -139,7 +139,7 @@ export default function App() {
     let mounted = true;
     bootAuth().catch((error) => {
       if (!mounted) return;
-      setNotice(toJapaneseError(error, "Supabase の初期化に失敗しました。"));
+      setNotice(toJapaneseError(error, "アプリの起動に失敗しました。"));
       setAuthReady(true);
     });
 
@@ -155,12 +155,12 @@ export default function App() {
     });
 
     async function bootAuth() {
-      const sessionResult = await withTimeout(supabase!.auth.getSession(), 8000, "Supabase の認証確認がタイムアウトしました。URL と anon / publishable key を確認してください。");
+      const sessionResult = await withTimeout(supabase!.auth.getSession(), 8000, "ログイン状態の確認がタイムアウトしました。");
       if (!mounted) return;
       setIsAuthed(Boolean(sessionResult.data.session));
       if (sessionResult.data.session) {
         try {
-          await withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。Supabase SQL Editor で最新の schema.sql を実行済みか確認してください。");
+          await withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。");
         } catch (error) {
           setState(null);
           setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。"));
@@ -376,9 +376,9 @@ function SetupScreen() {
   return (
     <main className="auth-shell">
       <section className="auth-card">
-        <p className="eyebrow">Supabase 設定が必要です</p>
-        <h1>DB 接続情報を設定してください</h1>
-        <p className="auth-copy">`.env.local` に Supabase URL と anon key を入れると、ログイン画面と DB 保存が有効になります。</p>
+        <p className="eyebrow">初期設定</p>
+        <h1>アプリの接続設定が必要です</h1>
+        <p className="auth-copy">ログイン機能を使うための接続情報がまだ設定されていません。</p>
         <div className="setup-code">
           <code>NEXT_PUBLIC_SUPABASE_URL=...</code>
           <code>NEXT_PUBLIC_SUPABASE_ANON_KEY=...</code>
@@ -391,6 +391,7 @@ function SetupScreen() {
 function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message: string) => void }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   async function submit(form: FormData) {
     setBusy(true);
@@ -411,12 +412,23 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
     }
   }
 
+  async function continueWithGoogle() {
+    setGoogleBusy(true);
+    setNotice("");
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      setGoogleBusy(false);
+      setNotice(toJapaneseError(error, "Googleログインに失敗しました。"));
+    }
+  }
+
   return (
     <main className="auth-shell">
       <section className="auth-card">
         <p className="eyebrow">Mirai Ledger</p>
         <h1>{mode === "login" ? "ログイン" : "アカウント作成"}</h1>
-        <p className="auth-copy">家計簿データは Supabase Auth と RLS でユーザーごとに分離して保存します。</p>
+        <p className="auth-copy">未来の残高を見ながら、収入・支出・資産をまとめて管理できます。</p>
         {notice && <div className="notice" role="status">{notice}</div>}
         <form className="auth-form" onSubmit={(event) => { event.preventDefault(); submit(new FormData(event.currentTarget)); }}>
           {mode === "signup" && (
@@ -426,7 +438,7 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
           <label><Lock size={16} />パスワード<input name="password" type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required placeholder="8文字以上" /></label>
           <button className="full-primary" type="submit" disabled={busy}>{busy ? "処理中" : mode === "login" ? "ログイン" : "作成する"}</button>
         </form>
-        <button className="google-button" type="button" onClick={() => signInWithGoogle().catch((error) => setNotice(toJapaneseError(error)))}>Googleで続ける</button>
+        <button className="google-button" type="button" disabled={googleBusy} onClick={continueWithGoogle}>{googleBusy ? "Googleへ移動中" : "Googleで続ける"}</button>
         <button className="switch-auth" type="button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
           {mode === "login" ? "アカウントを作成する" : "ログインに戻る"}
         </button>
@@ -440,8 +452,8 @@ function DbErrorScreen({ notice, onRetry }: { notice: string; onRetry: () => voi
     <main className="auth-shell">
       <section className="auth-card">
         <p className="eyebrow">Mirai Ledger</p>
-        <h1>DB読み込みで止まりました</h1>
-        <p className="auth-copy">Supabase 接続は開始できていますが、家計簿データの取得または初期作成で失敗しています。SQL Editor で `supabase/schema.sql` を実行済みか確認してください。</p>
+        <h1>データの読み込みで止まりました</h1>
+        <p className="auth-copy">家計簿データの取得または初期作成で失敗しています。時間をおいて再試行してください。</p>
         {notice && <div className="notice" role="status">{notice}</div>}
         <button className="full-primary" type="button" onClick={onRetry}>再読み込み</button>
         <button className="switch-auth" type="button" onClick={() => signOut()}>ログアウト</button>

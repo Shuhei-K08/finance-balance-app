@@ -216,10 +216,15 @@ export async function signUpWithEmail(email: string, password: string, displayNa
 
 export async function signInWithGoogle() {
   const client = requireSupabase();
+  const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;
   const { error } = await client.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: typeof window === "undefined" ? undefined : window.location.origin
+      redirectTo,
+      queryParams: {
+        access_type: "offline",
+        prompt: "select_account"
+      }
     }
   });
   if (error) throwJapanese(error, "Googleログインに失敗しました。");
