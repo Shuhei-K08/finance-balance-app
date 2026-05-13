@@ -395,6 +395,25 @@ h2 {
   white-space: normal;
 }
 
+.section-title.with-action {
+  align-items: center;
+}
+
+.section-title.with-action > div {
+  min-width: 0;
+}
+
+.section-title.with-action button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fff;
+  color: var(--brand-dark);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .month-control {
   display: grid;
   grid-template-columns: auto 64px minmax(0, 1fr) 64px;
