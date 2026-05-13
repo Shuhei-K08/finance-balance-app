@@ -125,6 +125,11 @@ export default function App() {
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
     if (!supabase) {
       setState(loadState());
       setAuthReady(true);
