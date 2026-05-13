@@ -2360,6 +2360,9 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
   const parent = state.categories.find((item) => item.id === category.parentId);
   const children = state.categories.filter((item) => item.parentId === category.id);
   const [editing, setEditing] = useState(false);
+  const [showSubForm, setShowSubForm] = useState(false);
+  const [subName, setSubName] = useState("");
+  const [subColor, setSubColor] = useState(category.color);
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
@@ -2369,6 +2372,43 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
             <span>用途: {category.kind === "income" ? "収入" : "支出"}</span>
             <span>分類: {category.parentId ? `サブカテゴリー（${parent?.name ?? "カテゴリー未設定"}）` : "カテゴリー"}</span>
             {!category.parentId && <span>サブカテゴリー: {children.map((child) => child.name).join("、") || "なし"}</span>}
+            {!category.parentId && (
+              <div className="sub-category-add">
+                <button type="button" onClick={() => setShowSubForm(!showSubForm)}>{showSubForm ? "サブカテゴリー追加を閉じる" : "サブカテゴリーを追加する"}</button>
+                {showSubForm && (
+                  <div className="mini-panel">
+                    <label>サブカテゴリー名<input placeholder={`例: ${category.kind === "income" ? "副業" : "スーパー"}`} value={subName} onChange={(event) => setSubName(event.target.value)} /></label>
+                    <label>色<input type="color" value={subColor} onChange={(event) => setSubColor(event.target.value)} /></label>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if (!subName.trim()) {
+                            setNotice("サブカテゴリー名を入力してください。");
+                            return;
+                          }
+                          await createCategory(state.householdId ?? "", {
+                            name: subName,
+                            parentId: category.id,
+                            color: subColor,
+                            kind: category.kind
+                          });
+                          await reloadHousehold(state.householdId ?? "");
+                          setSubName("");
+                          setSubColor(category.color);
+                          setShowSubForm(false);
+                          setNotice("サブカテゴリーを追加しました。");
+                        } catch (error) {
+                          setNotice(toJapaneseError(error, "サブカテゴリー追加に失敗しました。"));
+                        }
+                      }}
+                    >
+                      サブカテゴリーを登録
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
             <button type="button" onClick={() => setEditing(true)}>編集する</button>
             <button type="button" onClick={onClose}>閉じる</button>
           </div>

@@ -1583,6 +1583,16 @@ input[type="range"] {
   margin-top: 12px;
 }
 
+.sub-category-add {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0;
+}
+
+.sub-category-add .mini-panel {
+  padding: 10px;
+}
+
 .account-list i {
   width: 10px;
   height: 10px;
