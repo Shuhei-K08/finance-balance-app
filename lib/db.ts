@@ -195,6 +195,16 @@ function calculateWithdrawalDate(account: DbAccount, occurredOn: string) {
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
 
+function appRedirectOrigin() {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL;
+  if (configured) return configured.replace(/\/$/, "");
+  if (typeof window === "undefined") return undefined;
+  if (window.location.hostname === "localhost" && window.location.port === "3000") {
+    return "https://finance-balance-app-mocha.vercel.app";
+  }
+  return window.location.origin;
+}
+
 export async function signInWithEmail(email: string, password: string) {
   const client = requireSupabase();
   const { error } = await client.auth.signInWithPassword({ email, password });
@@ -208,7 +218,7 @@ export async function signUpWithEmail(email: string, password: string, displayNa
     password,
     options: {
       data: { display_name: displayName },
-      emailRedirectTo: typeof window === "undefined" ? undefined : window.location.origin
+      emailRedirectTo: appRedirectOrigin()
     }
   });
   if (error) throwJapanese(error, "アカウント作成に失敗しました。");
@@ -216,7 +226,7 @@ export async function signUpWithEmail(email: string, password: string, displayNa
 
 export async function signInWithGoogle() {
   const client = requireSupabase();
-  const redirectTo = typeof window === "undefined" ? undefined : window.location.origin;
+  const redirectTo = appRedirectOrigin();
   const { error } = await client.auth.signInWithOAuth({
     provider: "google",
     options: {
@@ -343,6 +353,21 @@ export async function deleteSharedLedger(householdId: string) {
     .eq("space_type", "shared");
   if (householdError) throwJapanese(householdError, "共有家計簿の削除に失敗しました。");
 
+  await Promise.all([
+    client.from("accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+  ]);
+}
+
+export async function adminDeleteHousehold(householdId: string) {
+  const client = requireSupabase();
+  const deletedAt = new Date().toISOString();
+  const { error } = await client.from("households").update({ deleted_at: deletedAt }).eq("id", householdId);
+  if (error) throwJapanese(error, "家計簿の削除に失敗しました。");
   await Promise.all([
     client.from("accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),

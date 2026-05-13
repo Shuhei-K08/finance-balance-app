@@ -68,6 +68,7 @@ import type { AdminDashboard } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
   createSharedLedger,
+  adminDeleteHousehold,
   createAccount,
   createCategory,
   createFixedCost,
@@ -209,10 +210,6 @@ export default function App() {
   }
 
   if (!state) return <DbErrorScreen notice={notice} onRetry={() => withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。").catch((error) => setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。")))} />;
-
-  if (state.needsOpeningSetup) {
-    return <OpeningSetupScreen state={state} setNotice={setNotice} onDone={() => refreshRemoteState()} />;
-  }
 
   const month = monthTransactionsByKey(state.transactions, calendarMonth);
   const stats = {
@@ -1963,6 +1960,10 @@ function SettingsView({
 function AdminView() {
   const [dashboard, setDashboard] = useState<AdminDashboard | null>(null);
   const [error, setError] = useState("");
+  async function reloadDashboard() {
+    setError("");
+    setDashboard(await loadAdminDashboard());
+  }
   useEffect(() => {
     let mounted = true;
     loadAdminDashboard()
@@ -2012,6 +2013,23 @@ function AdminView() {
                     <strong>{household.name}</strong>
                     <span>{household.spaceType === "shared" ? "共有" : "個人"} / {household.deletedAt ? "削除済み" : "有効"}</span>
                     <em>{household.id.slice(0, 8)}</em>
+                    {!household.deletedAt && (
+                      <button
+                        className="mini-button danger"
+                        type="button"
+                        onClick={async () => {
+                          if (!window.confirm(`${household.name}を削除しますか？`)) return;
+                          try {
+                            await adminDeleteHousehold(household.id);
+                            await reloadDashboard();
+                          } catch (caught) {
+                            setError(toJapaneseError(caught, "家計簿の削除に失敗しました。"));
+                          }
+                        }}
+                      >
+                        削除
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
