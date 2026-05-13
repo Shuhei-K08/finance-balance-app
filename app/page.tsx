@@ -114,6 +114,13 @@ const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "settings", label: "設定", icon: Settings }
 ];
 
+const accountColorForType = (type: AccountType) => {
+  if (type === "saving") return "#059669";
+  if (type === "cash") return "#d97706";
+  if (type === "credit") return "#7c3aed";
+  return "#2563eb";
+};
+
 export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
   const [tab, setTab] = useState<Tab>("home");
@@ -1540,7 +1547,7 @@ function SettingsView({
   const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed">("ledger");
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
-  const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
+  const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
   const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
   const [newFixed, setNewFixed] = useState({ name: "", categoryId: state.categories[0]?.id ?? "", accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
   const [showAccountForm, setShowAccountForm] = useState(false);
@@ -1604,11 +1611,10 @@ function SettingsView({
         <div className="ledger-list">
           {(state.households ?? []).map((household) => (
             <button
-              className={household.id === selectedLedgerId ? "selected-ledger" : ""}
+              className={household.id === state.householdId ? "selected-ledger" : ""}
               key={household.id}
               type="button"
               onClick={() => {
-                setSelectedLedgerId(household.id);
                 setLedgerModalId(household.id);
               }}
             >
@@ -1618,13 +1624,14 @@ function SettingsView({
           ))}
         </div>
         {modalLedger && (
-          <div className="ledger-detail">
-            <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
-            <div>
-              <span>家計簿名</span>
-              <strong>{modalLedger.name}</strong>
-              <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
-            </div>
+          <div className="sheet-backdrop center-backdrop" onClick={() => setLedgerModalId(null)}>
+            <div className="ledger-detail" onClick={(event) => event.stopPropagation()}>
+              <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
+              <div>
+                <span>家計簿名</span>
+                <strong>{modalLedger.name}</strong>
+                <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+              </div>
             <>
                 <div className="ledger-info-grid">
                   <div><span>家計簿ID</span><strong>{modalLedger.id}</strong></div>
@@ -1748,6 +1755,7 @@ function SettingsView({
                   </button>
                 )}
               </>
+            </div>
           </div>
         )}
       </section>
@@ -1856,9 +1864,13 @@ function SettingsView({
         <button className="full-primary" type="button" onClick={() => setShowAccountForm(!showAccountForm)}>{showAccountForm ? "追加を閉じる" : "お金の置き場所を追加する"}</button>
         {showAccountForm && <div className="crud-form">
           <label>口座名<input placeholder="例: 生活口座 / 楽天カード" value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} /></label>
-          <label>種類<select value={newAccount.type} onChange={(event) => setNewAccount({ ...newAccount, type: event.target.value as AccountType })}>
+          <label>種類<select value={newAccount.type} onChange={(event) => {
+            const nextType = event.target.value as AccountType;
+            setNewAccount({ ...newAccount, type: nextType, color: accountColorForType(nextType) });
+          }}>
             <option value="bank">銀行口座</option><option value="cash">現金</option><option value="saving">貯金口座</option><option value="credit">クレジットカード</option>
           </select></label>
+          <label>表示色<input type="color" value={newAccount.color} onChange={(event) => setNewAccount({ ...newAccount, color: event.target.value })} /></label>
           {newAccount.type !== "credit" && (
             <>
               <label>初期残高<input type="number" min="0" value={numberInputValue(newAccount.openingBalance)} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value || 0) })} /></label>
@@ -1881,7 +1893,7 @@ function SettingsView({
               }
               await createAccount(state.householdId ?? "", { ...newAccount, openingBalance: newAccount.type === "credit" ? 0 : newAccount.openingBalance });
               await reloadHousehold(state.householdId ?? "");
-              setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso(), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
+              setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
               setShowAccountForm(false);
               setNotice("口座を追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "口座追加に失敗しました。")); }
@@ -2138,10 +2150,61 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone
   const [name, setName] = useState(account.name);
   const [openingBalance, setOpeningBalance] = useState(account.openingBalance);
   const [openingBalanceDate, setOpeningBalanceDate] = useState(account.openingBalanceDate ?? todayIso());
+  const [color, setColor] = useState(account.color);
   const [closingDay, setClosingDay] = useState(account.closingDay ?? 25);
   const [withdrawalDay, setWithdrawalDay] = useState(account.withdrawalDay ?? 10);
   const [withdrawalAccountId, setWithdrawalAccountId] = useState(account.withdrawalAccountId ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "");
-  return <div className="edit-row balanced-edit"><label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>{account.type !== "credit" && <><label>初期残高<input type="number" value={numberInputValue(openingBalance)} onChange={(event) => setOpeningBalance(Number(event.target.value || 0))} /></label><label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label></>}{account.type === "credit" && <><label>締め日<input type="number" min="1" max="31" value={numberInputValue(closingDay)} onChange={(event) => setClosingDay(Number(event.target.value || 0))} /></label><label>引落日<input type="number" min="1" max="31" value={numberInputValue(withdrawalDay)} onChange={(event) => setWithdrawalDay(Number(event.target.value || 0))} /></label><label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}><option value="">選択してください</option>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label></>}<button onClick={async () => { try { if (account.type === "credit" && !withdrawalAccountId) { setNotice("引落口座を選択してください。"); return; } await updateAccount(account.id, { name, openingBalance: account.type === "credit" ? 0 : openingBalance, openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate, closingDay: account.type === "credit" ? closingDay : undefined, withdrawalDay: account.type === "credit" ? withdrawalDay : undefined, withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  return (
+    <div className="edit-row balanced-edit">
+      <label>口座名<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>表示色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>
+      {account.type !== "credit" && (
+        <>
+          <label>初期残高<input type="number" value={numberInputValue(openingBalance)} onChange={(event) => setOpeningBalance(Number(event.target.value || 0))} /></label>
+          <label>基準日<input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label>
+        </>
+      )}
+      {account.type === "credit" && (
+        <>
+          <label>締め日<input type="number" min="1" max="31" value={numberInputValue(closingDay)} onChange={(event) => setClosingDay(Number(event.target.value || 0))} /></label>
+          <label>引落日<input type="number" min="1" max="31" value={numberInputValue(withdrawalDay)} onChange={(event) => setWithdrawalDay(Number(event.target.value || 0))} /></label>
+          <label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}><option value="">選択してください</option>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        </>
+      )}
+      <button
+        onClick={async () => {
+          try {
+            if (!name.trim()) {
+              setNotice("口座名を入力してください。");
+              return;
+            }
+            if (account.type === "credit" && !withdrawalAccountId) {
+              setNotice("引落口座を選択してください。");
+              return;
+            }
+            await updateAccount(account.id, {
+              name,
+              color,
+              openingBalance: account.type === "credit" ? 0 : openingBalance,
+              openingBalanceDate: account.type === "credit" ? account.openingBalanceDate ?? todayIso() : openingBalanceDate,
+              closingDay: account.type === "credit" ? closingDay : undefined,
+              withdrawalDay: account.type === "credit" ? withdrawalDay : undefined,
+              withdrawalAccountId: account.type === "credit" ? withdrawalAccountId : undefined
+            });
+            await reloadHousehold(state.householdId ?? "");
+            onDone();
+            setNotice("口座を更新しました。");
+          } catch (error) {
+            setNotice(toJapaneseError(error, "口座更新に失敗しました。"));
+          }
+        }}
+      >
+        変更を保存
+      </button>
+      <button onClick={async () => { try { await deleteAccount(account.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("口座を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "口座削除に失敗しました。")); } }}>口座を削除</button>
+      <button type="button" onClick={onDone}>編集をやめる</button>
+    </div>
+  );
 }
 
 function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onClose: () => void }) {

@@ -646,16 +646,17 @@ export async function upsertAssetSnapshots(householdId: string, month: string, b
   if (error) throwJapanese(error, "月末資産の確定に失敗しました。");
 }
 
-export async function createAccount(householdId: string, input: { name: string; type: AccountType; openingBalance: number; openingBalanceDate: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
+export async function createAccount(householdId: string, input: { name: string; type: AccountType; openingBalance: number; openingBalanceDate: string; color?: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
   const client = requireSupabase();
   if (input.type === "credit" && !input.withdrawalAccountId) throw new Error("引落口座を選択してください。");
+  const defaultColor = input.type === "saving" ? "#059669" : input.type === "cash" ? "#d97706" : input.type === "credit" ? "#7c3aed" : "#2563eb";
   const { error } = await client.from("accounts").insert({
     household_id: householdId,
     name: input.name,
     account_type: input.type,
     opening_balance: input.openingBalance,
     opening_balance_date: input.openingBalanceDate || null,
-    color: input.type === "saving" ? "#059669" : input.type === "cash" ? "#d97706" : input.type === "credit" ? "#7c3aed" : "#2563eb",
+    color: input.color || defaultColor,
     closing_day: input.type === "credit" ? input.closingDay || 25 : null,
     withdrawal_day: input.type === "credit" ? input.withdrawalDay || 10 : null,
     withdrawal_account_id: input.type === "credit" ? input.withdrawalAccountId || null : null
@@ -663,13 +664,14 @@ export async function createAccount(householdId: string, input: { name: string; 
   if (error) throwJapanese(error, "口座追加に失敗しました。");
 }
 
-export async function updateAccount(accountId: string, input: { name: string; openingBalance: number; openingBalanceDate: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
+export async function updateAccount(accountId: string, input: { name: string; openingBalance: number; openingBalanceDate: string; color?: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {
   const client = requireSupabase();
   if ((input.closingDay || input.withdrawalDay) && !input.withdrawalAccountId) throw new Error("引落口座を選択してください。");
   const { error } = await client.from("accounts").update({
     name: input.name,
     opening_balance: input.openingBalance,
     opening_balance_date: input.openingBalanceDate || null,
+    color: input.color || "#0f766e",
     closing_day: input.closingDay || null,
     withdrawal_day: input.withdrawalDay || null,
     withdrawal_account_id: input.withdrawalAccountId || null
