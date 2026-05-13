@@ -94,6 +94,7 @@ import {
   updateOpeningBalances,
   updateTransaction,
   upsertAssetSnapshots,
+  extractErrorText,
   toJapaneseError
 } from "@/lib/db";
 import { AccountType } from "@/lib/types";
@@ -1713,7 +1714,7 @@ function SettingsView({
                 setNotice("共有家計簿に参加しました。");
               } catch (error) {
                 console.error("共有家計簿参加エラー", error);
-                const raw = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+                const raw = extractErrorText(error, "詳細を取得できませんでした。");
                 const message = toJapaneseError(error, "共有家計簿への参加に失敗しました。共有ID、ログイン状態、最新のschema.sqlが反映済みか確認してください。");
                 setJoinDebug(`原因確認: 入力=${inviteCode} / 判定ID=${normalizedCode || "空"} / 詳細=${raw || message}`);
                 setNotice(message);

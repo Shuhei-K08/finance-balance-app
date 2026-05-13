@@ -42,12 +42,27 @@ const errorTranslations: Array<[RegExp, string]> = [
 ];
 
 export function toJapaneseError(error: unknown, fallback = "処理に失敗しました。") {
-  const raw = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+  const raw = extractErrorText(error, fallback);
   const message = raw.trim();
   const matched = errorTranslations.find(([pattern]) => pattern.test(message));
   if (matched) return matched[1];
   if (/^[\x00-\x7F\s:;,.!?"'`()/_-]+$/.test(message)) return `${fallback}（詳細: ${message}）`;
   return message || fallback;
+}
+
+export function extractErrorText(error: unknown, fallback = "処理に失敗しました。") {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    return [
+      record.code ? `code=${String(record.code)}` : "",
+      record.message ? `message=${String(record.message)}` : "",
+      record.details ? `details=${String(record.details)}` : "",
+      record.hint ? `hint=${String(record.hint)}` : ""
+    ].filter(Boolean).join(" / ") || JSON.stringify(record);
+  }
+  return fallback;
 }
 
 function throwJapanese(error: unknown, fallback?: string): never {
@@ -236,7 +251,7 @@ export async function joinSharedLedger(inviteCode: string) {
   const { data, error } = await client.rpc("join_shared_ledger", { code: normalizedCode });
   if (error) {
     console.error("join_shared_ledger failed", { normalizedCode, error });
-    throwJapanese(error, "共有家計簿への参加に失敗しました。");
+    throw new Error(extractErrorText(error, "共有家計簿への参加に失敗しました。"));
   }
   return data as string;
 }
