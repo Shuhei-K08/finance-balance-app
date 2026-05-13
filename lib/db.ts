@@ -234,7 +234,10 @@ export async function joinSharedLedger(inviteCode: string) {
     .toUpperCase();
   if (!normalizedCode) throw new Error("招待コードを入力してください。");
   const { data, error } = await client.rpc("join_shared_ledger", { code: normalizedCode });
-  if (error) throwJapanese(error, "共有家計簿への参加に失敗しました。");
+  if (error) {
+    console.error("join_shared_ledger failed", { normalizedCode, error });
+    throwJapanese(error, "共有家計簿への参加に失敗しました。");
+  }
   return data as string;
 }
 

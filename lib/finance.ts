@@ -101,7 +101,21 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
 
 export function confirmedAccountBalance(account: Account, state: LedgerState, monthKey: string) {
   const currentMonth = todayIso().slice(0, 7);
-  if (monthKey >= currentMonth) return calculateAccountBalanceInState(account, state, monthKey);
+  if (monthKey >= currentMonth) {
+    const calculated = calculateAccountBalanceInState(account, state, monthKey);
+    const hasEarlierSnapshot = state.assetSnapshots.some((item) => item.accountId === account.id && item.month < monthKey);
+    const hasRows = state.transactions.some((transaction) => {
+      const ledgerDate = transactionLedgerDate(transaction);
+      return ledgerDate <= monthEndKey(monthKey) && (
+        transaction.accountId === account.id ||
+        transaction.transferToAccountId === account.id ||
+        state.accounts.find((item) => item.id === transaction.accountId)?.withdrawalAccountId === account.id
+      );
+    });
+    const currentSnapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
+    if (currentSnapshot && calculated === 0 && !hasEarlierSnapshot && !hasRows && account.openingBalance === 0) return currentSnapshot.amount;
+    return calculated;
+  }
   const snapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
   return snapshot?.amount ?? calculateAccountBalanceInState(account, state, monthKey);
 }

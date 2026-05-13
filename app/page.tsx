@@ -938,7 +938,12 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
   const rows = state.transactions
     .filter((transaction) => transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey))
     .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
-  const total = rows.reduce((sum, transaction) => sum + transaction.amount, 0);
+  const fixedRows = type === "expense" ? fixedCostOccurrencesForMonth(state.fixedCosts, monthKey) : [];
+  const entries = [
+    ...rows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
+    ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
+  ].sort((a, b) => b.date.localeCompare(a.date));
+  const total = rows.reduce((sum, transaction) => sum + transaction.amount, 0) + fixedRows.reduce((sum, row) => sum + row.amount, 0);
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel entry-modal" onClick={(event) => event.stopPropagation()}>
@@ -946,10 +951,10 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
           <h2>{formatMonthLabel(monthKey)}の{type === "income" ? "収入" : "支出"}一覧</h2>
           <span>{yen.format(total)}</span>
         </div>
-        {rows.length === 0 ? (
+        {entries.length === 0 ? (
           <div className="empty-state"><span>この月の{type === "income" ? "収入" : "支出"}はまだありません。</span></div>
         ) : (
-          <MonthEntryList entries={rows.map((transaction) => ({ date: transactionLedgerDate(transaction), transaction }))} state={state} setNotice={setNotice} reload={reload} />
+          <MonthEntryList entries={entries} state={state} setNotice={setNotice} reload={reload} />
         )}
         <button className="google-button" type="button" onClick={onClose}>閉じる</button>
       </section>
@@ -986,7 +991,7 @@ function MonthEntryList({
   setNotice,
   reload
 }: {
-  entries: Array<{ date: string; transaction: LedgerState["transactions"][number] }>;
+  entries: Array<{ kind: "transaction"; date: string; transaction: LedgerState["transactions"][number] } | { kind: "fixed"; date: string; fixedCost: FixedCostOccurrence }>;
   state: LedgerState;
   setNotice: (message: string) => void;
   reload: () => Promise<void>;
@@ -994,7 +999,11 @@ function MonthEntryList({
   if (entries.length === 0) return <div className="empty-state"><span>この月の収支はまだありません。</span></div>;
   return (
     <div className="transaction-list month-entry-list">
-      {entries.map((entry) => <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />)}
+      {entries.map((entry) => (
+        entry.kind === "fixed"
+          ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
+          : <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
+      ))}
     </div>
   );
 }
@@ -1693,7 +1702,8 @@ function SettingsView({
                 setInviteCode("");
                 setNotice("共有家計簿に参加しました。");
               } catch (error) {
-                setNotice(toJapaneseError(error, "共有家計簿への参加に失敗しました。"));
+                console.error("共有家計簿参加エラー", error);
+                setNotice(toJapaneseError(error, "共有家計簿への参加に失敗しました。共有ID、ログイン状態、最新のschema.sqlが反映済みか確認してください。"));
               }
             }}
           >
@@ -2045,32 +2055,44 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const currentMonth = todayIso().slice(0, 7);
+  const activeCosts = state.fixedCosts.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth);
+  const endedCosts = state.fixedCosts.filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
+  const renderCost = (cost: LedgerState["fixedCosts"][number]) => {
+    const isOpen = selectedId === cost.id;
+    const isEditing = editingId === cost.id;
+    const category = state.categories.find((item) => item.id === cost.categoryId);
+    const account = state.accounts.find((item) => item.id === cost.accountId);
+    const ended = Boolean(cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
+    return (
+      <div className={`fixed-editor-card${ended ? " ended" : ""}`} key={cost.id}>
+        <button className="fixed-editor-head" type="button" onClick={() => { setSelectedId(isOpen ? null : cost.id); setEditingId(null); }}>
+          <span>{cost.name}</span>
+          <strong>{yen.format(cost.amount)}</strong>
+          {ended && <em>終了済み</em>}
+        </button>
+        {isOpen && !isEditing && (
+          <div className="fixed-detail">
+            <span>支払日: 毎月{cost.dueDay}日</span>
+            <span>カテゴリ: {category?.name ?? "未設定"}</span>
+            <span>支払元: {account?.name ?? "未設定"}</span>
+            <span>反映期間: {cost.effectiveFrom ? cost.effectiveFrom.slice(0, 7) : "開始月なし"} から {cost.effectiveTo ? cost.effectiveTo.slice(0, 7) : "継続中"}</span>
+            <button type="button" onClick={() => setEditingId(cost.id)}>編集する</button>
+          </div>
+        )}
+        {isOpen && isEditing && <EditableFixedCostRow cost={cost} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
+      </div>
+    );
+  };
   return (
     <div className="fixed-editor-list">
-      {state.fixedCosts.map((cost) => {
-        const isOpen = selectedId === cost.id;
-        const isEditing = editingId === cost.id;
-        const category = state.categories.find((item) => item.id === cost.categoryId);
-        const account = state.accounts.find((item) => item.id === cost.accountId);
-        return (
-          <div className="fixed-editor-card" key={cost.id}>
-            <button className="fixed-editor-head" type="button" onClick={() => { setSelectedId(isOpen ? null : cost.id); setEditingId(null); }}>
-              <span>{cost.name}</span>
-              <strong>{yen.format(cost.amount)}</strong>
-            </button>
-            {isOpen && !isEditing && (
-              <div className="fixed-detail">
-                <span>支払日: 毎月{cost.dueDay}日</span>
-                <span>カテゴリ: {category?.name ?? "未設定"}</span>
-                <span>支払元: {account?.name ?? "未設定"}</span>
-                <span>反映期間: {cost.effectiveFrom ? cost.effectiveFrom.slice(0, 7) : "開始月なし"} から {cost.effectiveTo ? cost.effectiveTo.slice(0, 7) : "継続中"}</span>
-                <button type="button" onClick={() => setEditingId(cost.id)}>編集する</button>
-              </div>
-            )}
-            {isOpen && isEditing && <EditableFixedCostRow cost={cost} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
-          </div>
-        );
-      })}
+      {activeCosts.map(renderCost)}
+      {endedCosts.length > 0 && (
+        <div className="ended-fixed-section">
+          <strong>終了済みの固定費</strong>
+          {endedCosts.map(renderCost)}
+        </div>
+      )}
     </div>
   );
 }

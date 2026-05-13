@@ -1134,12 +1134,15 @@ input[type="range"] {
 .calendar-grid button {
   display: grid;
   gap: 2px;
+  min-width: 0;
   min-height: 52px;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
+  padding: 4px 2px;
   background: #fff;
   color: var(--ink);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .calendar-grid .selected-day {
@@ -1148,8 +1151,14 @@ input[type="range"] {
 }
 
 .calendar-grid span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
   color: var(--danger);
-  font-size: 10px;
+  font-size: 9px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .calendar-grid .income-mini {
@@ -1366,9 +1375,14 @@ input[type="range"] {
   overflow: hidden;
 }
 
+.fixed-editor-card.ended {
+  opacity: 0.62;
+  background: #f1f5f9;
+}
+
 .fixed-editor-head {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
   width: 100%;
@@ -1383,6 +1397,29 @@ input[type="range"] {
 .fixed-editor-head span,
 .fixed-editor-head strong {
   font-weight: 800;
+}
+
+.fixed-editor-head em {
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: #e5e7eb;
+  color: #64748b;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.ended-fixed-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+}
+
+.ended-fixed-section > strong {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .fixed-detail {
