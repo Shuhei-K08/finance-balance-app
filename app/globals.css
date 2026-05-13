@@ -201,6 +201,18 @@ h2 {
   font-weight: 700;
 }
 
+.debug-box {
+  padding: 10px 12px;
+  border: 1px dashed #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
 .shared-ledger .notice {
   border-color: #fdba74;
   background: #fff7ed;
@@ -1607,13 +1619,22 @@ input[type="range"] {
 }
 
 .bottom-controls .month-control.compact {
-  grid-template-columns: 54px 58px minmax(0, 1fr) 58px;
+  grid-template-columns: 50px 52px minmax(0, 1fr) 52px;
+  gap: 6px;
 }
 
 .bottom-controls .month-control.compact button,
 .bottom-controls .month-control.compact input {
   min-height: 34px;
-  font-size: 14px;
+  box-sizing: border-box;
+  padding-inline: 6px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.bottom-controls .month-control.compact input[type="month"] {
+  appearance: none;
+  -webkit-appearance: none;
 }
 
 .bottom-nav {
@@ -1764,7 +1785,9 @@ option {
   }
 
   .bottom-controls .month-control.compact {
-    grid-template-columns: 48px 56px minmax(0, 1fr) 56px;
+    grid-template-columns: 1fr 1fr 1.35fr 1fr;
+    gap: 5px;
+    padding: 6px;
   }
 
   .month-control > span,
@@ -1772,6 +1795,14 @@ option {
     width: 100%;
     min-width: 0;
     grid-column: auto;
+  }
+
+  .bottom-controls .month-control.compact > span,
+  .bottom-controls .month-control.compact button,
+  .bottom-controls .month-control.compact input {
+    min-width: 0;
+    padding-inline: 4px;
+    font-size: 12px;
   }
 
   .asset-snapshot-panel {

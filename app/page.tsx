@@ -99,9 +99,9 @@ import {
 import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
-type Tab = "home" | "analysis" | "goals" | "settings";
+type Tab = "home" | "analysis" | "goals" | "settings" | "admin";
 
-const tabs: { id: Tab; label: string; icon: React.ElementType }[] = [
+const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
   { id: "analysis", label: "分析", icon: BarChart3 },
   { id: "goals", label: "目標", icon: Goal },
@@ -214,6 +214,9 @@ export default function App() {
     fixed: fixedCostForecast(state.fixedCosts, calendarMonth),
     credit: monthlyCreditWithdrawalsByKey(state, calendarMonth)
   };
+  const visibleTabs = state.profileRole === "admin"
+    ? [...baseTabs, { id: "admin" as const, label: "管理", icon: UserPlus }]
+    : baseTabs;
 
   function openQuick(date = todayIso()) {
     setQuickDate(date);
@@ -320,11 +323,12 @@ export default function App() {
       )}
       {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
+      {tab === "admin" && state.profileRole === "admin" && <AdminView />}
 
       <section className="bottom-controls">
         <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
         <nav className="bottom-nav">
-          {tabs.map((item) => {
+          {visibleTabs.map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -1496,6 +1500,7 @@ function SettingsView({
 }) {
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [inviteCode, setInviteCode] = useState("");
+  const [joinDebug, setJoinDebug] = useState<string | null>(null);
   const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
   const [ledgerModalId, setLedgerModalId] = useState<string | null>(null);
   const [sharedMembers, setSharedMembers] = useState<HouseholdMember[]>([]);
@@ -1688,22 +1693,30 @@ function SettingsView({
             共有家計簿を作成
           </button>
           <label>招待コード<input value={inviteCode} onChange={(event) => setInviteCode(event.target.value.toUpperCase())} placeholder="例: A1B2C3D4" /></label>
+          {joinDebug && <div className="debug-box">{joinDebug}</div>}
           <button
             className="google-button"
             type="button"
             onClick={async () => {
+              const normalizedCode = normalizeInviteCode(inviteCode);
               if (!inviteCode.trim()) {
                 setNotice("共有IDを入力してください。");
+                setJoinDebug(null);
                 return;
               }
               try {
+                setJoinDebug(`参加確認中: 入力=${inviteCode} / 判定ID=${normalizedCode}`);
                 const householdId = await joinSharedLedger(inviteCode);
                 await reloadHousehold(householdId);
                 setInviteCode("");
+                setJoinDebug(null);
                 setNotice("共有家計簿に参加しました。");
               } catch (error) {
                 console.error("共有家計簿参加エラー", error);
-                setNotice(toJapaneseError(error, "共有家計簿への参加に失敗しました。共有ID、ログイン状態、最新のschema.sqlが反映済みか確認してください。"));
+                const raw = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
+                const message = toJapaneseError(error, "共有家計簿への参加に失敗しました。共有ID、ログイン状態、最新のschema.sqlが反映済みか確認してください。");
+                setJoinDebug(`原因確認: 入力=${inviteCode} / 判定ID=${normalizedCode || "空"} / 詳細=${raw || message}`);
+                setNotice(message);
               }
             }}
           >
@@ -2190,6 +2203,14 @@ function formatMonthLabel(monthKey: string) {
 function shiftMonthKey(monthKey: string, delta: number) {
   const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
   return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function normalizeInviteCode(value: string) {
+  return value
+    .trim()
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 0xfee0))
+    .replace(/[^a-z0-9]/gi, "")
+    .toUpperCase();
 }
 
 function numberInputValue(value: number) {
