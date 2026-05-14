@@ -159,9 +159,10 @@ type DbTransaction = {
 type DbFixedCost = {
   id: string;
   name: string;
-  fixed_type: "expense" | "income" | null;
-  category_id: string;
+  fixed_type: Transaction["type"] | null;
+  category_id: string | null;
   account_id: string;
+  transfer_to_account_id?: string | null;
   amount: number | string;
   is_variable: boolean;
   due_day: number;
@@ -177,6 +178,7 @@ type DbFixedCostOverride = {
   name: string | null;
   category_id: string | null;
   account_id: string | null;
+  transfer_to_account_id?: string | null;
   amount: number | string | null;
   due_day: number | null;
   skipped: boolean | null;
@@ -567,14 +569,26 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
-    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
-    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
+    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
+    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false })
   ]);
 
   const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
   const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
+  let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
+  let fixedCostOverridesError = fixedCostOverridesResult.error;
+  if (fixedCostOverridesError && /transfer_to_account_id|does not exist|存在しません/i.test(fixedCostOverridesError.message)) {
+    const fallback = await client
+      .from("fixed_cost_overrides")
+      .select("id,fixed_cost_id,target_month,name,category_id,account_id,amount,due_day,skipped")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("target_month", { ascending: false });
+    fixedCostOverridesData = fallback.data;
+    fixedCostOverridesError = fallback.error;
+  }
   let transactionsData: unknown = transactionsResult.data;
   let transactionsError = transactionsResult.error;
   if (transactionsError && /idempotency_key|does not exist|存在しません/i.test(transactionsError.message)) {
@@ -590,7 +604,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   }
   let fixedCostsData: unknown = fixedCostsResult.data;
   let fixedCostsError = fixedCostsResult.error;
-  if (fixedCostsError && /fixed_type|does not exist|存在しません/i.test(fixedCostsError.message)) {
+  if (fixedCostsError && /fixed_type|transfer_to_account_id|does not exist|存在しません/i.test(fixedCostsError.message)) {
     const fallback = await client
       .from("fixed_costs")
       .select("id,name,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to")
@@ -604,7 +618,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
-  if (fixedCostOverridesResult.error && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesResult.error, "固定費の月別変更データの取得に失敗しました。");
+  if (fixedCostOverridesError && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesError, "固定費の月別変更データの取得に失敗しました。");
   if ((profileResult.data as DbProfile | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
   if (!householdResult.data) throw new Error("家計簿が見つかりません。ログアウトして再ログインしてください。");
@@ -639,10 +653,6 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       color: category.color
     })),
     transactions: ((transactionsData ?? []) as DbTransaction[]).map((transaction): Transaction => {
-      const creditAccount = ((accountsResult.data ?? []) as DbAccount[]).find((account) => account.id === transaction.account_id && account.account_type === "credit");
-      const reflectedDate = transaction.reflected_on ?? (transaction.transaction_type === "expense" && creditAccount
-        ? calculateWithdrawalDate(creditAccount, transaction.occurred_on)
-        : undefined);
       return {
         id: transaction.id,
         type: transaction.transaction_type,
@@ -651,7 +661,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
         accountId: transaction.account_id,
         transferToAccountId: transaction.transfer_to_account_id ?? undefined,
         date: transaction.occurred_on,
-        reflectedDate,
+        reflectedDate: transaction.reflected_on ?? undefined,
         memo: transaction.memo ?? undefined,
         creditStatus: transaction.credit_status ?? undefined
       };
@@ -660,8 +670,9 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       id: cost.id,
       name: cost.name,
       kind: cost.fixed_type ?? "expense",
-      categoryId: cost.category_id,
+      categoryId: cost.category_id ?? "",
       accountId: cost.account_id,
+      transferToAccountId: cost.transfer_to_account_id ?? undefined,
       amount: toNumber(cost.amount),
       variable: cost.is_variable,
       dueDay: cost.due_day,
@@ -669,13 +680,14 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       effectiveFrom: cost.effective_from ?? undefined,
       effectiveTo: cost.effective_to ?? undefined
     })),
-    fixedCostOverrides: (fixedCostOverridesMissing ? [] : ((fixedCostOverridesResult.data ?? []) as DbFixedCostOverride[])).map((override): FixedCostOverride => ({
+    fixedCostOverrides: (fixedCostOverridesMissing ? [] : ((fixedCostOverridesData ?? []) as DbFixedCostOverride[])).map((override): FixedCostOverride => ({
       id: override.id,
       fixedCostId: override.fixed_cost_id,
       month: override.target_month.slice(0, 7),
       name: override.name ?? undefined,
       categoryId: override.category_id ?? undefined,
       accountId: override.account_id ?? undefined,
+      transferToAccountId: override.transfer_to_account_id ?? undefined,
       amount: override.amount == null ? undefined : toNumber(override.amount),
       dueDay: override.due_day ?? undefined,
       skipped: override.skipped ?? false
@@ -846,12 +858,20 @@ export async function deleteAccount(accountId: string) {
 export async function createCategory(householdId: string, input: { name: string; parentId?: string; color: string; kind?: "expense" | "income" }) {
   const client = requireSupabase();
   if (!input.name.trim()) throw new Error("カテゴリ名を入力してください。");
+  let color = input.color || "#0f766e";
+  let kind = input.kind ?? "expense";
+  if (input.parentId) {
+    const { data: parent, error: parentError } = await client.from("categories").select("color,category_kind").eq("id", input.parentId).maybeSingle();
+    if (parentError) throwJapanese(parentError, "所属カテゴリーの取得に失敗しました。");
+    color = (parent as { color?: string | null } | null)?.color ?? color;
+    kind = ((parent as { category_kind?: "expense" | "income" | null } | null)?.category_kind ?? kind);
+  }
   const { error } = await client.from("categories").insert({
     household_id: householdId,
     name: input.name.trim(),
     parent_id: input.parentId || null,
-    category_kind: input.kind ?? "expense",
-    color: input.color || "#0f766e"
+    category_kind: kind,
+    color
   });
   if (error) throwJapanese(error, "カテゴリ追加に失敗しました。");
 }
@@ -866,6 +886,13 @@ export async function updateCategory(categoryId: string, input: { name: string; 
     color: input.color || "#0f766e"
   }).eq("id", categoryId);
   if (error) throwJapanese(error, "カテゴリ更新に失敗しました。");
+  if (!input.parentId) {
+    const { error: childError } = await client.from("categories").update({
+      category_kind: input.kind ?? "expense",
+      color: input.color || "#0f766e"
+    }).eq("parent_id", categoryId);
+    if (childError) throwJapanese(childError, "サブカテゴリーの色更新に失敗しました。");
+  }
 }
 
 export async function deleteCategory(categoryId: string) {
@@ -880,8 +907,9 @@ export async function createFixedCost(householdId: string, input: Omit<FixedCost
     household_id: householdId,
     name: input.name,
     fixed_type: input.kind ?? "expense",
-    category_id: input.categoryId,
+    category_id: input.kind === "transfer" ? null : input.categoryId,
     account_id: input.accountId,
+    transfer_to_account_id: input.kind === "transfer" ? input.transferToAccountId ?? null : null,
     amount: input.amount,
     is_variable: input.variable,
     due_day: input.dueDay,
@@ -908,8 +936,9 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
       household_id: householdId,
       name: input.name,
       fixed_type: input.kind ?? "expense",
-      category_id: input.categoryId,
+      category_id: input.kind === "transfer" ? null : input.categoryId,
       account_id: input.accountId,
+      transfer_to_account_id: input.kind === "transfer" ? input.transferToAccountId ?? null : null,
       amount: input.amount,
       is_variable: input.variable,
       due_day: input.dueDay,
@@ -923,8 +952,9 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
   const { error } = await client.from("fixed_costs").update({
     name: input.name,
     fixed_type: input.kind ?? "expense",
-    category_id: input.categoryId,
+    category_id: input.kind === "transfer" ? null : input.categoryId,
     account_id: input.accountId,
+    transfer_to_account_id: input.kind === "transfer" ? input.transferToAccountId ?? null : null,
     amount: input.amount,
     is_variable: input.variable,
     due_day: input.dueDay,
@@ -958,6 +988,7 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
   name?: string;
   categoryId?: string;
   accountId?: string;
+  transferToAccountId?: string;
   amount?: number;
   dueDay?: number;
   skipped?: boolean;
@@ -970,6 +1001,7 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
     name: input.name || null,
     category_id: input.categoryId || null,
     account_id: input.accountId || null,
+    transfer_to_account_id: input.transferToAccountId || null,
     amount: input.amount ?? null,
     due_day: input.dueDay ?? null,
     skipped: input.skipped ?? false

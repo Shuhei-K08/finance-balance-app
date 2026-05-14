@@ -1317,6 +1317,10 @@ input[type="range"] {
   color: #92400e;
 }
 
+.calendar-grid .transfer-mini {
+  color: #2563eb;
+}
+
 .calendar-transaction-list,
 .fixed-calendar-list {
   display: grid;

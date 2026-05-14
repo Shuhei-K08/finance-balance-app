@@ -143,6 +143,11 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
 function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Account, accounts: Account[]) {
   const sourceAccount = accounts.find((item) => item.id === cost.accountId);
   if (cost.kind === "income") return cost.accountId === account.id ? cost.amount : 0;
+  if (cost.kind === "transfer") {
+    if (cost.accountId === account.id) return -cost.amount;
+    if (cost.transferToAccountId === account.id) return cost.amount;
+    return 0;
+  }
   if (sourceAccount?.type === "credit") {
     return sourceAccount.withdrawalAccountId === account.id ? -cost.amount : 0;
   }
@@ -191,6 +196,7 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
         name: override?.name ?? cost.name,
         categoryId: override?.categoryId ?? cost.categoryId,
         accountId: override?.accountId ?? cost.accountId,
+        transferToAccountId: override?.transferToAccountId ?? cost.transferToAccountId,
         amount: override?.amount ?? cost.amount,
         dueDay,
         overrideId: override?.id,
@@ -202,7 +208,7 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
 
 export function monthlyFixedCostExpense(state: LedgerState, date = new Date()) {
   const monthKey = monthKeyFromDate(date);
-  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
+  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind === "expense").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function monthlyExpenseWithFixed(state: LedgerState, date = new Date()) {
@@ -210,7 +216,7 @@ export function monthlyExpenseWithFixed(state: LedgerState, date = new Date()) {
 }
 
 export function monthlyExpenseWithFixedByKey(state: LedgerState, monthKey: string) {
-  return monthlyExpense(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
+  return monthlyExpense(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind === "expense").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function monthlyIncomeWithFixedByKey(state: LedgerState, monthKey: string) {
@@ -238,7 +244,7 @@ export function averageMonthlySaving(state: LedgerState) {
       if (!isFixedCostActiveInMonth(cost, key)) return;
       const current = monthly.get(key) ?? { income: 0, expense: 0, savingTransfer: 0 };
       if (cost.kind === "income") current.income += cost.amount;
-      else current.expense += cost.amount;
+      else if (cost.kind === "expense") current.expense += cost.amount;
       monthly.set(key, current);
     });
   });
@@ -280,7 +286,7 @@ export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: stri
 }
 
 export function fixedCostForecast(fixedCosts: FixedCost[], monthKey = todayIso().slice(0, 7)) {
-  return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey) && cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
+  return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey) && cost.kind === "expense").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
@@ -302,7 +308,7 @@ export function projectedMonthEnd(state: LedgerState, monthKey = todayIso().slic
 
 export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
   const month = monthTransactionsByKey(state.transactions, monthKey);
-  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income");
+  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind === "expense");
   return state.categories
     .filter((category) => !category.parentId && category.kind === "expense")
     .map((category) => {

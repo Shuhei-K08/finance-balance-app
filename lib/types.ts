@@ -43,9 +43,10 @@ export type Transaction = {
 export type FixedCost = {
   id: string;
   name: string;
-  kind: "expense" | "income";
+  kind: TransactionType;
   categoryId: string;
   accountId: string;
+  transferToAccountId?: string;
   amount: number;
   variable: boolean;
   dueDay: number;
@@ -61,6 +62,7 @@ export type FixedCostOverride = {
   name?: string;
   categoryId?: string;
   accountId?: string;
+  transferToAccountId?: string;
   amount?: number;
   dueDay?: number;
   skipped?: boolean;
