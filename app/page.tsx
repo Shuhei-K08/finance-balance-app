@@ -576,7 +576,7 @@ function HomeView({
   const shouldShowSnapshotPanel = shouldShowAssetSnapshotPanel(calendarMonth, isSnapshotConfirmed);
   const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
-  const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | null>(null);
+  const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | "credit" | null>(null);
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -623,7 +623,7 @@ function HomeView({
         <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} onClick={() => setHomeEntryModal("expense")} />
         <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} onClick={() => setHomeEntryModal("income")} />
         <Metric icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)} / ${savingRate}%`} />
-        <Metric icon={ArrowDownUp} label={`${monthLabel} カード引落`} value={yen.format(stats.credit)} />
+        <Metric icon={ArrowDownUp} label={`${monthLabel} カード引落`} value={yen.format(stats.credit)} onClick={() => setHomeEntryModal("credit")} />
       </div>
 
       <HomeCalendar
@@ -885,7 +885,7 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
   return (
     <>
       {parents.map((parent) => {
-        const children = sortCategories(categories.filter((category) => category.parentId === parent.id && category.kind === kind));
+        const children = sortSubcategories(categories.filter((category) => category.parentId === parent.id && category.kind === kind));
         return (
           <optgroup key={parent.id} label={parent.name}>
             <option value={parent.id}>{parent.name}</option>
@@ -899,6 +899,10 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
 
 function sortCategories(categories: LedgerState["categories"]) {
   return [...categories].sort((a, b) => colorLightness(a.color) - colorLightness(b.color) || a.name.localeCompare(b.name, "ja"));
+}
+
+function sortSubcategories(categories: LedgerState["categories"]) {
+  return [...categories].sort((a, b) => a.name.localeCompare(b.name, "ja"));
 }
 
 function categoryDisplayColor(category: LedgerState["categories"][number], categories: LedgerState["categories"]) {
@@ -1008,25 +1012,35 @@ function HomeCalendar({
   );
 }
 
-function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: { type: "expense" | "income"; monthKey: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: { type: "expense" | "income" | "credit"; monthKey: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
   const rows = state.transactions
-    .filter((transaction) => transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey))
+    .filter((transaction) => (
+      type === "credit"
+        ? transaction.type === "expense" && creditIds.has(transaction.accountId) && transactionLedgerDate(transaction).startsWith(monthKey)
+        : transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey)
+    ))
     .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
-  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((row) => row.kind === type);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((row) => (
+    type === "credit"
+      ? row.kind === "expense" && creditIds.has(row.accountId)
+      : row.kind === type
+  ));
   const entries = [
     ...rows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
     ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
   ].sort((a, b) => b.date.localeCompare(a.date));
   const total = rows.reduce((sum, transaction) => sum + transaction.amount, 0) + fixedRows.reduce((sum, row) => sum + row.amount, 0);
+  const title = type === "income" ? "収入" : type === "credit" ? "カード引落" : "支出";
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel entry-modal" onClick={(event) => event.stopPropagation()}>
         <div className="section-title">
-          <h2>{formatMonthLabel(monthKey)}の{type === "income" ? "収入" : "支出"}一覧</h2>
+          <h2>{formatMonthLabel(monthKey)}の{title}一覧</h2>
           <span>{yen.format(total)}</span>
         </div>
         {entries.length === 0 ? (
-          <div className="empty-state"><span>この月の{type === "income" ? "収入" : "支出"}はまだありません。</span></div>
+          <div className="empty-state"><span>この月の{title}はまだありません。</span></div>
         ) : (
           <MonthEntryList entries={entries} state={state} setNotice={setNotice} reload={reload} />
         )}
@@ -1258,6 +1272,7 @@ function AnalysisView({
   const monthLabel = formatMonthLabel(monthKey);
   const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
+  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
@@ -1385,13 +1400,16 @@ function AnalysisView({
           <div className="section-title"><h2>支払い方法別支出</h2><span>{monthLabel}</span></div>
           <ResponsiveContainer width="100%" height={176}>
             <PieChart>
-              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
+              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3} onClick={(entry) => {
+                if ("id" in entry && typeof entry.id === "string") setSelectedPaymentId(entry.id);
+              }}>
                 {(paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
           </ResponsiveContainer>
           <PieLegend data={paymentExpense} total={paymentExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="カード支出なし" />
+          {selectedPaymentId && <PaymentMethodBreakdown state={state} monthKey={monthKey} accountId={selectedPaymentId} onClose={() => setSelectedPaymentId(null)} />}
         </section>
       </div>
       <section className="panel">
@@ -1442,6 +1460,33 @@ function buildAiInsights(state: LedgerState, category: Array<{ name: string; val
   return insights;
 }
 
+function PaymentMethodBreakdown({ state, monthKey, accountId, onClose }: { state: LedgerState; monthKey: string; accountId: string; onClose: () => void }) {
+  const account = state.accounts.find((item) => item.id === accountId);
+  const transactionRows = monthTransactionsByKey(state.transactions, monthKey)
+    .filter((transaction) => transaction.type === "expense" && transaction.accountId === accountId)
+    .map((transaction) => ({ type: "transaction" as const, id: transaction.id, date: transactionLedgerDate(transaction), name: transaction.memo || state.categories.find((category) => category.id === transaction.categoryId)?.name || "支出", amount: transaction.amount }));
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+    .filter((cost) => cost.kind === "expense" && cost.accountId === accountId)
+    .map((cost) => ({ type: "fixed" as const, id: `${cost.id}-${cost.date}`, date: cost.date, name: cost.name, amount: cost.amount }));
+  const rows = [...transactionRows, ...fixedRows].sort((a, b) => b.date.localeCompare(a.date));
+  const total = rows.reduce((sum, row) => sum + row.amount, 0);
+  return (
+    <div className="inline-breakdown">
+      <div className="section-title">
+        <h3>{account?.name ?? "支払い方法"}の内訳</h3>
+        <span>{yen.format(total)}</span>
+      </div>
+      {rows.length === 0 ? <p>この月の支出はありません。</p> : rows.map((row) => (
+        <div className="breakdown-row" key={row.id}>
+          <span><strong>{row.name}</strong><small>{row.date} / {row.type === "fixed" ? "固定費" : "支出"}</small></span>
+          <em>{yen.format(row.amount)}</em>
+        </div>
+      ))}
+      <button className="google-button" type="button" onClick={onClose}>閉じる</button>
+    </div>
+  );
+}
+
 function subcategoryExpense(state: LedgerState, parentId: string, monthKey: string) {
   const childIds = state.categories.filter((category) => category.parentId === parentId).map((category) => category.id);
   return state.categories
@@ -1470,7 +1515,7 @@ function expenseByAccountKind(state: LedgerState, monthKey: string, mode: "accou
       const fixedValue = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
         .filter((cost) => cost.kind === "expense" && cost.accountId === account.id)
         .reduce((sum, cost) => sum + cost.amount, 0);
-      return { name: account.name, value: transactionValue + fixedValue, fill: account.color };
+      return { id: account.id, name: account.name, value: transactionValue + fixedValue, fill: account.color };
     })
     .filter((item) => item.value > 0);
 }
@@ -2158,7 +2203,7 @@ function SettingsView({
               {sortCategories(state.categories.filter((category) => !category.parentId && category.kind === kind)).map((parent) => (
                 <section key={parent.id}>
                   <button type="button" onClick={() => setCategoryModalId(parent.id)}><strong><i style={{ background: parent.color }} />{parent.name}</strong></button>
-                  {sortCategories(state.categories.filter((category) => category.parentId === parent.id)).map((child) => <button type="button" key={child.id} onClick={() => setCategoryModalId(child.id)}><span><i style={{ background: categoryDisplayColor(child, state.categories) }} />{child.name}</span></button>)}
+                  {sortSubcategories(state.categories.filter((category) => category.parentId === parent.id)).map((child) => <button type="button" key={child.id} onClick={() => setCategoryModalId(child.id)}><span><i style={{ background: categoryDisplayColor(child, state.categories) }} />{child.name}</span></button>)}
                 </section>
               ))}
             </div>
@@ -2596,7 +2641,7 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone
 
 function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }: { category: LedgerState["categories"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onClose: () => void }) {
   const parent = state.categories.find((item) => item.id === category.parentId);
-  const children = sortCategories(state.categories.filter((item) => item.parentId === category.id));
+  const children = sortSubcategories(state.categories.filter((item) => item.parentId === category.id));
   const [editing, setEditing] = useState(false);
   const [showSubForm, setShowSubForm] = useState(false);
   const [subName, setSubName] = useState("");
@@ -2660,7 +2705,7 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
 
 function EditableCategoryList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const parents = sortCategories(state.categories.filter((category) => !category.parentId));
-  const children = sortCategories(state.categories.filter((category) => category.parentId));
+  const children = sortSubcategories(state.categories.filter((category) => category.parentId));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   function renderCategory(category: LedgerState["categories"][number]) {
@@ -2675,7 +2720,7 @@ function EditableCategoryList({ state, setNotice, reloadHousehold }: { state: Le
         {isOpen && !isEditing && (
           <div className="fixed-detail">
             <span>分類: {category.parentId ? `小カテゴリ（${parent?.name ?? "親カテゴリ未設定"}）` : "親カテゴリ"}</span>
-            {!category.parentId && <span>小カテゴリ: {sortCategories(children.filter((child) => child.parentId === category.id)).map((child) => child.name).join("、") || "なし"}</span>}
+            {!category.parentId && <span>小カテゴリ: {sortSubcategories(children.filter((child) => child.parentId === category.id)).map((child) => child.name).join("、") || "なし"}</span>}
             <button type="button" onClick={() => setEditingId(category.id)}>編集する</button>
           </div>
         )}

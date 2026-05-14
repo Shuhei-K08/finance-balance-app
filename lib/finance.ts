@@ -262,20 +262,12 @@ export function pendingCreditWithdrawals(state: LedgerState) {
 
 export function monthlyCreditWithdrawals(state: LedgerState, date = new Date()) {
   const monthKey = monthKeyFromDate(date);
-  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
-  return state.transactions
-    .filter((transaction) => (
-      transaction.type === "expense" &&
-      creditIds.has(transaction.accountId) &&
-      transaction.creditStatus !== "withdrawn" &&
-      transactionLedgerDate(transaction).startsWith(monthKey)
-    ))
-    .reduce((total, transaction) => total + transaction.amount, 0);
+  return monthlyCreditWithdrawalsByKey(state, monthKey);
 }
 
 export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: string) {
   const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
-  return state.transactions
+  const transactionTotal = state.transactions
     .filter((transaction) => (
       transaction.type === "expense" &&
       creditIds.has(transaction.accountId) &&
@@ -283,6 +275,10 @@ export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: stri
       transactionLedgerDate(transaction).startsWith(monthKey)
     ))
     .reduce((total, transaction) => total + transaction.amount, 0);
+  const fixedTotal = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+    .filter((cost) => cost.kind === "expense" && creditIds.has(cost.accountId))
+    .reduce((total, cost) => total + cost.amount, 0);
+  return transactionTotal + fixedTotal;
 }
 
 export function fixedCostForecast(fixedCosts: FixedCost[], monthKey = todayIso().slice(0, 7)) {
