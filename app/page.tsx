@@ -898,11 +898,43 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
 }
 
 function sortCategories(categories: LedgerState["categories"]) {
-  return [...categories].sort((a, b) => a.color.localeCompare(b.color) || a.name.localeCompare(b.name, "ja"));
+  return [...categories].sort((a, b) => colorLightness(a.color) - colorLightness(b.color) || a.name.localeCompare(b.name, "ja"));
 }
 
 function categoryDisplayColor(category: LedgerState["categories"][number], categories: LedgerState["categories"]) {
-  return category.parentId ? categories.find((item) => item.id === category.parentId)?.color ?? category.color : category.color;
+  return category.color;
+}
+
+function colorLightness(hex: string) {
+  const { r, g, b } = hexToRgb(hex);
+  return r * 0.299 + g * 0.587 + b * 0.114;
+}
+
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3 ? normalized.split("").map((char) => `${char}${char}`).join("") : normalized.padEnd(6, "0").slice(0, 6);
+  const parsed = Number.parseInt(value, 16);
+  return { r: (parsed >> 16) & 255, g: (parsed >> 8) & 255, b: parsed & 255 };
+}
+
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }) {
+  return `#${[r, g, b].map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function subcategoryColorPreview(parentColor: string, index: number) {
+  const base = hexToRgb(parentColor || "#0f766e");
+  const mix = Math.min(0.24 + index * 0.12, 0.76);
+  return rgbToHex({
+    r: base.r + (255 - base.r) * mix,
+    g: base.g + (255 - base.g) * mix,
+    b: base.b + (255 - base.b) * mix
+  });
+}
+
+function nextSubcategoryColor(categories: LedgerState["categories"], parentId: string) {
+  const parent = categories.find((category) => category.id === parentId);
+  const index = categories.filter((category) => category.parentId === parentId).length;
+  return subcategoryColorPreview(parent?.color ?? "#0f766e", index);
 }
 
 function HomeCalendar({
@@ -2072,26 +2104,29 @@ function SettingsView({
         <p className="setting-copy">カテゴリーは「食費」「住居」など大きな分類です。サブカテゴリーは「スーパー」「外食」などカテゴリー内の細かい分類です。</p>
         <button className="full-primary" type="button" onClick={() => setShowCategoryForm(!showCategoryForm)}>{showCategoryForm ? "追加を閉じる" : "カテゴリを追加する"}</button>
         {showCategoryForm && <div className="mini-panel category-add-panel">
-          <label>追加するもの<select value={categoryDraft.level} onChange={(event) => setCategoryDraft({ ...categoryDraft, level: event.target.value as "main" | "sub" })}>
+          <label>追加するもの<select value={categoryDraft.level} onChange={(event) => {
+            const nextLevel = event.target.value as "main" | "sub";
+            const nextParent = categoryDraft.parentId || sortCategories(state.categories.filter((category) => !category.parentId && category.kind === categoryDraft.kind))[0]?.id || "";
+            setCategoryDraft({ ...categoryDraft, level: nextLevel, parentId: nextLevel === "sub" ? nextParent : categoryDraft.parentId, color: nextLevel === "sub" ? nextSubcategoryColor(state.categories, nextParent) : categoryDraft.color });
+          }}>
             <option value="main">カテゴリー</option>
             <option value="sub">サブカテゴリー</option>
           </select></label>
           <label>用途<select value={categoryDraft.kind} onChange={(event) => {
             const nextKind = event.target.value as "expense" | "income";
             const nextParent = sortCategories(state.categories.filter((category) => !category.parentId && category.kind === nextKind))[0];
-            setCategoryDraft({ ...categoryDraft, kind: nextKind, parentId: nextParent?.id ?? "", color: categoryDraft.level === "sub" ? nextParent?.color ?? categoryDraft.color : categoryDraft.color });
+            setCategoryDraft({ ...categoryDraft, kind: nextKind, parentId: nextParent?.id ?? "", color: categoryDraft.level === "sub" ? nextSubcategoryColor(state.categories, nextParent?.id ?? "") : categoryDraft.color });
           }}><option value="expense">支出</option><option value="income">収入</option></select></label>
           {categoryDraft.level === "sub" && (
             <label>所属カテゴリー<select value={categoryDraft.parentId} onChange={(event) => {
-              const parent = state.categories.find((category) => category.id === event.target.value);
-              setCategoryDraft({ ...categoryDraft, parentId: event.target.value, color: parent?.color ?? categoryDraft.color });
+              setCategoryDraft({ ...categoryDraft, parentId: event.target.value, color: nextSubcategoryColor(state.categories, event.target.value) });
             }}>
               <option value="">選択してください</option>
               {sortCategories(state.categories.filter((category) => !category.parentId && category.kind === categoryDraft.kind)).map((category) => <option value={category.id} key={category.id}>{category.name}</option>)}
             </select></label>
           )}
           <label>{categoryDraft.level === "sub" ? "サブカテゴリー名" : "カテゴリー名"}<input placeholder={categoryDraft.level === "sub" ? "例: スーパー" : "例: 食費"} value={categoryDraft.name} onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })} /></label>
-          <label>色<input type="color" value={categoryDraft.color} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} /></label>
+          <label>{categoryDraft.level === "sub" ? "色（自動グラデーション）" : "色"}<input type="color" value={categoryDraft.color} disabled={categoryDraft.level === "sub"} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} /></label>
           <button className="full-primary" type="button" onClick={async () => {
             try {
               if (!categoryDraft.name.trim()) {
@@ -2565,7 +2600,7 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
   const [editing, setEditing] = useState(false);
   const [showSubForm, setShowSubForm] = useState(false);
   const [subName, setSubName] = useState("");
-  const [subColor, setSubColor] = useState(category.color);
+  const [subColor, setSubColor] = useState(nextSubcategoryColor(state.categories, category.id));
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
@@ -2581,7 +2616,7 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
                 {showSubForm && (
                   <div className="mini-panel">
                     <label>サブカテゴリー名<input placeholder={`例: ${category.kind === "income" ? "副業" : "スーパー"}`} value={subName} onChange={(event) => setSubName(event.target.value)} /></label>
-                    <label>色<input type="color" value={subColor} onChange={(event) => setSubColor(event.target.value)} /></label>
+                    <label>色（自動グラデーション）<input type="color" value={subColor} disabled onChange={(event) => setSubColor(event.target.value)} /></label>
                     <button
                       type="button"
                       onClick={async () => {
@@ -2598,7 +2633,7 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
                           });
                           await reloadHousehold(state.householdId ?? "");
                           setSubName("");
-                          setSubColor(category.color);
+                          setSubColor(nextSubcategoryColor(state.categories, category.id));
                           setShowSubForm(false);
                           setNotice("サブカテゴリーを追加しました。");
                         } catch (error) {
@@ -2667,7 +2702,7 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
   const [parentId, setParentId] = useState(category.parentId ?? "");
   const [kind, setKind] = useState(category.kind);
   const [color, setColor] = useState(category.color);
-  return <div className="edit-row balanced-edit"><label>{category.parentId ? "サブカテゴリー名" : "カテゴリー名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>用途<select value={kind} onChange={(event) => setKind(event.target.value as "expense" | "income")}><option value="expense">支出</option><option value="income">収入</option></select></label><label>分類<select value={parentId} onChange={(event) => { const nextParentId = event.target.value; setParentId(nextParentId); const parent = state.categories.find((item) => item.id === nextParentId); if (parent) { setKind(parent.kind); setColor(parent.color); } }}><option value="">カテゴリーにする</option>{sortCategories(state.categories.filter((item) => !item.parentId && item.id !== category.id && item.kind === kind)).map((item) => <option value={item.id} key={item.id}>{item.name} のサブカテゴリーにする</option>)}</select></label><label>色<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリー名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color, kind }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(parentId ? "サブカテゴリーを更新しました。" : "カテゴリーを更新しました。サブカテゴリーの色も揃えました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリーを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー削除に失敗しました。")); } }}>カテゴリーを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  return <div className="edit-row balanced-edit"><label>{category.parentId ? "サブカテゴリー名" : "カテゴリー名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>用途<select value={kind} onChange={(event) => setKind(event.target.value as "expense" | "income")}><option value="expense">支出</option><option value="income">収入</option></select></label><label>分類<select value={parentId} onChange={(event) => { const nextParentId = event.target.value; setParentId(nextParentId); const parent = state.categories.find((item) => item.id === nextParentId); if (parent) { setKind(parent.kind); setColor(nextSubcategoryColor(state.categories.filter((item) => item.id !== category.id), nextParentId)); } }}><option value="">カテゴリーにする</option>{sortCategories(state.categories.filter((item) => !item.parentId && item.id !== category.id && item.kind === kind)).map((item) => <option value={item.id} key={item.id}>{item.name} のサブカテゴリーにする</option>)}</select></label><label>{parentId ? "色（自動グラデーション）" : "色"}<input type="color" value={color} disabled={Boolean(parentId)} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリー名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color, kind }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(parentId ? "サブカテゴリーを更新しました。" : "カテゴリーを更新しました。サブカテゴリーをグラデーションに揃えました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリーを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー削除に失敗しました。")); } }}>カテゴリーを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
 }
 
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {

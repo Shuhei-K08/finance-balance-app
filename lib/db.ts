@@ -209,6 +209,33 @@ function toNumber(value: number | string | null | undefined) {
   return Number(value ?? 0);
 }
 
+function hexToRgb(hex: string) {
+  const normalized = hex.replace("#", "");
+  const value = normalized.length === 3
+    ? normalized.split("").map((char) => `${char}${char}`).join("")
+    : normalized.padEnd(6, "0").slice(0, 6);
+  const parsed = Number.parseInt(value, 16);
+  return {
+    r: (parsed >> 16) & 255,
+    g: (parsed >> 8) & 255,
+    b: parsed & 255
+  };
+}
+
+function rgbToHex({ r, g, b }: { r: number; g: number; b: number }) {
+  return `#${[r, g, b].map((value) => Math.round(value).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function subcategoryColor(parentColor: string, index: number) {
+  const base = hexToRgb(parentColor || "#0f766e");
+  const mix = Math.min(0.24 + index * 0.12, 0.76);
+  return rgbToHex({
+    r: base.r + (255 - base.r) * mix,
+    g: base.g + (255 - base.g) * mix,
+    b: base.b + (255 - base.b) * mix
+  });
+}
+
 function calculateWithdrawalDate(account: DbAccount, occurredOn: string) {
   const closingDay = account.closing_day ?? 25;
   const withdrawalDay = account.withdrawal_day ?? 10;
@@ -863,7 +890,14 @@ export async function createCategory(householdId: string, input: { name: string;
   if (input.parentId) {
     const { data: parent, error: parentError } = await client.from("categories").select("color,category_kind").eq("id", input.parentId).maybeSingle();
     if (parentError) throwJapanese(parentError, "所属カテゴリーの取得に失敗しました。");
-    color = (parent as { color?: string | null } | null)?.color ?? color;
+    const parentColor = (parent as { color?: string | null } | null)?.color ?? color;
+    const { count, error: countError } = await client
+      .from("categories")
+      .select("id", { count: "exact", head: true })
+      .eq("parent_id", input.parentId)
+      .is("deleted_at", null);
+    if (countError) throwJapanese(countError, "サブカテゴリー数の取得に失敗しました。");
+    color = subcategoryColor(parentColor, count ?? 0);
     kind = ((parent as { category_kind?: "expense" | "income" | null } | null)?.category_kind ?? kind);
   }
   const { error } = await client.from("categories").insert({
@@ -887,10 +921,20 @@ export async function updateCategory(categoryId: string, input: { name: string; 
   }).eq("id", categoryId);
   if (error) throwJapanese(error, "カテゴリ更新に失敗しました。");
   if (!input.parentId) {
-    const { error: childError } = await client.from("categories").update({
-      category_kind: input.kind ?? "expense",
-      color: input.color || "#0f766e"
-    }).eq("parent_id", categoryId);
+    const { data: children, error: childrenError } = await client
+      .from("categories")
+      .select("id,created_at")
+      .eq("parent_id", categoryId)
+      .is("deleted_at", null)
+      .order("created_at");
+    if (childrenError) throwJapanese(childrenError, "サブカテゴリーの取得に失敗しました。");
+    const childUpdates = await Promise.all(((children ?? []) as Array<{ id: string }>).map((child, index) => {
+      return client.from("categories").update({
+        category_kind: input.kind ?? "expense",
+        color: subcategoryColor(input.color || "#0f766e", index)
+      }).eq("id", child.id);
+    }));
+    const childError = childUpdates.find((result) => result.error)?.error;
     if (childError) throwJapanese(childError, "サブカテゴリーの色更新に失敗しました。");
   }
 }
