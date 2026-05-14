@@ -9,6 +9,7 @@ import {
   AssetSnapshot,
   Category,
   FixedCost,
+  FixedCostOverride,
   FixedCostStatus,
   Goal,
   HouseholdMember,
@@ -152,11 +153,13 @@ type DbTransaction = {
   reflected_on: string | null;
   credit_status: Transaction["creditStatus"] | null;
   memo: string | null;
+  idempotency_key?: string | null;
 };
 
 type DbFixedCost = {
   id: string;
   name: string;
+  fixed_type: "expense" | "income" | null;
   category_id: string;
   account_id: string;
   amount: number | string;
@@ -165,6 +168,18 @@ type DbFixedCost = {
   status: FixedCostStatus;
   effective_from: string | null;
   effective_to: string | null;
+};
+
+type DbFixedCostOverride = {
+  id: string;
+  fixed_cost_id: string;
+  target_month: string;
+  name: string | null;
+  category_id: string | null;
+  account_id: string | null;
+  amount: number | string | null;
+  due_day: number | null;
+  skipped: boolean | null;
 };
 
 type DbGoal = {
@@ -350,6 +365,7 @@ export async function deleteOwnedLedger(householdId: string) {
     client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
@@ -388,6 +404,7 @@ export async function deleteSharedLedger(householdId: string) {
     client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
@@ -403,6 +420,7 @@ export async function adminDeleteHousehold(householdId: string) {
     client.from("categories").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("transactions").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
@@ -540,6 +558,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     categoriesResult,
     transactionsResult,
     fixedCostsResult,
+    fixedCostOverridesResult,
     goalsResult,
     assetSnapshotsResult
   ] = await Promise.all([
@@ -547,17 +566,45 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
-    client.from("fixed_costs").select("id,name,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
+    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
+    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false })
   ]);
 
   const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
-  for (const result of [profileResult, householdResult, accountsResult, categoriesResult, transactionsResult, fixedCostsResult, goalsResult]) {
+  const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
+  let transactionsData: unknown = transactionsResult.data;
+  let transactionsError = transactionsResult.error;
+  if (transactionsError && /idempotency_key|does not exist|存在しません/i.test(transactionsError.message)) {
+    const fallback = await client
+      .from("transactions")
+      .select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("occurred_on", { ascending: false })
+      .order("created_at", { ascending: false });
+    transactionsData = fallback.data;
+    transactionsError = fallback.error;
+  }
+  let fixedCostsData: unknown = fixedCostsResult.data;
+  let fixedCostsError = fixedCostsResult.error;
+  if (fixedCostsError && /fixed_type|does not exist|存在しません/i.test(fixedCostsError.message)) {
+    const fallback = await client
+      .from("fixed_costs")
+      .select("id,name,category_id,account_id,amount,is_variable,due_day,status,effective_from,effective_to")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("due_day");
+    fixedCostsData = fallback.data;
+    fixedCostsError = fallback.error;
+  }
+  for (const result of [profileResult, householdResult, accountsResult, categoriesResult, { error: transactionsError }, { error: fixedCostsError }, goalsResult]) {
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
+  if (fixedCostOverridesResult.error && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesResult.error, "固定費の月別変更データの取得に失敗しました。");
   if ((profileResult.data as DbProfile | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
   if (!householdResult.data) throw new Error("家計簿が見つかりません。ログアウトして再ログインしてください。");
@@ -570,7 +617,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     households,
     needsOpeningSetup: ((accountsResult.data ?? []) as DbAccount[]).some((account) => account.account_type !== "credit") &&
       ((accountsResult.data ?? []) as DbAccount[]).filter((account) => account.account_type !== "credit").every((account) => toNumber(account.opening_balance) === 0) &&
-      ((transactionsResult.data ?? []) as DbTransaction[]).length === 0,
+      ((transactionsData ?? []) as DbTransaction[]).length === 0,
     activeSpace: household.space_type,
     mode: household.mode,
     accounts: ((accountsResult.data ?? []) as DbAccount[]).map((account): Account => ({
@@ -591,7 +638,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       kind: category.category_kind ?? (category.name === "給与" ? "income" : "expense"),
       color: category.color
     })),
-    transactions: ((transactionsResult.data ?? []) as DbTransaction[]).map((transaction): Transaction => {
+    transactions: ((transactionsData ?? []) as DbTransaction[]).map((transaction): Transaction => {
       const creditAccount = ((accountsResult.data ?? []) as DbAccount[]).find((account) => account.id === transaction.account_id && account.account_type === "credit");
       const reflectedDate = transaction.reflected_on ?? (transaction.transaction_type === "expense" && creditAccount
         ? calculateWithdrawalDate(creditAccount, transaction.occurred_on)
@@ -609,9 +656,10 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
         creditStatus: transaction.credit_status ?? undefined
       };
     }).sort((a, b) => (b.reflectedDate || b.date).localeCompare(a.reflectedDate || a.date)),
-    fixedCosts: ((fixedCostsResult.data ?? []) as DbFixedCost[]).map((cost): FixedCost => ({
+    fixedCosts: ((fixedCostsData ?? []) as DbFixedCost[]).map((cost): FixedCost => ({
       id: cost.id,
       name: cost.name,
+      kind: cost.fixed_type ?? "expense",
       categoryId: cost.category_id,
       accountId: cost.account_id,
       amount: toNumber(cost.amount),
@@ -620,6 +668,17 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       status: cost.status,
       effectiveFrom: cost.effective_from ?? undefined,
       effectiveTo: cost.effective_to ?? undefined
+    })),
+    fixedCostOverrides: (fixedCostOverridesMissing ? [] : ((fixedCostOverridesResult.data ?? []) as DbFixedCostOverride[])).map((override): FixedCostOverride => ({
+      id: override.id,
+      fixedCostId: override.fixed_cost_id,
+      month: override.target_month.slice(0, 7),
+      name: override.name ?? undefined,
+      categoryId: override.category_id ?? undefined,
+      accountId: override.account_id ?? undefined,
+      amount: override.amount == null ? undefined : toNumber(override.amount),
+      dueDay: override.due_day ?? undefined,
+      skipped: override.skipped ?? false
     })),
     goals: ((goalsResult.data ?? []) as DbGoal[]).map((goal): Goal => ({
       id: goal.id,
@@ -638,8 +697,18 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   };
 }
 
-export async function insertRemoteTransaction(householdId: string, transaction: Omit<Transaction, "id">) {
+export async function insertRemoteTransaction(householdId: string, transaction: Omit<Transaction, "id"> & { idempotencyKey?: string }) {
   const client = requireSupabase();
+  if (transaction.idempotencyKey) {
+    const { data: existing, error: existingError } = await client
+      .from("transactions")
+      .select("id")
+      .eq("household_id", householdId)
+      .eq("idempotency_key", transaction.idempotencyKey)
+      .maybeSingle();
+    if (existingError) throwJapanese(existingError, "取引登録に失敗しました。");
+    if (existing) return (existing as { id: string }).id;
+  }
   const { data, error } = await client
     .from("transactions")
     .insert({
@@ -652,11 +721,23 @@ export async function insertRemoteTransaction(householdId: string, transaction: 
       occurred_on: transaction.date,
       reflected_on: transaction.reflectedDate ?? null,
       credit_status: transaction.creditStatus ?? null,
+      idempotency_key: transaction.idempotencyKey ?? null,
       memo: transaction.memo ?? null
     })
     .select("id")
     .maybeSingle();
-  if (error) throwJapanese(error, "取引登録に失敗しました。");
+  if (error) {
+    if (transaction.idempotencyKey && /duplicate|unique/i.test(error.message)) {
+      const { data: existing } = await client
+        .from("transactions")
+        .select("id")
+        .eq("household_id", householdId)
+        .eq("idempotency_key", transaction.idempotencyKey)
+        .maybeSingle();
+      if (existing) return (existing as { id: string }).id;
+    }
+    throwJapanese(error, "取引登録に失敗しました。");
+  }
   if (!data) throw new Error("取引IDを取得できませんでした。");
   return data.id as string;
 }
@@ -798,6 +879,7 @@ export async function createFixedCost(householdId: string, input: Omit<FixedCost
   const { error } = await client.from("fixed_costs").insert({
     household_id: householdId,
     name: input.name,
+    fixed_type: input.kind ?? "expense",
     category_id: input.categoryId,
     account_id: input.accountId,
     amount: input.amount,
@@ -825,6 +907,7 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
     const { error: insertError } = await client.from("fixed_costs").insert({
       household_id: householdId,
       name: input.name,
+      fixed_type: input.kind ?? "expense",
       category_id: input.categoryId,
       account_id: input.accountId,
       amount: input.amount,
@@ -839,6 +922,7 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
   }
   const { error } = await client.from("fixed_costs").update({
     name: input.name,
+    fixed_type: input.kind ?? "expense",
     category_id: input.categoryId,
     account_id: input.accountId,
     amount: input.amount,
@@ -868,6 +952,29 @@ export async function deleteFixedCost(fixedCostId: string, scope: "all" | "futur
 
   const { error: hardDeleteError } = await client.from("fixed_costs").delete().eq("id", fixedCostId);
   if (hardDeleteError) throwJapanese(hardDeleteError, "固定費削除に失敗しました。");
+}
+
+export async function upsertFixedCostOverride(householdId: string, fixedCostId: string, month: string, input: {
+  name?: string;
+  categoryId?: string;
+  accountId?: string;
+  amount?: number;
+  dueDay?: number;
+  skipped?: boolean;
+}) {
+  const client = requireSupabase();
+  const { error } = await client.from("fixed_cost_overrides").upsert({
+    household_id: householdId,
+    fixed_cost_id: fixedCostId,
+    target_month: `${month}-01`,
+    name: input.name || null,
+    category_id: input.categoryId || null,
+    account_id: input.accountId || null,
+    amount: input.amount ?? null,
+    due_day: input.dueDay ?? null,
+    skipped: input.skipped ?? false
+  }, { onConflict: "fixed_cost_id,target_month" });
+  if (error) throwJapanese(error, "選択月のみの固定費変更に失敗しました。");
 }
 
 export async function updateTransaction(transactionId: string, transaction: Omit<Transaction, "id">) {

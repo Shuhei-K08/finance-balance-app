@@ -52,6 +52,7 @@ import {
   monthlyExpenseWithFixedByKey,
   monthlyExpenseWithFixed,
   monthlyIncome,
+  monthlyIncomeWithFixedByKey,
   projectedMonthEnd,
   spendingAdvice,
   todayIso,
@@ -101,6 +102,7 @@ import {
   updateGoal,
   updateOpeningBalances,
   updateTransaction,
+  upsertFixedCostOverride,
   upsertAssetSnapshots,
   extractErrorText,
   toJapaneseError
@@ -238,7 +240,7 @@ export default function App() {
   const stats = {
     assets: totalAssets(state, calendarMonth),
     expense: monthlyExpenseWithFixedByKey(state, calendarMonth),
-    income: monthlyIncome(month),
+    income: monthlyIncomeWithFixedByKey(state, calendarMonth),
     forecast: projectedMonthEnd(state, calendarMonth),
     fixed: fixedCostForecast(state.fixedCosts, calendarMonth),
     credit: monthlyCreditWithdrawalsByKey(state, calendarMonth)
@@ -285,7 +287,8 @@ export default function App() {
       creditStatus: transaction.type === "expense" && creditAccount ? "unconfirmed" as const : undefined
     };
     try {
-      const id = await insertRemoteTransaction(state.householdId ?? "", payload);
+      const idempotencyKey = `${state.householdId ?? "local"}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const id = await insertRemoteTransaction(state.householdId ?? "", { ...payload, idempotencyKey });
       setState({ ...state, transactions: [{ id, ...payload }, ...state.transactions] });
       setQuickOpen(false);
       setNotice("登録しました。");
@@ -305,9 +308,6 @@ export default function App() {
           </div>
         </div>
         <div className="top-actions">
-          <button className="primary-icon" type="button" onClick={() => openQuick()} aria-label="取引を追加">
-            <ListPlus size={22} />
-          </button>
           <button className="ghost-icon" type="button" onClick={() => signOut().catch((error) => setNotice(toJapaneseError(error)))} aria-label="ログアウト">
             <LogOut size={20} />
           </button>
@@ -353,6 +353,10 @@ export default function App() {
       {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
       {tab === "admin" && state.profileRole === "admin" && <AdminView />}
+
+      <button className="floating-add-button" type="button" onClick={() => openQuick()} aria-label="取引を追加">
+        <ListPlus size={24} />
+      </button>
 
       <section className="bottom-controls">
         <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
@@ -578,28 +582,17 @@ function HomeView({
   useEffect(() => {
     if (promptMonth && isAssetSnapshotConfirmed(state, promptMonth)) setPromptMonth(null);
   }, [state.assetSnapshots.length, promptMonth]);
-  const category = categoryExpense(state, calendarMonth);
-  const assetBreakdown = state.accounts
-    .filter((account) => account.type !== "credit")
-    .map((account) => ({
-      name: account.name,
-      value: Math.max(confirmedAccountBalance(account, state, calendarMonth), 0),
-      fill: account.color
-    }));
-  const assetTotal = assetBreakdown.reduce((sum, item) => sum + item.value, 0);
-  const assetPieData = assetBreakdown.filter((item) => item.value > 0);
-  const categoryTotal = category.reduce((sum, item) => sum + item.value, 0);
   const savingAmount = stats.income - stats.expense;
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
+  const displayAssets = isCurrentMonth ? stats.forecast : stats.assets;
   return (
     <div className="view-stack">
       <section className="hero-panel">
         <div>
-          <p>総資産</p>
-          <strong>{yen.format(stats.assets)}</strong>
-          <span>{monthLabel} {isCurrentMonth ? "月末予測" : "月末資産"} {yen.format(isCurrentMonth ? stats.forecast : stats.assets)}</span>
+          <p>{isCurrentMonth ? "予定総資産" : `${monthLabel}時点の総資産`}</p>
+          <strong>{yen.format(displayAssets)}</strong>
+          <span>{isCurrentMonth ? "今月の収支と引落予定を反映" : "確定済み月末資産と収支を反映"}</span>
         </div>
-        <button type="button" onClick={() => onQuick()}><ListPlus size={18} />入力</button>
       </section>
 
       {shouldShowSnapshotPanel && (
@@ -625,52 +618,7 @@ function HomeView({
         <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} onClick={() => setHomeEntryModal("expense")} />
         <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} onClick={() => setHomeEntryModal("income")} />
         <Metric icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)} / ${savingRate}%`} />
-      </div>
-
-      <section className="ai-panel">
-        <div className="section-title"><h2>AIがお金を分析</h2><span>{monthLabel}</span></div>
-        <AiCommentary state={state} stats={stats} category={category} monthKey={calendarMonth} limit={3} />
-      </section>
-
-      <section className="panel chart-panel">
-        <div className="section-title"><h2>残高推移</h2><span>{monthLabel}基準</span></div>
-        <ResponsiveContainer width="100%" height={220}>
-          <AreaChart data={balanceTrend(state, calendarMonth)}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis hide domain={["dataMin - 50000", "dataMax + 50000"]} />
-            <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Area type="monotone" dataKey="actual" stroke="#0f766e" fill="#99f6e4" strokeWidth={3} />
-            <Area type="monotone" dataKey="forecast" stroke="#dc2626" fill="transparent" strokeDasharray="6 6" strokeWidth={3} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </section>
-
-      <div className="home-chart-grid">
-        <section className="panel chart-panel">
-          <div className="section-title"><h2>資産の内訳</h2><span>{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={176}>
-            <PieChart>
-              <Pie data={assetPieData.length ? assetPieData : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
-                {(assetPieData.length ? assetPieData : [{ name: "未設定", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip formatter={(value) => yen.format(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-          <PieLegend data={assetBreakdown} total={assetTotal} emptyLabel="資産なし" />
-        </section>
-        <section className="panel chart-panel">
-          <div className="section-title"><h2>支出カテゴリ</h2><span>{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={176}>
-            <PieChart>
-              <Pie data={category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
-                {(category.length ? category : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip formatter={(value) => yen.format(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-          <PieLegend data={category} total={categoryTotal} emptyLabel="支出なし" />
-        </section>
+        <Metric icon={ArrowDownUp} label={`${monthLabel} カード引落`} value={yen.format(stats.credit)} />
       </div>
 
       <HomeCalendar
@@ -817,6 +765,7 @@ function QuickTransactionSheet({
   const [date, setDate] = useState(initialDate);
   const [memo, setMemo] = useState("");
   const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   function changeType(nextType: TransactionType) {
     setType(nextType);
@@ -849,15 +798,21 @@ function QuickTransactionSheet({
       return;
     }
     setError("");
-    await onSubmit({
-      type,
-      amount: value,
-      categoryId: type === "transfer" ? undefined : categoryId || undefined,
-      accountId,
-      transferToAccountId: type === "transfer" ? transferToAccountId || undefined : undefined,
-      date,
-      memo
-    });
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit({
+        type,
+        amount: value,
+        categoryId: type === "transfer" ? undefined : categoryId || undefined,
+        accountId,
+        transferToAccountId: type === "transfer" ? transferToAccountId || undefined : undefined,
+        date,
+        memo
+      });
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -894,7 +849,7 @@ function QuickTransactionSheet({
         </div>
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
-        <button className="full-primary" type="submit">登録</button>
+        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中" : "登録"}</button>
       </form>
     </div>
   );
@@ -941,9 +896,9 @@ function HomeCalendar({
   const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
-  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey);
-  const monthIncome = monthlyIncome(monthRows);
-  const fixedExpense = fixedRows.reduce((sum, row) => sum + row.amount, 0);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+  const monthIncome = monthlyIncome(monthRows) + fixedRows.filter((row) => row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
+  const fixedExpense = fixedRows.filter((row) => row.kind !== "income").reduce((sum, row) => sum + row.amount, 0);
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
 
   function moveMonth(delta: number) {
@@ -974,8 +929,9 @@ function HomeCalendar({
             const date = `${monthKey}-${day}`;
             const income = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
             const expense = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
-            const fixed = fixedRows.filter((row) => row.date === date).reduce((sum, row) => sum + row.amount, 0);
-            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income > 0 && <span className="income-mini">+{yen.format(income)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 -{yen.format(fixed)}</span>}</button>;
+            const fixedIncome = fixedRows.filter((row) => row.date === date && row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
+            const fixed = fixedRows.filter((row) => row.date === date && row.kind !== "income").reduce((sum, row) => sum + row.amount, 0);
+            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yen.format(income + fixedIncome)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 -{yen.format(fixed)}</span>}</button>;
           })}
         </div>
         <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
@@ -989,7 +945,7 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
   const rows = state.transactions
     .filter((transaction) => transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey))
     .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
-  const fixedRows = type === "expense" ? fixedCostOccurrencesForMonth(state.fixedCosts, monthKey) : [];
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((row) => row.kind === type);
   const entries = [
     ...rows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
     ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
@@ -1015,7 +971,7 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
 
 function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: { date: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onQuick: (date: string) => void }) {
   const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction) === date);
-  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, date.slice(0, 7)).filter((row) => row.date === date);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, date.slice(0, 7), state).filter((row) => row.date === date);
   const count = rows.length + fixedRows.length;
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
@@ -1026,7 +982,7 @@ function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: 
           <div className="empty-state"><span>この日の取引はまだありません。</span></div>
         ) : (
           <>
-            {fixedRows.length > 0 && <FixedCostOccurrenceList rows={fixedRows} state={state} />}
+            {fixedRows.length > 0 && <FixedCostOccurrenceList rows={fixedRows} state={state} setNotice={setNotice} reload={reload} />}
             {rows.length > 0 && <TransactionList state={{ ...state, transactions: rows }} setNotice={setNotice} reload={reload} />}
           </>
         )}
@@ -1052,25 +1008,47 @@ function MonthEntryList({
     <div className="transaction-list month-entry-list">
       {entries.map((entry) => (
         entry.kind === "fixed"
-          ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} />
+          ? <FixedCostOccurrenceRow key={`fixed-${entry.fixedCost.id}-${entry.date}`} row={entry.fixedCost} state={state} setNotice={setNotice} reload={reload} />
           : <TransactionRow key={entry.transaction.id} transaction={entry.transaction} state={state} setNotice={setNotice} reload={reload} />
       ))}
     </div>
   );
 }
 
-function FixedCostOccurrenceList({ rows, state }: { rows: FixedCostOccurrence[]; state: LedgerState }) {
-  return <div className="transaction-list">{rows.map((row) => <FixedCostOccurrenceRow key={`fixed-${row.id}-${row.date}`} row={row} state={state} />)}</div>;
+function FixedCostOccurrenceList({ rows, state, setNotice, reload }: { rows: FixedCostOccurrence[]; state: LedgerState; setNotice?: (message: string) => void; reload?: () => Promise<void> }) {
+  return <div className="transaction-list">{rows.map((row) => <FixedCostOccurrenceRow key={`fixed-${row.id}-${row.date}`} row={row} state={state} setNotice={setNotice} reload={reload} />)}</div>;
 }
 
-function FixedCostOccurrenceRow({ row, state }: { row: FixedCostOccurrence; state: LedgerState }) {
+function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedCostOccurrence; state: LedgerState; setNotice?: (message: string) => void; reload?: () => Promise<void> }) {
   const category = state.categories.find((item) => item.id === row.categoryId);
   const account = state.accounts.find((item) => item.id === row.accountId);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ name: row.name, amount: row.amount, categoryId: row.categoryId, accountId: row.accountId, dueDay: row.dueDay });
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-icon fixed"><Landmark size={16} /></div>
-      <div><strong>{row.name}</strong><span>{row.date} / 固定費 / {category?.name ?? "未設定"} / {account?.name ?? "未設定"}</span></div>
-      <em>-{yen.format(row.amount)}</em>
+      <div><strong>{row.name}</strong><span>{row.date} / {row.kind === "income" ? "固定収入" : "固定費"} / {category?.name ?? "未設定"} / {account?.name ?? "未設定"}</span></div>
+      <em>{row.kind === "income" ? "+" : "-"}{yen.format(row.amount)}</em>
+      {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
+      {editing && (
+        <div className="fixed-override-form">
+          <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+          <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
+          <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>
+          <label>{row.kind === "income" ? "入金先" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{state.accounts.map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountItem.name}</option>)}</select></label>
+          <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+          <button type="button" onClick={async () => {
+            try {
+              await upsertFixedCostOverride(state.householdId ?? "", row.id, row.date.slice(0, 7), draft);
+              await reload?.();
+              setEditing(false);
+              setNotice?.("選択月のみ変更しました。");
+            } catch (error) {
+              setNotice?.(toJapaneseError(error, "選択月のみの変更に失敗しました。"));
+            }
+          }}>保存</button>
+        </div>
+      )}
     </article>
   );
 }
@@ -1217,10 +1195,15 @@ function AnalysisView({
   const trend = monthlyTrend(state, monthKey);
   const savingAverage = averageMonthlySaving(state);
   const month = monthTransactionsByKey(state.transactions, monthKey);
-  const income = monthlyIncome(month);
+  const income = monthlyIncomeWithFixedByKey(state, monthKey);
   const expense = monthlyExpenseWithFixedByKey(state, monthKey);
   const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
   const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
+  const trendCategoryId = drillParentId ?? state.categories.find((item) => !item.parentId && item.name === topCategory?.name)?.id ?? state.categories.find((item) => !item.parentId && item.kind === "expense")?.id ?? "";
+  const trendCategory = state.categories.find((item) => item.id === trendCategoryId);
+  const categoryTrendRows = categoryUsageTrend(state, monthKey, trendCategoryId);
+  const accountExpense = expenseByAccountKind(state, monthKey, "account");
+  const paymentExpense = expenseByAccountKind(state, monthKey, "payment");
   const analysisStats = {
     assets: totalAssets(state, monthKey),
     expense,
@@ -1291,6 +1274,47 @@ function AnalysisView({
         </ResponsiveContainer>
         <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
+      <section className="panel chart-panel">
+        <div className="section-title"><h2>{trendCategory ? `${trendCategory.name}の使用推移` : "カテゴリー使用推移"}</h2><span>6ヶ月</span></div>
+        <ResponsiveContainer width="100%" height={230}>
+          <LineChart data={categoryTrendRows}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} />
+            <YAxis hide />
+            <Tooltip formatter={(value) => yen.format(Number(value))} />
+            <Line type="monotone" dataKey="total" name={trendCategory?.name ?? "カテゴリー"} stroke="#0f766e" strokeWidth={3} />
+            {categoryTrendRows[0] && Object.keys(categoryTrendRows[0]).filter((key) => !["label", "total"].includes(key)).slice(0, 4).map((key, index) => (
+              <Line key={key} type="monotone" dataKey={key} name={key} stroke={["#ea580c", "#2563eb", "#8b5cf6", "#dc2626"][index]} strokeWidth={2} />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
+      </section>
+      <div className="home-chart-grid">
+        <section className="panel chart-panel">
+          <div className="section-title"><h2>口座別支出</h2><span>{monthLabel}</span></div>
+          <ResponsiveContainer width="100%" height={176}>
+            <PieChart>
+              <Pie data={accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
+                {(accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+              </Pie>
+              <Tooltip formatter={(value) => yen.format(Number(value))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <PieLegend data={accountExpense} total={accountExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
+        </section>
+        <section className="panel chart-panel">
+          <div className="section-title"><h2>支払い方法別支出</h2><span>{monthLabel}</span></div>
+          <ResponsiveContainer width="100%" height={176}>
+            <PieChart>
+              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
+                {(paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+              </Pie>
+              <Tooltip formatter={(value) => yen.format(Number(value))} />
+            </PieChart>
+          </ResponsiveContainer>
+          <PieLegend data={paymentExpense} total={paymentExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="カード支出なし" />
+        </section>
+      </div>
       <section className="panel">
         <div className="section-title"><h2>カテゴリー別割合</h2><span>{monthLabel}</span></div>
         <div className="analysis-table">
@@ -1348,12 +1372,49 @@ function subcategoryExpense(state: LedgerState, parentId: string, monthKey: stri
       value: monthTransactionsByKey(state.transactions, monthKey)
         .filter((transaction) => transaction.type === "expense" && transaction.categoryId === category.id)
         .reduce((sum, transaction) => sum + transaction.amount, 0) +
-        fixedCostOccurrencesForMonth(state.fixedCosts, monthKey)
-          .filter((cost) => cost.categoryId === category.id)
+        fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+          .filter((cost) => cost.kind !== "income" && cost.categoryId === category.id)
           .reduce((sum, cost) => sum + cost.amount, 0),
       fill: category.color
     }))
     .filter((item) => item.value > 0);
+}
+
+function expenseByAccountKind(state: LedgerState, monthKey: string, mode: "account" | "payment") {
+  const creditMode = mode === "payment";
+  return state.accounts
+    .filter((account) => creditMode ? account.type === "credit" : account.type !== "credit")
+    .map((account) => {
+      const transactionValue = monthTransactionsByKey(state.transactions, monthKey)
+        .filter((transaction) => transaction.type === "expense" && transaction.accountId === account.id)
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+      const fixedValue = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+        .filter((cost) => cost.kind !== "income" && cost.accountId === account.id)
+        .reduce((sum, cost) => sum + cost.amount, 0);
+      return { name: account.name, value: transactionValue + fixedValue, fill: account.color };
+    })
+    .filter((item) => item.value > 0);
+}
+
+function categoryUsageTrend(state: LedgerState, endMonthKey: string, categoryId: string) {
+  const parent = state.categories.find((item) => item.id === categoryId);
+  const children = state.categories.filter((item) => item.parentId === categoryId);
+  const now = new Date(Number(endMonthKey.slice(0, 4)), Number(endMonthKey.slice(5, 7)) - 1, 1);
+  return Array.from({ length: 6 }).map((_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    const rows = monthTransactionsByKey(state.transactions, key).filter((transaction) => transaction.type === "expense");
+    const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, key, state).filter((cost) => cost.kind !== "income");
+    const ids = new Set([categoryId, ...children.map((child) => child.id)]);
+    const total = rows.filter((transaction) => transaction.categoryId && ids.has(transaction.categoryId)).reduce((sum, transaction) => sum + transaction.amount, 0) +
+      fixedRows.filter((cost) => ids.has(cost.categoryId)).reduce((sum, cost) => sum + cost.amount, 0);
+    const childValues = Object.fromEntries(children.slice(0, 4).map((child) => [
+      child.name,
+      rows.filter((transaction) => transaction.categoryId === child.id).reduce((sum, transaction) => sum + transaction.amount, 0) +
+      fixedRows.filter((cost) => cost.categoryId === child.id).reduce((sum, cost) => sum + cost.amount, 0)
+    ]));
+    return { label: `${date.getMonth() + 1}月`, total: parent ? total : 0, ...childValues };
+  });
 }
 
 function monthlyTrend(state: LedgerState, endMonthKey: string) {
@@ -1363,8 +1424,10 @@ function monthlyTrend(state: LedgerState, endMonthKey: string) {
     const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(key));
     const income = monthlyIncome(rows);
-    const expense = monthlyExpense(rows) + fixedCostOccurrencesForMonth(state.fixedCosts, key).reduce((sum, cost) => sum + cost.amount, 0);
-    return { label: `${date.getMonth() + 1}月`, income, expense, saving: income - expense };
+    const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, key, state);
+    const fixedIncome = fixedRows.filter((cost) => cost.kind === "income").reduce((sum, cost) => sum + cost.amount, 0);
+    const expense = monthlyExpense(rows) + fixedRows.filter((cost) => cost.kind !== "income").reduce((sum, cost) => sum + cost.amount, 0);
+    return { label: `${date.getMonth() + 1}月`, income: income + fixedIncome, expense, saving: income + fixedIncome - expense };
   });
 }
 
@@ -1561,9 +1624,10 @@ function SettingsView({
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
   const firstExpenseCategoryId = state.categories.find((category) => category.kind === "expense" && !category.parentId)?.id ?? state.categories.find((category) => category.kind === "expense")?.id ?? "";
+  const firstIncomeCategoryId = state.categories.find((category) => category.kind === "income" && !category.parentId)?.id ?? state.categories.find((category) => category.kind === "income")?.id ?? "";
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
   const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
-  const [newFixed, setNewFixed] = useState({ name: "", categoryId: firstExpenseCategoryId, accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
+  const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as "expense" | "income", categoryId: firstExpenseCategoryId, accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showOpeningBalances, setShowOpeningBalances] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -1606,7 +1670,7 @@ function SettingsView({
       <div className="settings-tabs">
         {[
           ["ledger", "家計簿"],
-          ["accounts", "お金管理"],
+          ["accounts", "口座"],
           ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
           ["fixed", "固定費"]
@@ -1615,7 +1679,7 @@ function SettingsView({
         ))}
       </div>
       <section className="settings-guide">
-        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "銀行口座・現金・カード・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : "毎月発生する支払い"}</strong>
+        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : "毎月発生する支払い・収入"}</strong>
         <span>上のメニューから編集したい項目を選んでください。</span>
       </section>
       {settingsTab === "ledger" && (
@@ -1830,48 +1894,11 @@ function SettingsView({
       {settingsTab === "accounts" && (
       <>
       <section className="panel">
-        <div className="section-title"><h2>初期残高</h2><span>口座残高の基準</span></div>
-        <p className="setting-copy">初回登録時の残高です。普段の月末残高調整は「月末資産」から行うのがおすすめです。</p>
-        <button className="google-button" type="button" onClick={() => setShowOpeningBalances(!showOpeningBalances)}>{showOpeningBalances ? "初期残高を閉じる" : "初期残高を開く"}</button>
-        {showOpeningBalances && <div className="opening-list">
-          {state.accounts.filter((account) => account.type !== "credit").map((account) => (
-            <label key={account.id}>{account.name}
-              <input
-                type="number"
-                min="0"
-                value={numberInputValue(openingBalances[account.id]?.amount ?? account.openingBalance)}
-                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value || 0) } })}
-              />
-              <input
-                type="date"
-                value={openingBalances[account.id]?.date ?? account.openingBalanceDate ?? todayIso()}
-                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { amount: account.openingBalance }), date: event.target.value } })}
-              />
-            </label>
-          ))}
-          <button
-            className="full-primary"
-            type="button"
-            onClick={async () => {
-              try {
-                await updateOpeningBalances(openingBalances);
-                await reloadHousehold(state.householdId ?? "");
-                setNotice("初期残高を更新しました。");
-              } catch (error) {
-                setNotice(toJapaneseError(error, "初期残高の更新に失敗しました。"));
-              }
-            }}
-          >
-            初期残高を更新
-          </button>
-        </div>}
-      </section>
-      <section className="panel">
         <div className="section-title with-action">
-          <div><h2>お金の置き場所・支払方法</h2><span>{state.mode === "balance" ? "残高管理あり" : "収支のみ"}</span></div>
+          <div><h2>口座・支払い方法</h2><span>{state.mode === "balance" ? "残高管理あり" : "収支のみ"}</span></div>
           <button type="button" onClick={() => setShowAccountForm(!showAccountForm)}>{showAccountForm ? "閉じる" : "追加する"}</button>
         </div>
-        <p className="setting-copy">ここでは「銀行口座」だけでなく、現金、クレジットカード、貯金口座など、お金が出入りする場所や支払方法を登録します。</p>
+        <p className="setting-copy">銀行口座・現金・貯金口座は「口座」、クレジットカードは「支払い方法」として分けて管理します。</p>
         {showAccountForm && <div className="crud-form">
           <label>口座名<input placeholder="例: 生活口座 / 楽天カード" value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} /></label>
           <label>種類<select value={newAccount.type} onChange={(event) => {
@@ -1910,6 +1937,43 @@ function SettingsView({
           }}>口座を追加</button>
         </div>}
         <EditableAccountList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+      </section>
+      <section className="panel">
+        <div className="section-title"><h2>初期残高</h2><span>口座残高の基準</span></div>
+        <p className="setting-copy">初回登録時の残高です。普段の月末残高調整は「月末資産」から行うのがおすすめです。</p>
+        <button className="google-button" type="button" onClick={() => setShowOpeningBalances(!showOpeningBalances)}>{showOpeningBalances ? "初期残高を閉じる" : "初期残高を開く"}</button>
+        {showOpeningBalances && <div className="opening-list">
+          {state.accounts.filter((account) => account.type !== "credit").map((account) => (
+            <label key={account.id}>{account.name}
+              <input
+                type="number"
+                min="0"
+                value={numberInputValue(openingBalances[account.id]?.amount ?? account.openingBalance)}
+                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value || 0) } })}
+              />
+              <input
+                type="date"
+                value={openingBalances[account.id]?.date ?? account.openingBalanceDate ?? todayIso()}
+                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { amount: account.openingBalance }), date: event.target.value } })}
+              />
+            </label>
+          ))}
+          <button
+            className="full-primary"
+            type="button"
+            onClick={async () => {
+              try {
+                await updateOpeningBalances(openingBalances);
+                await reloadHousehold(state.householdId ?? "");
+                setNotice("初期残高を更新しました。");
+              } catch (error) {
+                setNotice(toJapaneseError(error, "初期残高の更新に失敗しました。"));
+              }
+            }}
+          >
+            初期残高を更新
+          </button>
+        </div>}
       </section>
       </>
       )}
@@ -1982,33 +2046,37 @@ function SettingsView({
       {settingsTab === "fixed" && (
       <>
       <section className="panel">
-        <div className="section-title"><h2>固定費管理</h2><span>追加・更新・削除</span></div>
-        <p className="setting-copy">固定費は毎月ほぼ必ず発生する支払いです。家賃、通信費、保険、サブスクなどを登録します。変更・削除するときは「すべてに反映」か「指定月以降に反映」を選べます。</p>
-        <button className="full-primary" type="button" onClick={() => setShowFixedForm(!showFixedForm)}>{showFixedForm ? "追加を閉じる" : "固定費を追加する"}</button>
+        <div className="section-title"><h2>固定費・固定収入管理</h2><span>追加・更新・削除</span></div>
+        <p className="setting-copy">毎月ほぼ必ず発生する支払い・収入です。家賃、通信費、保険、給与などを登録します。変更・削除するときは「すべてに反映」か「指定月以降に反映」を選べます。</p>
+        <button className="full-primary" type="button" onClick={() => setShowFixedForm(!showFixedForm)}>{showFixedForm ? "追加を閉じる" : "固定費・固定収入を追加する"}</button>
         {showFixedForm && <div className="crud-form">
-          <label>固定費名<input placeholder="例: 家賃 / Netflix / 電気代" value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
+          <label>種類<select value={newFixed.kind} onChange={(event) => {
+            const nextKind = event.target.value as "expense" | "income";
+            setNewFixed({ ...newFixed, kind: nextKind, categoryId: nextKind === "income" ? firstIncomeCategoryId : firstExpenseCategoryId });
+          }}><option value="expense">固定費</option><option value="income">固定収入</option></select></label>
+          <label>名称<input placeholder={newFixed.kind === "income" ? "例: 給与 / 家賃収入" : "例: 家賃 / Netflix / 電気代"} value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
           <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
-          <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind="expense" /></select></label>
-          <label>支払元<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value })}>{state.accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
-          <label>支払予定日<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
+          <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={newFixed.kind} /></select></label>
+          <label>{newFixed.kind === "income" ? "入金先" : "支払元"}<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value })}>{state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+          <label>{newFixed.kind === "income" ? "入金予定日" : "支払予定日"}<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
           <label>開始月<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01` })} /></label>
           <button className="full-primary" type="button" onClick={async () => {
             try {
               if (!newFixed.categoryId) {
-                setNotice("固定費のカテゴリを選択してください。");
+                setNotice(newFixed.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。");
                 return;
               }
               if (!newFixed.accountId) {
-                setNotice("固定費の支払元を選択してください。");
+                setNotice(newFixed.kind === "income" ? "固定収入の入金先を選択してください。" : "固定費の支払元を選択してください。");
                 return;
               }
               await createFixedCost(state.householdId ?? "", newFixed);
               await reloadHousehold(state.householdId ?? "");
-              setNewFixed({ name: "", categoryId: firstExpenseCategoryId, accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
+              setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: state.accounts[0]?.id ?? "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
               setShowFixedForm(false);
-              setNotice("固定費を追加しました。");
-            } catch (error) { setNotice(toJapaneseError(error, "固定費追加に失敗しました。")); }
-          }}>固定費を追加</button>
+              setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : "固定費を追加しました。");
+            } catch (error) { setNotice(toJapaneseError(error, "固定費・固定収入追加に失敗しました。")); }
+          }}>追加する</button>
         </div>}
         <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
       </section>
@@ -2250,17 +2318,18 @@ function AdminView() {
 
 function AssetSnapshotSettings({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const defaultMonth = state.assetSnapshots[0]?.month ?? todayIso().slice(0, 7);
-  const [targetMonth, setTargetMonth] = useState(defaultMonth);
+  const currentMonth = todayIso().slice(0, 7);
+  const [targetMonth, setTargetMonth] = useState(defaultMonth > currentMonth ? currentMonth : defaultMonth);
   const months = Array.from(new Set([
     targetMonth,
-    todayIso().slice(0, 7),
+    currentMonth,
     ...state.assetSnapshots.map((snapshot) => snapshot.month)
-  ])).sort((a, b) => b.localeCompare(a));
+  ])).filter((month) => month <= currentMonth).sort((a, b) => b.localeCompare(a));
   return (
     <section className="panel">
       <div className="section-title"><h2>月末資産一覧</h2><span>確定・再変更</span></div>
       <p className="setting-copy">確定済みの月末資産を確認できます。金額を変更すると、その月以降の残高計算にも反映されます。</p>
-      <label>追加・変更する月<input type="month" value={targetMonth} onChange={(event) => setTargetMonth(event.target.value)} /></label>
+      <label>追加・変更する月<input type="month" value={targetMonth} max={currentMonth} onChange={(event) => setTargetMonth(event.target.value > currentMonth ? currentMonth : event.target.value)} /></label>
       <div className="snapshot-settings-list">
         {months.map((month) => {
           const count = state.assetSnapshots.filter((snapshot) => snapshot.month === month).length;
@@ -2283,9 +2352,7 @@ function AssetSnapshotSettings({ state, setNotice, reloadHousehold }: { state: L
 function EditableAccountList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
-  return (
-    <div className="detail-card-list">
-      {state.accounts.map((account) => {
+  const renderAccount = (account: LedgerState["accounts"][number]) => {
         const isOpen = selectedId === account.id;
         const isEditing = editingId === account.id;
         const withdrawalAccount = state.accounts.find((item) => item.id === account.withdrawalAccountId);
@@ -2322,7 +2389,17 @@ function EditableAccountList({ state, setNotice, reloadHousehold }: { state: Led
             {isOpen && isEditing && <EditableAccountRow account={account} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onDone={() => setEditingId(null)} />}
           </div>
         );
-      })}
+  };
+  return (
+    <div className="category-edit-columns">
+      <div>
+        <h3>口座</h3>
+        <div className="detail-card-list">{state.accounts.filter((account) => account.type !== "credit").map(renderAccount)}</div>
+      </div>
+      <div>
+        <h3>支払い方法</h3>
+        <div className="detail-card-list">{state.accounts.filter((account) => account.type === "credit").map(renderAccount)}</div>
+      </div>
     </div>
   );
 }
@@ -2515,14 +2592,14 @@ function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: L
       <div className={`fixed-editor-card${ended ? " ended" : ""}`} key={cost.id}>
         <button className="fixed-editor-head" type="button" onClick={() => { setSelectedId(isOpen ? null : cost.id); setEditingId(null); }}>
           <span>{cost.name}</span>
-          <strong>{yen.format(cost.amount)}</strong>
+          <strong>{cost.kind === "income" ? "+" : "-"}{yen.format(cost.amount)}</strong>
           {ended && <em>終了済み</em>}
         </button>
         {isOpen && !isEditing && (
           <div className="fixed-detail">
-            <span>支払日: 毎月{cost.dueDay}日</span>
+            <span>{cost.kind === "income" ? "入金日" : "支払日"}: 毎月{cost.dueDay}日</span>
             <span>カテゴリ: {category?.name ?? "未設定"}</span>
-            <span>支払元: {account?.name ?? "未設定"}</span>
+            <span>{cost.kind === "income" ? "入金先" : "支払元"}: {account?.name ?? "未設定"}</span>
             <span>反映期間: {cost.effectiveFrom ? cost.effectiveFrom.slice(0, 7) : "開始月なし"} から {cost.effectiveTo ? cost.effectiveTo.slice(0, 7) : "継続中"}</span>
             <button type="button" onClick={() => setEditingId(cost.id)}>編集する</button>
           </div>
@@ -2562,14 +2639,14 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
     <div className="edit-row">
       <label>固定費名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
-      <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind="expense" /></select></label>
-      <label>支払元<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}><option value="">選択してください</option>{state.accounts.map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
-      <label>支払日<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+      <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>
+      <label>{draft.kind === "income" ? "入金先" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+      <label>{draft.kind === "income" ? "入金日" : "支払日"}<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
       <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
       <label>終了月<input type="month" value={(draft.effectiveTo ?? "").slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveTo: event.target.value ? `${event.target.value}-01` : undefined })} /></label>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
-      <button onClick={async () => { try { if (!draft.categoryId) { setNotice("固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice("固定費の支払元を選択してください。"); return; } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定費を更新しました。" : "固定費を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費更新に失敗しました。")); } }}>変更を保存</button>
+      <button onClick={async () => { try { if (!draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : "固定費の支払元を選択してください。"); return; } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定費・固定収入を更新しました。" : "固定費・固定収入を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費・固定収入更新に失敗しました。")); } }}>変更を保存</button>
       <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を削除しました。" : "固定費を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費削除に失敗しました。")); } }}>固定費を削除</button>
       <button type="button" onClick={onDone}>編集をやめる</button>
     </div>

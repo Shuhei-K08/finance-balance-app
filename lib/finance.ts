@@ -86,7 +86,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
   const latestSnapshot = snapshots[0];
   const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
   const until = monthEndKey(throughMonthKey);
-  const fixedOccurrences = monthsBetween(latestSnapshot?.month ?? "", throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey));
+  const fixedOccurrences = monthsBetween(latestSnapshot?.month ?? "", throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state));
   const rows = state.transactions.filter((transaction) => {
     const ledgerDate = transactionLedgerDate(transaction);
     return (!since || ledgerDate > since) && ledgerDate <= until;
@@ -142,6 +142,7 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
 
 function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Account, accounts: Account[]) {
   const sourceAccount = accounts.find((item) => item.id === cost.accountId);
+  if (cost.kind === "income") return cost.accountId === account.id ? cost.amount : 0;
   if (sourceAccount?.type === "credit") {
     return sourceAccount.withdrawalAccountId === account.id ? -cost.amount : 0;
   }
@@ -153,7 +154,7 @@ function monthlyAssetMovement(state: LedgerState, monthKey: string) {
   const transactionMovement = monthTransactionsByKey(state.transactions, monthKey).reduce((sum, transaction) => {
     return sum + assetAccounts.reduce((accountSum, account) => accountSum + transactionAssetDeltaForAccount(transaction, account, state.accounts), 0);
   }, 0);
-  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((sum, cost) => {
+  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).reduce((sum, cost) => {
     return sum + assetAccounts.reduce((accountSum, account) => accountSum + fixedCostAssetDeltaForAccount(cost, account, state.accounts), 0);
   }, transactionMovement);
 }
@@ -175,21 +176,33 @@ export function monthlyIncome(transactions: Transaction[]) {
   return transactions.filter((transaction) => transaction.type === "income").reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-export type FixedCostOccurrence = FixedCost & { date: string };
+export type FixedCostOccurrence = FixedCost & { date: string; overrideId?: string };
 
-export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string): FixedCostOccurrence[] {
+export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
   const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
-  return fixedCosts
+  const rows: Array<FixedCostOccurrence | null> = fixedCosts
     .filter((cost) => isFixedCostActiveInMonth(cost, monthKey))
-    .map((cost) => ({
-      ...cost,
-      date: `${monthKey}-${String(Math.min(cost.dueDay, lastDay)).padStart(2, "0")}`
-    }));
+    .map((cost) => {
+      const override = state?.fixedCostOverrides?.find((item) => item.fixedCostId === cost.id && item.month === monthKey);
+      if (override?.skipped) return null;
+      const dueDay = override?.dueDay ?? cost.dueDay;
+      return {
+        ...cost,
+        name: override?.name ?? cost.name,
+        categoryId: override?.categoryId ?? cost.categoryId,
+        accountId: override?.accountId ?? cost.accountId,
+        amount: override?.amount ?? cost.amount,
+        dueDay,
+        overrideId: override?.id,
+        date: `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
+      };
+    });
+  return rows.filter((cost): cost is FixedCostOccurrence => Boolean(cost));
 }
 
 export function monthlyFixedCostExpense(state: LedgerState, date = new Date()) {
   const monthKey = monthKeyFromDate(date);
-  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((total, cost) => total + cost.amount, 0);
+  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function monthlyExpenseWithFixed(state: LedgerState, date = new Date()) {
@@ -197,7 +210,11 @@ export function monthlyExpenseWithFixed(state: LedgerState, date = new Date()) {
 }
 
 export function monthlyExpenseWithFixedByKey(state: LedgerState, monthKey: string) {
-  return monthlyExpense(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey).reduce((total, cost) => total + cost.amount, 0);
+  return monthlyExpense(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
+}
+
+export function monthlyIncomeWithFixedByKey(state: LedgerState, monthKey: string) {
+  return monthlyIncome(monthTransactionsByKey(state.transactions, monthKey)) + fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind === "income").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function averageMonthlySaving(state: LedgerState) {
@@ -220,7 +237,8 @@ export function averageMonthlySaving(state: LedgerState) {
     targetMonths.forEach((key) => {
       if (!isFixedCostActiveInMonth(cost, key)) return;
       const current = monthly.get(key) ?? { income: 0, expense: 0, savingTransfer: 0 };
-      current.expense += cost.amount;
+      if (cost.kind === "income") current.income += cost.amount;
+      else current.expense += cost.amount;
       monthly.set(key, current);
     });
   });
@@ -262,7 +280,7 @@ export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: stri
 }
 
 export function fixedCostForecast(fixedCosts: FixedCost[], monthKey = todayIso().slice(0, 7)) {
-  return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).reduce((total, cost) => total + cost.amount, 0);
+  return fixedCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey) && cost.kind !== "income").reduce((total, cost) => total + cost.amount, 0);
 }
 
 export function isFixedCostActiveInMonth(cost: FixedCost, monthKey: string) {
@@ -284,7 +302,7 @@ export function projectedMonthEnd(state: LedgerState, monthKey = todayIso().slic
 
 export function categoryExpense(state: LedgerState, monthKey = todayIso().slice(0, 7)) {
   const month = monthTransactionsByKey(state.transactions, monthKey);
-  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey);
+  const fixedCosts = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind !== "income");
   return state.categories
     .filter((category) => !category.parentId && category.kind === "expense")
     .map((category) => {

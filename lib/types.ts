@@ -43,6 +43,7 @@ export type Transaction = {
 export type FixedCost = {
   id: string;
   name: string;
+  kind: "expense" | "income";
   categoryId: string;
   accountId: string;
   amount: number;
@@ -51,6 +52,18 @@ export type FixedCost = {
   status: FixedCostStatus;
   effectiveFrom?: string;
   effectiveTo?: string;
+};
+
+export type FixedCostOverride = {
+  id: string;
+  fixedCostId: string;
+  month: string;
+  name?: string;
+  categoryId?: string;
+  accountId?: string;
+  amount?: number;
+  dueDay?: number;
+  skipped?: boolean;
 };
 
 export type Goal = {
@@ -116,6 +129,7 @@ export type LedgerState = {
   categories: Category[];
   transactions: Transaction[];
   fixedCosts: FixedCost[];
+  fixedCostOverrides: FixedCostOverride[];
   goals: Goal[];
   assetSnapshots: AssetSnapshot[];
 };

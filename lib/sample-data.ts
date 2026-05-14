@@ -37,10 +37,11 @@ export const initialState: LedgerState = {
     { id: "t5", type: "expense", amount: 1320, categoryId: "fun", subcategoryId: "sub", accountId: "card-visa", date: "2026-05-06", reflectedDate: "2026-06-10", memo: "音楽サブスク", creditStatus: "confirmed" }
   ],
   fixedCosts: [
-    { id: "f1", name: "家賃", categoryId: "home", accountId: "bank-main", amount: 92000, variable: false, dueDay: 27, status: "planned" },
-    { id: "f2", name: "電気代", categoryId: "utility", accountId: "card-visa", amount: 9800, variable: true, dueDay: 18, status: "planned" },
-    { id: "f3", name: "保険", categoryId: "home", accountId: "bank-main", amount: 11800, variable: false, dueDay: 20, status: "confirmed" }
+    { id: "f1", name: "家賃", kind: "expense", categoryId: "home", accountId: "bank-main", amount: 92000, variable: false, dueDay: 27, status: "planned" },
+    { id: "f2", name: "電気代", kind: "expense", categoryId: "utility", accountId: "card-visa", amount: 9800, variable: true, dueDay: 18, status: "planned" },
+    { id: "f3", name: "保険", kind: "expense", categoryId: "home", accountId: "bank-main", amount: 11800, variable: false, dueDay: 20, status: "confirmed" }
   ],
+  fixedCostOverrides: [],
   goals: [
     { id: "g1", name: "生活防衛資金", targetAmount: 2000000, accountId: "saving", deadline: "2028-12-31", monthlyBoost: 0 },
     { id: "g2", name: "旅行資金", targetAmount: 450000, accountId: "saving", deadline: "2027-08-31", monthlyBoost: 12000 }
