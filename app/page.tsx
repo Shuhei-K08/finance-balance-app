@@ -262,6 +262,7 @@ export default function App() {
     transferToAccountId?: string;
     date: string;
     memo?: string;
+    creditPostingMode?: "used" | "withdrawal";
   }) {
     if (!state) return;
     if (transaction.type !== "transfer" && !transaction.categoryId) {
@@ -272,12 +273,16 @@ export default function App() {
       setNotice(transaction.type === "income" ? "入金先を選択してください。" : transaction.type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
       return;
     }
+    if (transaction.type === "income" && state.accounts.find((account) => account.id === transaction.accountId)?.type === "credit") {
+      setNotice("収入の入金先にクレジットカードは選択できません。");
+      return;
+    }
     if (transaction.type === "transfer" && !transaction.transferToAccountId) {
       setNotice("振替先を選択してください。");
       return;
     }
     const creditAccount = state.accounts.find((account) => account.id === transaction.accountId && account.type === "credit");
-    const withdrawalDate = transaction.type === "expense" && creditAccount ? nextWithdrawalDate(creditAccount, transaction.date) : undefined;
+    const withdrawalDate = transaction.type === "expense" && creditAccount && transaction.creditPostingMode === "withdrawal" ? nextWithdrawalDate(creditAccount, transaction.date) : undefined;
     const payload = {
       ...transaction,
       categoryId: transaction.type === "transfer" ? undefined : transaction.categoryId,
@@ -753,7 +758,7 @@ function QuickTransactionSheet({
   state: LedgerState;
   initialDate: string;
   onClose: () => void;
-  onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string }) => Promise<void>;
+  onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string; creditPostingMode?: "used" | "withdrawal" }) => Promise<void>;
 }) {
   const usableAccounts = state.accounts;
   const normalAccounts = state.accounts.filter((account) => account.type !== "credit");
@@ -764,14 +769,19 @@ function QuickTransactionSheet({
   const [transferToAccountId, setTransferToAccountId] = useState("");
   const [date, setDate] = useState(initialDate);
   const [memo, setMemo] = useState("");
+  const [creditPostingMode, setCreditPostingMode] = useState<"used" | "withdrawal">("used");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const selectedAccount = state.accounts.find((account) => account.id === accountId);
+  const isCreditExpense = type === "expense" && selectedAccount?.type === "credit";
+  const accountChoices = type === "income" || type === "transfer" ? normalAccounts : usableAccounts;
 
   function changeType(nextType: TransactionType) {
     setType(nextType);
     setCategoryId("");
     setAccountId("");
     setTransferToAccountId("");
+    setCreditPostingMode("used");
     setError("");
   }
 
@@ -787,6 +797,10 @@ function QuickTransactionSheet({
     }
     if (!accountId) {
       setError(type === "income" ? "入金先を選択してください。" : type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
+      return;
+    }
+    if (type === "income" && state.accounts.find((account) => account.id === accountId)?.type === "credit") {
+      setError("収入の入金先にクレジットカードは選択できません。");
       return;
     }
     if (type === "transfer" && !transferToAccountId) {
@@ -808,7 +822,8 @@ function QuickTransactionSheet({
         accountId,
         transferToAccountId: type === "transfer" ? transferToAccountId || undefined : undefined,
         date,
-        memo
+        memo,
+        creditPostingMode: isCreditExpense ? creditPostingMode : undefined
       });
     } finally {
       setSubmitting(false);
@@ -835,9 +850,9 @@ function QuickTransactionSheet({
               <CategoryOptions categories={state.categories} kind={type === "income" ? "income" : "expense"} />
             </select></label>
           )}
-          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); }}>
+          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); setCreditPostingMode("used"); }}>
             <option value="">選択してください</option>
-            {(type === "transfer" ? normalAccounts : usableAccounts).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            {accountChoices.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
           </select></label>
           {type === "transfer" && (
             <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>
@@ -845,8 +860,18 @@ function QuickTransactionSheet({
               {normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
             </select></label>
           )}
-          <label>{type === "expense" && state.accounts.find((account) => account.id === accountId)?.type === "credit" ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
+          <label>{isCreditExpense ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
         </div>
+        {isCreditExpense && (
+          <div className="credit-posting-mode">
+            <span>計上する日付</span>
+            <div className="segmented compact">
+              <button className={creditPostingMode === "used" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("used")}>使用日</button>
+              <button className={creditPostingMode === "withdrawal" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("withdrawal")}>引落日</button>
+            </div>
+            <small>{creditPostingMode === "withdrawal" ? `${nextWithdrawalDate(selectedAccount, date)} に収支へ反映します。` : "使用日に収支へ反映します。"}</small>
+          </div>
+        )}
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
         <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中" : "登録"}</button>
@@ -1199,9 +1224,7 @@ function AnalysisView({
   const expense = monthlyExpenseWithFixedByKey(state, monthKey);
   const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
   const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
-  const trendCategoryId = drillParentId ?? state.categories.find((item) => !item.parentId && item.name === topCategory?.name)?.id ?? state.categories.find((item) => !item.parentId && item.kind === "expense")?.id ?? "";
-  const trendCategory = state.categories.find((item) => item.id === trendCategoryId);
-  const categoryTrendRows = categoryUsageTrend(state, monthKey, trendCategoryId);
+  const categoryTrend = expenseCategoryTrend(state, monthKey);
   const accountExpense = expenseByAccountKind(state, monthKey, "account");
   const paymentExpense = expenseByAccountKind(state, monthKey, "payment");
   const analysisStats = {
@@ -1275,19 +1298,26 @@ function AnalysisView({
         <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>{trendCategory ? `${trendCategory.name}の使用推移` : "カテゴリー使用推移"}</h2><span>6ヶ月</span></div>
+        <div className="section-title"><h2>支出カテゴリごとの推移</h2><span>{monthLabel}までの6ヶ月</span></div>
         <ResponsiveContainer width="100%" height={230}>
-          <LineChart data={categoryTrendRows}>
+          <LineChart data={categoryTrend.rows}>
             <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
             <YAxis hide />
             <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Line type="monotone" dataKey="total" name={trendCategory?.name ?? "カテゴリー"} stroke="#0f766e" strokeWidth={3} />
-            {categoryTrendRows[0] && Object.keys(categoryTrendRows[0]).filter((key) => !["label", "total"].includes(key)).slice(0, 4).map((key, index) => (
-              <Line key={key} type="monotone" dataKey={key} name={key} stroke={["#ea580c", "#2563eb", "#8b5cf6", "#dc2626"][index]} strokeWidth={2} />
+            {categoryTrend.categories.map((categoryItem, index) => (
+              <Line
+                key={categoryItem.name}
+                type="monotone"
+                dataKey={categoryItem.name}
+                name={categoryItem.name}
+                stroke={categoryItem.fill || ["#0f766e", "#ea580c", "#2563eb", "#8b5cf6", "#dc2626", "#64748b"][index % 6]}
+                strokeWidth={2.5}
+              />
             ))}
           </LineChart>
         </ResponsiveContainer>
+        <PieLegend data={categoryTrend.categories.map((item) => ({ name: item.name, value: item.total, fill: item.fill }))} total={categoryTrend.categories.reduce((sum, item) => sum + item.total, 0)} emptyLabel="支出なし" />
       </section>
       <div className="home-chart-grid">
         <section className="panel chart-panel">
@@ -1394,6 +1424,45 @@ function expenseByAccountKind(state: LedgerState, monthKey: string, mode: "accou
       return { name: account.name, value: transactionValue + fixedValue, fill: account.color };
     })
     .filter((item) => item.value > 0);
+}
+
+function expenseCategoryTrend(state: LedgerState, endMonthKey: string) {
+  const now = new Date(Number(endMonthKey.slice(0, 4)), Number(endMonthKey.slice(5, 7)) - 1, 1);
+  const parents = state.categories.filter((category) => !category.parentId && category.kind === "expense");
+  const monthKeys = Array.from({ length: 6 }).map((_, index) => {
+    const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
+    return {
+      key: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`,
+      label: `${date.getMonth() + 1}月`
+    };
+  });
+  const categories = parents
+    .map((parent) => {
+      const childIds = state.categories.filter((category) => category.parentId === parent.id).map((category) => category.id);
+      const ids = new Set([parent.id, ...childIds]);
+      const total = monthKeys.reduce((sum, month) => sum + expenseForCategoryIds(state, month.key, ids), 0);
+      return { id: parent.id, name: parent.name, fill: parent.color, total, ids };
+    })
+    .filter((category) => category.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6);
+  const rows = monthKeys.map((month) => {
+    const row: Record<string, string | number> = { label: month.label };
+    categories.forEach((category) => {
+      row[category.name] = expenseForCategoryIds(state, month.key, category.ids);
+    });
+    return row;
+  });
+  return { rows, categories };
+}
+
+function expenseForCategoryIds(state: LedgerState, monthKey: string, categoryIds: Set<string>) {
+  return monthTransactionsByKey(state.transactions, monthKey)
+    .filter((transaction) => transaction.type === "expense" && transaction.categoryId && categoryIds.has(transaction.categoryId))
+    .reduce((sum, transaction) => sum + transaction.amount, 0) +
+    fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+      .filter((cost) => cost.kind !== "income" && categoryIds.has(cost.categoryId))
+      .reduce((sum, cost) => sum + cost.amount, 0);
 }
 
 function categoryUsageTrend(state: LedgerState, endMonthKey: string, categoryId: string) {
@@ -2760,6 +2829,10 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
       setNotice(draft.type === "income" ? "入金先を選択してください。" : draft.type === "transfer" ? "振替元を選択してください。" : "支払元を選択してください。");
       return;
     }
+    if (draft.type === "income" && state.accounts.find((item) => item.id === draft.accountId)?.type === "credit") {
+      setNotice("収入の入金先にクレジットカードは選択できません。");
+      return;
+    }
     if (draft.type === "transfer" && !draft.transferToAccountId) {
       setNotice("振替先を選択してください。");
       return;
@@ -2769,7 +2842,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
       return;
     }
     const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
-    const withdrawalDate = draft.type === "expense" && creditAccount ? draft.reflectedDate || nextWithdrawalDate(creditAccount, draft.date) : undefined;
+    const withdrawalDate = draft.type === "expense" && creditAccount ? draft.reflectedDate : undefined;
     const payload = {
       ...draft,
       categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
@@ -2804,7 +2877,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
               reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
               creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
             });
-          }}><option value="">選択してください</option>{(draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          }}><option value="">選択してください</option>{(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
           <label>{isDraftCreditExpense ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => {
             const nextDate = event.target.value;
@@ -2814,6 +2887,10 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
         </div>
         {isDraftCreditExpense && (
           <div className="credit-date-editor">
+            <div className="date-adjust-actions" aria-label="計上日の選択">
+              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日に計上</button>
+              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>引落日に計上</button>
+            </div>
             <label>引落日<input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(event) => setDraft({ ...draft, reflectedDate: event.target.value })} /></label>
             <div className="date-adjust-actions" aria-label="引落日の調整">
               <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, -1) })}>前月へ</button>
