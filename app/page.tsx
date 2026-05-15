@@ -101,6 +101,7 @@ import {
   updateFixedCost,
   updateGoal,
   updateOpeningBalances,
+  updateSubcategoryOrder,
   updateTransaction,
   upsertFixedCostOverride,
   upsertAssetSnapshots,
@@ -902,7 +903,14 @@ function sortCategories(categories: LedgerState["categories"]) {
 }
 
 function sortSubcategories(categories: LedgerState["categories"]) {
-  return [...categories].sort((a, b) => a.name.localeCompare(b.name, "ja"));
+  const hasManualOrder = categories.some((category) => typeof category.sortOrder === "number" && category.sortOrder > 0);
+  return [...categories].sort((a, b) => {
+    const aOther = a.name === "その他";
+    const bOther = b.name === "その他";
+    if (aOther !== bOther) return aOther ? 1 : -1;
+    if (hasManualOrder) return (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, "ja");
+    return a.name.localeCompare(b.name, "ja");
+  });
 }
 
 function categoryDisplayColor(category: LedgerState["categories"][number], categories: LedgerState["categories"]) {
@@ -939,6 +947,12 @@ function nextSubcategoryColor(categories: LedgerState["categories"], parentId: s
   const parent = categories.find((category) => category.id === parentId);
   const index = categories.filter((category) => category.parentId === parentId).length;
   return subcategoryColorPreview(parent?.color ?? "#0f766e", index);
+}
+
+function fixedKindMeta(kind: TransactionType) {
+  if (kind === "income") return { label: "定期収入", className: "income", sign: "+" };
+  if (kind === "transfer") return { label: "定期振替", className: "transfer", sign: "" };
+  return { label: "定期支出", className: "expense", sign: "-" };
 }
 
 function HomeCalendar({
@@ -1039,6 +1053,7 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
           <h2>{formatMonthLabel(monthKey)}の{title}一覧</h2>
           <span>{yen.format(total)}</span>
         </div>
+        {type === "credit" && <CreditCardTotals state={state} monthKey={monthKey} />}
         {entries.length === 0 ? (
           <div className="empty-state"><span>この月の{title}はまだありません。</span></div>
         ) : (
@@ -1046,6 +1061,33 @@ function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: {
         )}
         <button className="google-button" type="button" onClick={onClose}>閉じる</button>
       </section>
+    </div>
+  );
+}
+
+function CreditCardTotals({ state, monthKey }: { state: LedgerState; monthKey: string }) {
+  const creditAccounts = state.accounts.filter((account) => account.type === "credit");
+  const totals = creditAccounts
+    .map((account) => {
+      const transactionTotal = monthTransactionsByKey(state.transactions, monthKey)
+        .filter((transaction) => transaction.type === "expense" && transaction.accountId === account.id)
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+      const fixedTotal = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+        .filter((cost) => cost.kind === "expense" && cost.accountId === account.id)
+        .reduce((sum, cost) => sum + cost.amount, 0);
+      return { account, transactionTotal, fixedTotal, total: transactionTotal + fixedTotal };
+    })
+    .filter((row) => row.total > 0);
+  if (!totals.length) return null;
+  return (
+    <div className="credit-card-totals">
+      {totals.map((row) => (
+        <div key={row.account.id}>
+          <span><i style={{ background: row.account.color }} />{row.account.name}</span>
+          <strong>{yen.format(row.total)}</strong>
+          <small>支出 {yen.format(row.transactionTotal)} / 定期支出 {yen.format(row.fixedTotal)}</small>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1106,12 +1148,12 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   const transferToAccount = state.accounts.find((item) => item.id === row.transferToAccountId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ name: row.name, amount: row.amount, categoryId: row.categoryId, accountId: row.accountId, transferToAccountId: row.transferToAccountId ?? "", dueDay: row.dueDay });
-  const rowLabel = row.kind === "income" ? "固定収入" : row.kind === "transfer" ? "定期振替" : "固定費";
+  const meta = fixedKindMeta(row.kind);
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-icon fixed"><Landmark size={16} /></div>
-      <div><strong>{row.name}</strong><span>{row.date} / {rowLabel} / {row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${category?.name ?? "未設定"} / ${account?.name ?? "未設定"}`}</span></div>
-      <em>{row.kind === "income" ? "+" : row.kind === "transfer" ? "" : "-"}{yen.format(row.amount)}</em>
+      <div><strong>{row.name}</strong><span><b className={`kind-badge ${meta.className}`}>{meta.label}</b>{row.date} / {row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${category?.name ?? "未設定"} / ${account?.name ?? "未設定"}`}</span></div>
+      <em>{meta.sign}{yen.format(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
         <div className="fixed-override-form">
@@ -1836,7 +1878,7 @@ function SettingsView({
           ["accounts", "口座"],
           ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
-          ["fixed", "固定費"]
+          ["fixed", "定期項目"]
         ].map(([id, label]) => (
           <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
         ))}
@@ -2215,14 +2257,14 @@ function SettingsView({
       {settingsTab === "fixed" && (
       <>
       <section className="panel">
-        <div className="section-title"><h2>固定費・固定収入・定期振替管理</h2><span>追加・更新・削除</span></div>
+        <div className="section-title"><h2>定期項目管理</h2><span>支出・収入・振替</span></div>
         <p className="setting-copy">毎月ほぼ必ず発生する支払い・収入・口座間の振替です。家賃、通信費、給与、貯金口座への移動などを登録します。</p>
         <button className="full-primary" type="button" onClick={() => setShowFixedForm(!showFixedForm)}>{showFixedForm ? "追加を閉じる" : "固定項目を追加する"}</button>
         {showFixedForm && <div className="crud-form">
           <label>種類<select value={newFixed.kind} onChange={(event) => {
             const nextKind = event.target.value as TransactionType;
             setNewFixed({ ...newFixed, kind: nextKind, categoryId: nextKind === "income" ? firstIncomeCategoryId : nextKind === "expense" ? firstExpenseCategoryId : "", transferToAccountId: nextKind === "transfer" ? state.accounts.filter((account) => account.type !== "credit").find((account) => account.id !== newFixed.accountId)?.id ?? "" : "" });
-          }}><option value="expense">固定費</option><option value="income">固定収入</option><option value="transfer">定期振替</option></select></label>
+          }}><option value="expense">定期支出</option><option value="income">定期収入</option><option value="transfer">定期振替</option></select></label>
           <label>名称<input placeholder={newFixed.kind === "income" ? "例: 給与 / 家賃収入" : newFixed.kind === "transfer" ? "例: 貯金口座へ移動" : "例: 家賃 / Netflix / 電気代"} value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
           <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
           {newFixed.kind !== "transfer" && <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={newFixed.kind} /></select></label>}
@@ -2249,7 +2291,7 @@ function SettingsView({
               setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
               setShowFixedForm(false);
               setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
-            } catch (error) { setNotice(toJapaneseError(error, "固定費・固定収入追加に失敗しました。")); }
+            } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
           }}>追加する</button>
         </div>}
         <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
@@ -2646,6 +2688,26 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
   const [showSubForm, setShowSubForm] = useState(false);
   const [subName, setSubName] = useState("");
   const [subColor, setSubColor] = useState(nextSubcategoryColor(state.categories, category.id));
+  const [draggingChildId, setDraggingChildId] = useState<string | null>(null);
+  async function moveSubcategory(targetId: string) {
+    if (!draggingChildId || draggingChildId === targetId) return;
+    const currentIds = children.map((child) => child.id);
+    const fromIndex = currentIds.indexOf(draggingChildId);
+    const toIndex = currentIds.indexOf(targetId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const nextIds = [...currentIds];
+    const [moved] = nextIds.splice(fromIndex, 1);
+    nextIds.splice(toIndex, 0, moved);
+    try {
+      await updateSubcategoryOrder(category.id, nextIds, category.color);
+      await reloadHousehold(state.householdId ?? "");
+      setNotice("サブカテゴリーの並び順を更新しました。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "サブカテゴリーの並び替えに失敗しました。"));
+    } finally {
+      setDraggingChildId(null);
+    }
+  }
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
@@ -2654,7 +2716,24 @@ function CategoryModal({ category, state, setNotice, reloadHousehold, onClose }:
           <div className="fixed-detail">
             <span>用途: {category.kind === "income" ? "収入" : "支出"}</span>
             <span>分類: {category.parentId ? `サブカテゴリー（${parent?.name ?? "カテゴリー未設定"}）` : "カテゴリー"}</span>
-            {!category.parentId && <span>サブカテゴリー: {children.map((child) => child.name).join("、") || "なし"}</span>}
+            {!category.parentId && (
+              <div className="subcategory-order-list">
+                {children.length === 0 ? <span>サブカテゴリー: なし</span> : children.map((child) => (
+                  <button
+                    draggable
+                    key={child.id}
+                    type="button"
+                    onDragStart={() => setDraggingChildId(child.id)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => moveSubcategory(child.id)}
+                  >
+                    <i style={{ background: categoryDisplayColor(child, state.categories) }} />
+                    <span>{child.name}</span>
+                    <small>ドラッグで並び替え</small>
+                  </button>
+                ))}
+              </div>
+            )}
             {!category.parentId && (
               <div className="sub-category-add">
                 <button type="button" onClick={() => setShowSubForm(!showSubForm)}>{showSubForm ? "サブカテゴリー追加を閉じる" : "サブカテゴリーを追加する"}</button>
@@ -2763,17 +2842,17 @@ function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: L
     const account = state.accounts.find((item) => item.id === cost.accountId);
     const transferToAccount = state.accounts.find((item) => item.id === cost.transferToAccountId);
     const ended = Boolean(cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
-    const label = cost.kind === "income" ? "固定収入" : cost.kind === "transfer" ? "定期振替" : "固定費";
+    const meta = fixedKindMeta(cost.kind);
     return (
       <div className={`fixed-editor-card${ended ? " ended" : ""}`} key={cost.id}>
         <button className="fixed-editor-head" type="button" onClick={() => { setSelectedId(isOpen ? null : cost.id); setEditingId(null); }}>
-          <span>{cost.name}</span>
-          <strong>{cost.kind === "income" ? "+" : cost.kind === "transfer" ? "" : "-"}{yen.format(cost.amount)}</strong>
+          <span><b className={`kind-badge ${meta.className}`}>{meta.label}</b>{cost.name}</span>
+          <strong>{meta.sign}{yen.format(cost.amount)}</strong>
           {ended && <em>終了済み</em>}
         </button>
         {isOpen && !isEditing && (
           <div className="fixed-detail">
-            <span>種類: {label}</span>
+            <span>種類: {meta.label}</span>
             <span>{cost.kind === "income" ? "入金日" : cost.kind === "transfer" ? "振替日" : "支払日"}: 毎月{cost.dueDay}日</span>
             {cost.kind !== "transfer" && <span>カテゴリ: {category?.name ?? "未設定"}</span>}
             <span>{cost.kind === "income" ? "入金先" : cost.kind === "transfer" ? "振替元" : "支払元"}: {account?.name ?? "未設定"}</span>
@@ -2791,7 +2870,7 @@ function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: L
       {activeCosts.map(renderCost)}
       {endedCosts.length > 0 && (
         <div className="ended-fixed-section">
-          <strong>終了済みの固定費</strong>
+          <strong>終了済みの定期項目</strong>
           {endedCosts.map(renderCost)}
         </div>
       )}
@@ -2816,7 +2895,7 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
   );
   return (
     <div className="edit-row">
-      <label>固定費名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+      <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       {draft.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>}
       <label>{draft.kind === "income" ? "入金先" : draft.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
@@ -2827,7 +2906,7 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
       <button onClick={async () => { try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }}>変更を保存</button>
-      <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の固定費を削除しました。" : "固定費を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定費削除に失敗しました。")); } }}>固定費を削除</button>
+      <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の定期項目を削除しました。" : "定期項目を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "定期項目の削除に失敗しました。")); } }}>定期項目を削除</button>
       <button type="button" onClick={onDone}>編集をやめる</button>
     </div>
   );

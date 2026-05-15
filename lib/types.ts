@@ -23,6 +23,7 @@ export type Category = {
   parentId?: string;
   kind: "expense" | "income";
   color: string;
+  sortOrder?: number;
 };
 
 export type Transaction = {

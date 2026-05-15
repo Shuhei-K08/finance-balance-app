@@ -432,6 +432,51 @@ h2 {
   font-weight: 900;
 }
 
+.credit-card-totals {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.credit-card-totals div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffaf2;
+}
+
+.credit-card-totals span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  font-weight: 900;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.credit-card-totals i {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+
+.credit-card-totals strong {
+  font-weight: 900;
+  text-align: right;
+}
+
+.credit-card-totals small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 700;
+}
+
 .section-title {
   display: flex;
   align-items: flex-start;
@@ -1593,6 +1638,33 @@ input[type="range"] {
   font-weight: 800;
 }
 
+.kind-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-right: 8px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.kind-badge.income {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.kind-badge.expense {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.kind-badge.transfer {
+  background: #dbeafe;
+  color: #2563eb;
+}
+
 .fixed-editor-head em {
   border-radius: 999px;
   padding: 3px 8px;
@@ -1600,6 +1672,49 @@ input[type="range"] {
   color: #64748b;
   font-size: 11px;
   font-style: normal;
+  font-weight: 800;
+}
+
+.subcategory-order-list {
+  display: grid;
+  gap: 8px;
+}
+
+.subcategory-order-list button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  color: var(--ink);
+  cursor: grab;
+  text-align: left;
+}
+
+.subcategory-order-list button:active {
+  cursor: grabbing;
+}
+
+.subcategory-order-list i {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
+.subcategory-order-list span {
+  overflow: hidden;
+  font-weight: 900;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.subcategory-order-list small {
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 800;
 }
 

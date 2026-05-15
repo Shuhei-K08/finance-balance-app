@@ -140,6 +140,7 @@ type DbCategory = {
   parent_id: string | null;
   category_kind: "expense" | "income" | null;
   color: string;
+  sort_order?: number | null;
 };
 
 type DbTransaction = {
@@ -594,7 +595,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("profiles").select("role,deleted_at").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("categories").select("id,name,parent_id,category_kind,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
@@ -618,6 +619,18 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   }
   let transactionsData: unknown = transactionsResult.data;
   let transactionsError = transactionsResult.error;
+  let categoriesData: unknown = categoriesResult.data;
+  let categoriesError = categoriesResult.error;
+  if (categoriesError && /sort_order|does not exist|存在しません/i.test(categoriesError.message)) {
+    const fallback = await client
+      .from("categories")
+      .select("id,name,parent_id,category_kind,color")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("created_at");
+    categoriesData = fallback.data;
+    categoriesError = fallback.error;
+  }
   if (transactionsError && /idempotency_key|does not exist|存在しません/i.test(transactionsError.message)) {
     const fallback = await client
       .from("transactions")
@@ -641,7 +654,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     fixedCostsData = fallback.data;
     fixedCostsError = fallback.error;
   }
-  for (const result of [profileResult, householdResult, accountsResult, categoriesResult, { error: transactionsError }, { error: fixedCostsError }, goalsResult]) {
+  for (const result of [profileResult, householdResult, accountsResult, { error: categoriesError }, { error: transactionsError }, { error: fixedCostsError }, goalsResult]) {
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
@@ -672,12 +685,13 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       withdrawalDay: account.withdrawal_day ?? undefined,
       withdrawalAccountId: account.withdrawal_account_id ?? undefined
     })),
-    categories: ((categoriesResult.data ?? []) as DbCategory[]).map((category): Category => ({
+    categories: ((categoriesData ?? []) as DbCategory[]).map((category): Category => ({
       id: category.id,
       name: category.name,
       parentId: category.parent_id ?? undefined,
       kind: category.category_kind ?? (category.name === "給与" ? "income" : "expense"),
-      color: category.color
+      color: category.color,
+      sortOrder: category.sort_order ?? 0
     })),
     transactions: ((transactionsData ?? []) as DbTransaction[]).map((transaction): Transaction => {
       return {
@@ -905,9 +919,23 @@ export async function createCategory(householdId: string, input: { name: string;
     name: input.name.trim(),
     parent_id: input.parentId || null,
     category_kind: kind,
-    color
+    color,
+    sort_order: input.parentId ? (await nextCategorySortOrder(input.parentId)) : 0
   });
   if (error) throwJapanese(error, "カテゴリ追加に失敗しました。");
+}
+
+async function nextCategorySortOrder(parentId: string) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from("categories")
+    .select("sort_order")
+    .eq("parent_id", parentId)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: false })
+    .limit(1);
+  if (error) return 0;
+  return Number((data?.[0] as { sort_order?: number } | undefined)?.sort_order ?? -1) + 1;
 }
 
 export async function updateCategory(categoryId: string, input: { name: string; parentId?: string; color: string; kind?: "expense" | "income" }) {
@@ -926,7 +954,8 @@ export async function updateCategory(categoryId: string, input: { name: string; 
       .select("id,created_at")
       .eq("parent_id", categoryId)
       .is("deleted_at", null)
-      .order("created_at");
+      .order("sort_order")
+      .order("name");
     if (childrenError) throwJapanese(childrenError, "サブカテゴリーの取得に失敗しました。");
     const childUpdates = await Promise.all(((children ?? []) as Array<{ id: string }>).map((child, index) => {
       return client.from("categories").update({
@@ -937,6 +966,21 @@ export async function updateCategory(categoryId: string, input: { name: string; 
     const childError = childUpdates.find((result) => result.error)?.error;
     if (childError) throwJapanese(childError, "サブカテゴリーの色更新に失敗しました。");
   }
+}
+
+export async function updateSubcategoryOrder(parentId: string, orderedIds: string[], parentColor: string) {
+  const client = requireSupabase();
+  const updates = await Promise.all(orderedIds.map((id, index) => client
+    .from("categories")
+    .update({
+      sort_order: index,
+      color: subcategoryColor(parentColor, index)
+    })
+    .eq("id", id)
+    .eq("parent_id", parentId)
+  ));
+  const error = updates.find((result) => result.error)?.error;
+  if (error) throwJapanese(error, "サブカテゴリーの並び替えに失敗しました。");
 }
 
 export async function deleteCategory(categoryId: string) {
@@ -961,7 +1005,7 @@ export async function createFixedCost(householdId: string, input: Omit<FixedCost
     effective_from: input.effectiveFrom ?? null,
     effective_to: input.effectiveTo ?? null
   });
-  if (error) throwJapanese(error, "固定費追加に失敗しました。");
+  if (error) throwJapanese(error, "定期項目の追加に失敗しました。");
 }
 
 export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost, "id">, scope: "all" | "future" = "all", fromMonth?: string) {
@@ -971,11 +1015,11 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
     const before = new Date(Number(fromMonth.slice(0, 4)), Number(fromMonth.slice(5, 7)) - 1, 0);
     const effectiveTo = `${before.getFullYear()}-${String(before.getMonth() + 1).padStart(2, "0")}-${String(before.getDate()).padStart(2, "0")}`;
     const { data: original, error: originalError } = await client.from("fixed_costs").select("household_id").eq("id", fixedCostId).maybeSingle();
-    if (originalError) throwJapanese(originalError, "固定費更新に失敗しました。");
+    if (originalError) throwJapanese(originalError, "定期項目の更新に失敗しました。");
     const householdId = (original as { household_id?: string } | null)?.household_id;
-    if (!householdId) throw new Error("固定費が見つかりません。");
+    if (!householdId) throw new Error("定期項目が見つかりません。");
     const { error: closeError } = await client.from("fixed_costs").update({ effective_to: effectiveTo }).eq("id", fixedCostId);
-    if (closeError) throwJapanese(closeError, "固定費更新に失敗しました。");
+    if (closeError) throwJapanese(closeError, "定期項目の更新に失敗しました。");
     const { error: insertError } = await client.from("fixed_costs").insert({
       household_id: householdId,
       name: input.name,
@@ -990,7 +1034,7 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
       effective_from: effectiveFrom,
       effective_to: input.effectiveTo ?? null
     });
-    if (insertError) throwJapanese(insertError, "固定費更新に失敗しました。");
+    if (insertError) throwJapanese(insertError, "定期項目の更新に失敗しました。");
     return;
   }
   const { error } = await client.from("fixed_costs").update({
@@ -1006,7 +1050,7 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
     effective_from: input.effectiveFrom ?? null,
     effective_to: input.effectiveTo ?? null
   }).eq("id", fixedCostId);
-  if (error) throwJapanese(error, "固定費更新に失敗しました。");
+  if (error) throwJapanese(error, "定期項目の更新に失敗しました。");
 }
 
 export async function deleteFixedCost(fixedCostId: string, scope: "all" | "future" = "all", fromMonth?: string) {
@@ -1015,7 +1059,7 @@ export async function deleteFixedCost(fixedCostId: string, scope: "all" | "futur
     const before = new Date(Number(fromMonth.slice(0, 4)), Number(fromMonth.slice(5, 7)) - 1, 0);
     const effectiveTo = `${before.getFullYear()}-${String(before.getMonth() + 1).padStart(2, "0")}-${String(before.getDate()).padStart(2, "0")}`;
     const { error } = await client.from("fixed_costs").update({ effective_to: effectiveTo }).eq("id", fixedCostId);
-    if (error) throwJapanese(error, "固定費削除に失敗しました。");
+    if (error) throwJapanese(error, "定期項目の削除に失敗しました。");
     return;
   }
   const { error } = await client.from("fixed_costs").update({ deleted_at: new Date().toISOString() }).eq("id", fixedCostId);
@@ -1025,7 +1069,7 @@ export async function deleteFixedCost(fixedCostId: string, scope: "all" | "futur
   if (!rpcError) return;
 
   const { error: hardDeleteError } = await client.from("fixed_costs").delete().eq("id", fixedCostId);
-  if (hardDeleteError) throwJapanese(hardDeleteError, "固定費削除に失敗しました。");
+  if (hardDeleteError) throwJapanese(hardDeleteError, "定期項目の削除に失敗しました。");
 }
 
 export async function upsertFixedCostOverride(householdId: string, fixedCostId: string, month: string, input: {
