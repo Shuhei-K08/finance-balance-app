@@ -2234,10 +2234,10 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     setEditingAccountId(selected.id);
     setAccountDraft({
       name: selected.name,
+      startMonth: selected.startMonth,
       initialAmount: selected.initialAmount,
       monthlyContribution: selected.monthlyContribution,
-      targetMonthlyRate: selected.targetMonthlyRate,
-      annualTargetAmount: selected.annualTargetAmount,
+      targetAnnualRate: selected.targetAnnualRate,
       color: selected.color
     });
     setShowAccountForm(true);
@@ -2315,10 +2315,10 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
         {showAccountForm && (
           <div className="crud-form compact-form">
             <label>口座名<input value={accountDraft.name} onChange={(event) => setAccountDraft({ ...accountDraft, name: event.target.value })} /></label>
+            <label>開始月<input type="month" value={accountDraft.startMonth} onChange={(event) => setAccountDraft({ ...accountDraft, startMonth: event.target.value || todayIso().slice(0, 7) })} /></label>
             <label>開始評価額<input type="number" value={numberInputValue(accountDraft.initialAmount)} onChange={(event) => setAccountDraft({ ...accountDraft, initialAmount: Number(event.target.value || 0) })} /></label>
             <label>毎月積立額<input type="number" value={numberInputValue(accountDraft.monthlyContribution)} onChange={(event) => setAccountDraft({ ...accountDraft, monthlyContribution: Number(event.target.value || 0) })} /></label>
-            <label>目標月利(%)<input type="number" step="0.01" value={accountDraft.targetMonthlyRate} onChange={(event) => setAccountDraft({ ...accountDraft, targetMonthlyRate: Number(event.target.value || 0) })} /></label>
-            <label>年間目標額<input type="number" value={numberInputValue(accountDraft.annualTargetAmount)} onChange={(event) => setAccountDraft({ ...accountDraft, annualTargetAmount: Number(event.target.value || 0) })} /></label>
+            <label>目標年利(%)<input type="number" step="0.01" value={accountDraft.targetAnnualRate} onChange={(event) => setAccountDraft({ ...accountDraft, targetAnnualRate: Number(event.target.value || 0) })} /></label>
             <label>色<input type="color" value={accountDraft.color} onChange={(event) => setAccountDraft({ ...accountDraft, color: event.target.value })} /></label>
             <button className="full-primary" type="button" onClick={saveAccount}>{editingAccountId ? "変更を保存" : "投資口座を追加"}</button>
           </div>
@@ -2339,7 +2339,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <div className="investment-account-detail">
             <div>
               <strong>{selected.name}</strong>
-              <span>開始評価額 {yen.format(selected.initialAmount)} / 毎月積立 {yen.format(selected.monthlyContribution)} / 目標月利 {selected.targetMonthlyRate}%</span>
+              <span>開始月 {formatMonthLabel(selected.startMonth)} / 開始評価額 {yen.format(selected.initialAmount)} / 毎月積立 {yen.format(selected.monthlyContribution)} / 目標年利 {selected.targetAnnualRate}%</span>
             </div>
             <div className="investment-account-actions">
               <button className="mini-button" type="button" onClick={startEditAccount}>編集</button>
@@ -2360,7 +2360,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                 <YAxis hide />
                 <Tooltip formatter={(value) => yen.format(Number(value))} />
                 <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
-                <Line type="monotone" dataKey="targetValue" name="予想資産" stroke="#06b6d4" strokeWidth={2.5} strokeDasharray="4 4" dot={false} />
+                <Line type="monotone" dataKey="targetValue" name="目標評価額" stroke="#06b6d4" strokeWidth={2.5} strokeDasharray="4 4" dot={false} />
                 <Line type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
@@ -2381,7 +2381,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <section className="panel">
             <div className="section-title"><h2>月次成績</h2><span>{rows.length}ヶ月</span></div>
             <div className="investment-table">
-              <div><strong>月</strong><strong>予想</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong><strong>操作</strong></div>
+              <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong><strong>操作</strong></div>
               {rows.map((row) => (
                 <div key={row.month}>
                   <span>{row.label}</span>
@@ -2403,7 +2403,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
 }
 
 function defaultInvestmentAccountDraft() {
-  return { name: "証券口座", initialAmount: 0, monthlyContribution: 100000, targetMonthlyRate: 1, annualTargetAmount: 0, color: "#0f766e" };
+  return { name: "証券口座", startMonth: todayIso().slice(0, 7), initialAmount: 0, monthlyContribution: 100000, targetAnnualRate: 5, color: "#0f766e" };
 }
 
 function latestInvestmentValue(state: LedgerState, accountId: string, monthKey: string) {
@@ -2421,18 +2421,19 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   if (!account) return [];
   const records = (state.investmentRecords ?? []).filter((record) => record.investmentAccountId === accountId);
   const months = new Set<string>();
+  monthRange(account.startMonth, endMonthKey).forEach((month) => months.add(month));
   records.forEach((record) => {
-    if (record.month <= endMonthKey) months.add(record.month);
+    if (record.month >= account.startMonth && record.month <= endMonthKey) months.add(record.month);
   });
-  months.add(endMonthKey);
   const sortedMonths = Array.from(months).sort();
   let previousActual = account.initialAmount;
   let previousTarget = account.initialAmount;
+  const monthlyTargetRate = Math.pow(1 + account.targetAnnualRate / 100, 1 / 12) - 1;
   return sortedMonths.map((month) => {
     const record = records.find((item) => item.month === month);
     const additionalInvestment = record?.additionalInvestment ?? 0;
     const contribution = account.monthlyContribution + additionalInvestment;
-    const targetValue = Math.round(previousTarget * (1 + account.targetMonthlyRate / 100) + contribution);
+    const targetValue = Math.round(previousTarget * (1 + monthlyTargetRate) + contribution);
     const monthEndValue = record?.monthEndValue ?? targetValue;
     const assetDelta = monthEndValue - previousActual;
     const profit = monthEndValue - previousActual - contribution;
@@ -2453,6 +2454,17 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
       note: record?.note ?? ""
     };
   });
+}
+
+function monthRange(startMonthKey: string, endMonthKey: string) {
+  if (!startMonthKey || !endMonthKey || startMonthKey > endMonthKey) return [];
+  const months: string[] = [];
+  let current = startMonthKey;
+  while (current <= endMonthKey) {
+    months.push(current);
+    current = shiftMonthKey(current, 1);
+  }
+  return months;
 }
 
 function TransactionDetail({ transaction, state }: { transaction: LedgerState["transactions"][number]; state: LedgerState }) {

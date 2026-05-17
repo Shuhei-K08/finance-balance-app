@@ -129,6 +129,7 @@ export function totalAssets(state: LedgerState, throughMonthKey?: string) {
 
 export function investmentAssets(state: LedgerState, throughMonthKey = todayIso().slice(0, 7)) {
   return (state.investmentAccounts ?? []).reduce((sum, account) => {
+    if (account.startMonth && throughMonthKey < account.startMonth) return sum;
     const latest = (state.investmentRecords ?? [])
       .filter((record) => record.investmentAccountId === account.id && record.month <= throughMonthKey)
       .sort((a, b) => b.month.localeCompare(a.month))[0];

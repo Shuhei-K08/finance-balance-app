@@ -88,10 +88,10 @@ export type AssetSnapshot = {
 export type InvestmentAccount = {
   id: string;
   name: string;
+  startMonth: string;
   initialAmount: number;
   monthlyContribution: number;
-  targetMonthlyRate: number;
-  annualTargetAmount: number;
+  targetAnnualRate: number;
   color: string;
 };
 
