@@ -172,6 +172,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [quickOpen, setQuickOpen] = useState(false);
   const [quickDate, setQuickDate] = useState(todayIso());
+  const [quickType, setQuickType] = useState<TransactionType>("expense");
   const [calendarMonth, setCalendarMonth] = useState(todayIso().slice(0, 7));
   const [calendarDate, setCalendarDate] = useState(todayIso());
   const [authReady, setAuthReady] = useState(false);
@@ -291,8 +292,9 @@ export default function App() {
     ? [...baseTabs, { id: "admin" as const, label: "管理", icon: UserPlus }]
     : baseTabs;
 
-  function openQuick(date = todayIso()) {
+  function openQuick(date = todayIso(), type: TransactionType = "expense") {
     setQuickDate(date);
+    setQuickType(type);
     setQuickOpen(true);
   }
 
@@ -493,7 +495,7 @@ export default function App() {
         </div>
       </nav>
 
-      {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
+      {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} initialType={quickType} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
     </main>
   );
 }
@@ -764,7 +766,7 @@ function HomeView({
   stats: Record<string, number>;
   setNotice: (message: string) => void;
   reload: () => Promise<void>;
-  onQuick: (date?: string) => void;
+  onQuick: (date?: string, type?: TransactionType) => void;
   calendarMonth: string;
   setCalendarMonth: (value: string) => void;
   calendarDate: string;
@@ -793,6 +795,8 @@ function HomeView({
   const savingAmount = stats.income - stats.expense;
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
   const displayAssets = isCurrentMonth ? stats.forecast : stats.assets;
+  const investmentTotal = investmentAssets(state, calendarMonth);
+  const accountAssets = displayAssets - investmentTotal;
 
   const trend = useMemo(() => balanceTrend(state, calendarMonth), [state, calendarMonth]);
   const lastActual = trend.filter((point) => point.actual != null).slice(-2);
@@ -855,6 +859,9 @@ function HomeView({
       )}
 
       <div className="kpi-grid">
+        <KpiCard tone="saving" icon={Wallet} label="総資産" value={yen.format(displayAssets)} sub={isCurrentMonth ? "予定総資産" : `${monthLabel} 時点`} />
+        <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={yen.format(investmentTotal)} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
+        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" />
         <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
         <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} sub={`固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
         <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
@@ -864,15 +871,15 @@ function HomeView({
       <section className="panel">
         <div className="panel-title"><h2>クイック操作</h2><span className="panel-meta">取引タブから一覧/編集も可能</span></div>
         <div className="quick-actions">
-          <button type="button" className="qa expense" onClick={() => onQuick()}>
+          <button type="button" className="qa expense" onClick={() => onQuick(undefined, "expense")}>
             <div className="qa-icon"><ArrowUpRight size={18} /></div>
             支出を追加
           </button>
-          <button type="button" className="qa income" onClick={() => onQuick()}>
+          <button type="button" className="qa income" onClick={() => onQuick(undefined, "income")}>
             <div className="qa-icon"><ArrowDownLeft size={18} /></div>
             収入を追加
           </button>
-          <button type="button" className="qa transfer" onClick={() => onQuick()}>
+          <button type="button" className="qa transfer" onClick={() => onQuick(undefined, "transfer")}>
             <div className="qa-icon"><ArrowDownUp size={18} /></div>
             振替する
           </button>
@@ -1131,17 +1138,19 @@ function AssetSnapshotEditor({ state, monthKey, setNotice, reload, onDone }: { s
 function QuickTransactionSheet({
   state,
   initialDate,
+  initialType,
   onClose,
   onSubmit
 }: {
   state: LedgerState;
   initialDate: string;
+  initialType: TransactionType;
   onClose: () => void;
   onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string; creditPostingMode?: "used" | "withdrawal" }) => Promise<void>;
 }) {
   const usableAccounts = state.accounts;
   const normalAccounts = state.accounts.filter((account) => account.type !== "credit");
-  const [type, setType] = useState<TransactionType>("expense");
+  const [type, setType] = useState<TransactionType>(initialType);
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [accountId, setAccountId] = useState("");
@@ -1154,6 +1163,16 @@ function QuickTransactionSheet({
   const selectedAccount = state.accounts.find((account) => account.id === accountId);
   const isCreditExpense = type === "expense" && selectedAccount?.type === "credit";
   const accountChoices = type === "income" || type === "transfer" ? normalAccounts : usableAccounts;
+
+  useEffect(() => {
+    setType(initialType);
+    setDate(initialDate);
+    setCategoryId("");
+    setAccountId("");
+    setTransferToAccountId("");
+    setCreditPostingMode("used");
+    setError("");
+  }, [initialDate, initialType]);
 
   function changeType(nextType: TransactionType) {
     setType(nextType);
@@ -1688,7 +1707,7 @@ function AnnualSavingsAi({ state, monthKey }: { state: LedgerState; monthKey: st
   );
 }
 
-function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
+function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string, type?: TransactionType) => void }) {
   const [query, setQuery] = useState("");
   const [filterType, setFilterType] = useState<"all" | TransactionType>("all");
   const [filterAccount, setFilterAccount] = useState("all");
@@ -2186,24 +2205,77 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
   const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
   const [showAccountForm, setShowAccountForm] = useState(false);
-  const [accountDraft, setAccountDraft] = useState({ name: "証券口座", initialAmount: 0, monthlyContribution: 100000, targetMonthlyRate: 1, annualTargetAmount: 0, color: "#0f766e" });
-  const existingRecord = selected ? investmentRecords.find((record) => record.investmentAccountId === selected.id && record.month === monthKey) : undefined;
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+  const [accountDraft, setAccountDraft] = useState(defaultInvestmentAccountDraft());
+  const [recordMonth, setRecordMonth] = useState(monthKey);
+  const existingRecord = selected ? investmentRecords.find((record) => record.investmentAccountId === selected.id && record.month === recordMonth) : undefined;
   const [recordDraft, setRecordDraft] = useState({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
   useEffect(() => {
+    if (selected && !selectedId) setSelectedId(selected.id);
+  }, [selected?.id, selectedId]);
+  useEffect(() => {
+    setRecordMonth(monthKey);
+  }, [monthKey]);
+  useEffect(() => {
     setRecordDraft({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
-  }, [selected?.id, monthKey, existingRecord?.id]);
+  }, [selected?.id, recordMonth, existingRecord?.id]);
   const summary = selected ? investmentSummary(state, selected.id, monthKey) : null;
-  const rows = selected ? investmentRows(state, selected.id, monthKey) : [];
+  const rows = selected ? investmentRows(state, selected.id, monthKey >= recordMonth ? monthKey : recordMonth) : [];
   const totalInvestments = investmentAssets(state, monthKey);
 
+  function startAddAccount() {
+    setEditingAccountId(null);
+    setAccountDraft(defaultInvestmentAccountDraft());
+    setShowAccountForm(true);
+  }
+
+  function startEditAccount() {
+    if (!selected) return;
+    setEditingAccountId(selected.id);
+    setAccountDraft({
+      name: selected.name,
+      initialAmount: selected.initialAmount,
+      monthlyContribution: selected.monthlyContribution,
+      targetMonthlyRate: selected.targetMonthlyRate,
+      annualTargetAmount: selected.annualTargetAmount,
+      color: selected.color
+    });
+    setShowAccountForm(true);
+  }
+
   async function saveAccount() {
+    if (!accountDraft.name.trim()) {
+      setNotice("投資口座名を入力してください。");
+      return;
+    }
     try {
-      await createInvestmentAccount(state.householdId ?? "", accountDraft);
+      if (editingAccountId) {
+        await updateInvestmentAccount(editingAccountId, accountDraft);
+        setNotice("投資口座を更新しました。");
+      } else {
+        await createInvestmentAccount(state.householdId ?? "", accountDraft);
+        setNotice("投資口座を追加しました。");
+      }
       await reload();
       setShowAccountForm(false);
-      setNotice("投資口座を追加しました。");
+      setEditingAccountId(null);
     } catch (error) {
-      setNotice(toJapaneseError(error, "投資口座の追加に失敗しました。"));
+      setNotice(toJapaneseError(error, editingAccountId ? "投資口座の更新に失敗しました。" : "投資口座の追加に失敗しました。"));
+    }
+  }
+
+  async function removeAccount() {
+    if (!selected) return;
+    if (!window.confirm(`${selected.name}を削除します。月次実績も削除されます。よろしいですか？`)) return;
+    try {
+      await deleteInvestmentAccount(selected.id);
+      await reload();
+      setSelectedId("");
+      setShowAccountForm(false);
+      setEditingAccountId(null);
+      setNotice("投資口座を削除しました。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "投資口座の削除に失敗しました。"));
     }
   }
 
@@ -2212,13 +2284,13 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     try {
       await upsertInvestmentRecord(state.householdId ?? "", {
         investmentAccountId: selected.id,
-        month: monthKey,
+        month: recordMonth,
         monthEndValue: recordDraft.monthEndValue,
         additionalInvestment: recordDraft.additionalInvestment,
         note: recordDraft.note
       });
       await reload();
-      setNotice(`${formatMonthLabel(monthKey)}の投資実績を保存しました。`);
+      setNotice(`${formatMonthLabel(recordMonth)}の投資実績を保存しました。`);
     } catch (error) {
       setNotice(toJapaneseError(error, "投資実績の保存に失敗しました。"));
     }
@@ -2239,7 +2311,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
       </section>
 
       <section className="panel">
-        <div className="section-title"><h2>証券口座</h2><button className="mini-button" type="button" onClick={() => setShowAccountForm(!showAccountForm)}>{showAccountForm ? "閉じる" : "追加"}</button></div>
+        <div className="section-title"><h2>証券口座</h2><button className="mini-button" type="button" onClick={showAccountForm ? () => { setShowAccountForm(false); setEditingAccountId(null); } : startAddAccount}>{showAccountForm ? "閉じる" : "追加"}</button></div>
         {showAccountForm && (
           <div className="crud-form compact-form">
             <label>口座名<input value={accountDraft.name} onChange={(event) => setAccountDraft({ ...accountDraft, name: event.target.value })} /></label>
@@ -2248,7 +2320,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
             <label>目標月利(%)<input type="number" step="0.01" value={accountDraft.targetMonthlyRate} onChange={(event) => setAccountDraft({ ...accountDraft, targetMonthlyRate: Number(event.target.value || 0) })} /></label>
             <label>年間目標額<input type="number" value={numberInputValue(accountDraft.annualTargetAmount)} onChange={(event) => setAccountDraft({ ...accountDraft, annualTargetAmount: Number(event.target.value || 0) })} /></label>
             <label>色<input type="color" value={accountDraft.color} onChange={(event) => setAccountDraft({ ...accountDraft, color: event.target.value })} /></label>
-            <button className="full-primary" type="button" onClick={saveAccount}>投資口座を追加</button>
+            <button className="full-primary" type="button" onClick={saveAccount}>{editingAccountId ? "変更を保存" : "投資口座を追加"}</button>
           </div>
         )}
         {investmentAccounts.length === 0 ? (
@@ -2261,6 +2333,18 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                 {account.name}
               </button>
             ))}
+          </div>
+        )}
+        {selected && (
+          <div className="investment-account-detail">
+            <div>
+              <strong>{selected.name}</strong>
+              <span>開始評価額 {yen.format(selected.initialAmount)} / 毎月積立 {yen.format(selected.monthlyContribution)} / 目標月利 {selected.targetMonthlyRate}%</span>
+            </div>
+            <div className="investment-account-actions">
+              <button className="mini-button" type="button" onClick={startEditAccount}>編集</button>
+              <button className="danger-button" type="button" onClick={removeAccount}>削除</button>
+            </div>
           </div>
         )}
       </section>
@@ -2283,8 +2367,9 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           </section>
 
           <section className="panel">
-            <div className="section-title"><h2>{formatMonthLabel(monthKey)}の入力</h2><span>単月追加投資もここで入力</span></div>
+            <div className="section-title"><h2>{formatMonthLabel(recordMonth)}の入力</h2><span>過去月も追加・更新できます</span></div>
             <div className="crud-form compact-form">
+              <label>入力月<input type="month" value={recordMonth} onChange={(event) => setRecordMonth(event.target.value || monthKey)} /></label>
               <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} /></label>
               <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
               <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
@@ -2296,7 +2381,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <section className="panel">
             <div className="section-title"><h2>月次成績</h2><span>{rows.length}ヶ月</span></div>
             <div className="investment-table">
-              <div><strong>月</strong><strong>予想</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong></div>
+              <div><strong>月</strong><strong>予想</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong><strong>操作</strong></div>
               {rows.map((row) => (
                 <div key={row.month}>
                   <span>{row.label}</span>
@@ -2306,6 +2391,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
                   <span>{yen.format(row.additionalInvestment)}</span>
                   <span>{Math.round(row.achievementRate)}%</span>
+                  <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
                 </div>
               ))}
             </div>
@@ -2314,6 +2400,10 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
       )}
     </div>
   );
+}
+
+function defaultInvestmentAccountDraft() {
+  return { name: "証券口座", initialAmount: 0, monthlyContribution: 100000, targetMonthlyRate: 1, annualTargetAmount: 0, color: "#0f766e" };
 }
 
 function latestInvestmentValue(state: LedgerState, accountId: string, monthKey: string) {
