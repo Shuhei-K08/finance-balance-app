@@ -357,7 +357,7 @@ export default function App() {
       <aside className="app-sidebar" aria-label="メインメニュー">
         <div>
           <div className="brand-row">
-            <div className="brand-mark"><Wallet size={20} /></div>
+            <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "32px", height: "32px" }} /></div>
             <div className="brand-text">
               <strong>Mirai Ledger</strong>
               <small>Personal Wealth OS</small>
@@ -394,7 +394,7 @@ export default function App() {
       <div className="app-main">
         <section className="app-topbar">
           <div className="brand">
-            <div className="brand-mark"><Wallet size={18} /></div>
+            <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "28px", height: "28px" }} /></div>
             <div className="brand-text">
               <strong>Mirai Ledger</strong>
               <small>{greetingText}、{displayName}さん</small>
@@ -414,7 +414,6 @@ export default function App() {
         <section className="greeting-bar">
           <div>
             <h1>{greetingText}、{displayName}さん。</h1>
-            <span>{formatTodayLabel()} ・ 今月の予定純資産は <strong className="gradient-text">{yen.format(stats.forecast)}</strong></span>
           </div>
           <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
         </section>
@@ -510,11 +509,6 @@ function greetingByHour(date: Date) {
   return "こんばんは";
 }
 
-function formatTodayLabel(date = new Date()) {
-  const weekday = ["日", "月", "火", "水", "木", "金", "土"][date.getDay()];
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日（${weekday}）`;
-}
-
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
@@ -532,7 +526,7 @@ function SetupScreen() {
     <main className="auth-shell">
       <section className="auth-hero">
         <div className="brand">
-          <div className="brand-mark"><Wallet size={20} /></div>
+          <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "40px", height: "40px" }} /></div>
           Mirai Ledger
         </div>
         <div>
@@ -600,7 +594,7 @@ function AuthScreen({ notice, setNotice, theme }: { notice: string; setNotice: (
     <main className="auth-shell">
       <section className="auth-hero">
         <div className="brand">
-          <div className="brand-mark"><Wallet size={20} /></div>
+          <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "40px", height: "40px" }} /></div>
           Mirai Ledger
         </div>
         <div>
@@ -871,6 +865,8 @@ function HomeView({
         <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
         <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
+
+      <button type="button" style={{ width: "100%", padding: "12px", marginBottom: "16px", background: "var(--brand-soft)", border: "1px solid var(--brand)", borderRadius: "var(--radius-sm)", color: "var(--ink)", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} onClick={() => onNavigate("transactions")}><CalendarDays size={18} />カレンダーで家計簿を記入</button>
 
       <section className="panel">
         <div className="panel-title"><h2>クイック操作</h2><span className="panel-meta">取引タブから一覧/編集も可能</span></div>
@@ -2210,6 +2206,10 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
   const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
   const [showAccountForm, setShowAccountForm] = useState(false);
+  const [showContributionForm, setShowContributionForm] = useState(false);
+  const [showRecordForm, setShowRecordForm] = useState(false);
+  const [chartPeriod, setChartPeriod] = useState<"1y" | "3y" | "5y" | "all">("all");
+  const [monthlyYear, setMonthlyYear] = useState(new Date().getFullYear());
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [accountDraft, setAccountDraft] = useState(defaultInvestmentAccountDraft());
   const [recordMonth, setRecordMonth] = useState(monthKey);
@@ -2230,8 +2230,17 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     setContributionDraft({ month: monthKey, monthlyContribution: selected ? investmentContributionForMonth(state, selected, monthKey) : 0 });
   }, [selected?.id, monthKey, (state.investmentContributionChanges ?? []).length]);
   const summary = selected ? investmentSummary(state, selected.id, monthKey) : null;
-  const rows = selected ? investmentRows(state, selected.id, monthKey >= recordMonth ? monthKey : recordMonth) : [];
-  const yearlyRows = investmentYearRows(rows);
+  const allRows = selected ? investmentRows(state, selected.id, monthKey >= recordMonth ? monthKey : recordMonth) : [];
+  const filteredRows = allRows.filter((row) => {
+    const year = parseInt(row.month.slice(0, 4));
+    if (chartPeriod === "all") return true;
+    const monthsAgo = chartPeriod === "1y" ? 12 : chartPeriod === "3y" ? 36 : 60;
+    const cutoffMonth = new Date(new Date().getTime() - monthsAgo * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7);
+    return row.month >= cutoffMonth;
+  });
+  const monthlyRows = allRows.filter((row) => parseInt(row.month.slice(0, 4)) === monthlyYear);
+  const rows = filteredRows;
+  const yearlyRows = investmentYearRows(allRows);
   const totalInvestments = investmentAssets(state, monthKey);
 
   function startAddAccount() {
@@ -2384,6 +2393,12 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
         <>
           <section className="panel chart-panel">
             <div className="section-title"><h2>{selected.name}の推移</h2><span>予想と実績</span></div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
+              <button className={chartPeriod === "1y" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod("1y")}>1年</button>
+              <button className={chartPeriod === "3y" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod("3y")}>3年</button>
+              <button className={chartPeriod === "5y" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod("5y")}>5年</button>
+              <button className={chartPeriod === "all" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod("all")}>全期間</button>
+            </div>
             <ResponsiveContainer width="100%" height={230}>
               <LineChart data={rows}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
@@ -2398,13 +2413,17 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           </section>
 
           <section className="panel">
-            <div className="section-title"><h2>積立額の変更</h2><span>指定月以降の毎月積立に反映</span></div>
-            <div className="crud-form compact-form">
-              <label>変更開始月<input type="month" value={contributionDraft.month} onChange={(event) => setContributionDraft({ ...contributionDraft, month: event.target.value || monthKey })} /></label>
-              <label>毎月積立額<input type="number" value={contributionDraft.monthlyContribution} onChange={(event) => setContributionDraft({ ...contributionDraft, monthlyContribution: Number(event.target.value || 0) })} /></label>
-              <button className="google-button" type="button" onClick={() => setContributionDraft({ ...contributionDraft, monthlyContribution: 0 })}>積立停止（0円）にする</button>
-              <button className="full-primary" type="button" onClick={saveContributionChange}>積立額を保存</button>
-            </div>
+            <div className="section-title"><h2>積立額の変更</h2><button className="mini-button" type="button" onClick={() => setShowContributionForm(!showContributionForm)}>{showContributionForm ? "閉じる" : "開く"}</button></div>
+            {showContributionForm && (
+              <>
+                <div className="crud-form compact-form">
+                  <label>変更開始月<input type="month" value={contributionDraft.month} onChange={(event) => setContributionDraft({ ...contributionDraft, month: event.target.value || monthKey })} /></label>
+                  <label>毎月積立額<input type="number" value={contributionDraft.monthlyContribution} onChange={(event) => setContributionDraft({ ...contributionDraft, monthlyContribution: Number(event.target.value || 0) })} /></label>
+                  <button className="google-button" type="button" onClick={() => setContributionDraft({ ...contributionDraft, monthlyContribution: 0 })}>積立停止（0円）にする</button>
+                  <button className="full-primary" type="button" onClick={saveContributionChange}>積立額を保存</button>
+                </div>
+              </>
+            )}
             <div className="investment-change-list">
               <div>
                 <span>開始時</span>
@@ -2414,7 +2433,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                 <div key={change.id}>
                   <span>{formatMonthLabel(change.month)}から</span>
                   <strong>{yen.format(change.monthlyContribution)}</strong>
-                  <button className="mini-button" type="button" onClick={() => setContributionDraft({ month: change.month, monthlyContribution: change.monthlyContribution })}>編集</button>
+                  <button className="mini-button" type="button" onClick={() => { setShowContributionForm(true); setContributionDraft({ month: change.month, monthlyContribution: change.monthlyContribution }); }}>編集</button>
                   <button className="danger-button" type="button" onClick={async () => { try { await deleteInvestmentContributionChange(change.id); await reload(); setNotice("積立額の変更を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "積立額の変更削除に失敗しました。")); } }}>削除</button>
                 </div>
               ))}
@@ -2422,16 +2441,18 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           </section>
 
           <section className="panel">
-            <div className="section-title"><h2>{formatMonthLabel(recordMonth)}の入力</h2><span>過去月も追加・更新できます</span></div>
-            <div className="crud-form compact-form">
-              <label>入力月<input type="month" value={recordMonth} onChange={(event) => setRecordMonth(event.target.value || monthKey)} /></label>
-              <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} /></label>
-              <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
-              <label>売却額<input type="number" value={numberInputValue(recordDraft.saleAmount)} onChange={(event) => setRecordDraft({ ...recordDraft, saleAmount: Number(event.target.value || 0) })} /></label>
-              <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
-              <button className="full-primary" type="button" onClick={saveRecord}>月次実績を保存</button>
-              {existingRecord && <button className="google-button" type="button" onClick={async () => { try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); } }}>この月の実績を削除</button>}
-            </div>
+            <div className="section-title"><h2>{formatMonthLabel(recordMonth)}の入力</h2><button className="mini-button" type="button" onClick={() => setShowRecordForm(!showRecordForm)}>{showRecordForm ? "閉じる" : "開く"}</button></div>
+            {showRecordForm && (
+              <div className="crud-form compact-form">
+                <label>入力月<input type="month" value={recordMonth} onChange={(event) => setRecordMonth(event.target.value || monthKey)} /></label>
+                <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} /></label>
+                <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
+                <label>売却額<input type="number" value={numberInputValue(recordDraft.saleAmount)} onChange={(event) => setRecordDraft({ ...recordDraft, saleAmount: Number(event.target.value || 0) })} /></label>
+                <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
+                <button className="full-primary" type="button" onClick={saveRecord}>月次実績を保存</button>
+                {existingRecord && <button className="google-button" type="button" onClick={async () => { try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); } }}>この月の実績を削除</button>}
+              </div>
+            )}
           </section>
 
           <section className="panel">
@@ -2454,10 +2475,15 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           </section>
 
           <section className="panel">
-            <div className="section-title"><h2>月次成績</h2><span>{rows.length}ヶ月</span></div>
+            <div className="section-title"><h2>月次成績</h2><span>{monthlyRows.length}ヶ月</span></div>
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", alignItems: "center" }}>
+              <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear - 1)}>前年</button>
+              <span style={{ fontWeight: "bold" }}>{monthlyYear}年</span>
+              <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
+            </div>
             <div className="investment-table">
               <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>売却</strong><strong>達成率</strong><strong>操作</strong></div>
-              {rows.map((row) => (
+              {monthlyRows.map((row) => (
                 <div key={row.month}>
                   <span>{row.label}</span>
                   <span>{yen.format(row.targetValue)}</span>

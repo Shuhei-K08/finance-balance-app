@@ -2822,8 +2822,8 @@ a { color: inherit; text-decoration: none; }
 
 .investment-table > div {
   display: grid;
-  grid-template-columns: 60px repeat(8, minmax(86px, 1fr)) 64px;
-  gap: 8px;
+  grid-template-columns: 50px repeat(8, minmax(70px, 1fr)) 50px;
+  gap: 6px;
   padding: 8px 10px;
   background: var(--panel-soft);
   border-radius: 8px;
@@ -2931,6 +2931,16 @@ a { color: inherit; text-decoration: none; }
   }
   .investment-change-list > div > button {
     grid-column: span 1;
+  }
+  .investment-table > div {
+    grid-template-columns: 45px repeat(8, minmax(60px, 1fr)) 45px;
+    gap: 4px;
+    font-size: 11px;
+  }
+  .investment-year-table > div {
+    grid-template-columns: 60px repeat(7, minmax(65px, 1fr));
+    gap: 4px;
+    font-size: 11px;
   }
 }
 
