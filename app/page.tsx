@@ -796,9 +796,11 @@ function HomeView({
 
   const savingAmount = stats.income - stats.expense;
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
-  const displayAssets = isCurrentMonth ? stats.forecast : stats.assets;
   const investmentTotal = investmentAssets(state, calendarMonth);
-  const accountAssets = displayAssets - investmentTotal;
+  const accountAssets = state.accounts
+    .filter((account) => account.type !== "credit")
+    .reduce((sum, account) => sum + confirmedAccountBalance(account, state, calendarMonth), 0);
+  const displayAssets = accountAssets + investmentTotal;
 
   const trend = useMemo(() => balanceTrend(state, calendarMonth), [state, calendarMonth]);
   const lastActual = trend.filter((point) => point.actual != null).slice(-2);
