@@ -222,6 +222,7 @@ type DbInvestmentRecord = {
   record_month: string;
   month_end_value: number | string;
   additional_investment: number | string;
+  sale_amount?: number | string | null;
   note: string | null;
 };
 
@@ -647,7 +648,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
     client.from("investment_accounts").select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false }),
+    client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,sale_amount,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false }),
     client.from("investment_contribution_changes").select("id,investment_account_id,effective_month,monthly_contribution").eq("household_id", householdId).is("deleted_at", null).order("effective_month", { ascending: false })
   ]);
 
@@ -655,6 +656,18 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   const investmentTableMissing = (investmentAccountsResult.error && /investment_accounts|does not exist|存在しません/i.test(investmentAccountsResult.error.message)) ||
     (investmentRecordsResult.error && /investment_monthly_records|does not exist|存在しません/i.test(investmentRecordsResult.error.message));
   const investmentContributionChangesMissing = investmentContributionChangesResult.error && /investment_contribution_changes|does not exist|存在しません/i.test(investmentContributionChangesResult.error.message);
+  let investmentRecordsData: unknown = investmentRecordsResult.data;
+  let investmentRecordsError = investmentRecordsResult.error;
+  if (investmentRecordsError && /sale_amount|does not exist|存在しません/i.test(investmentRecordsError.message)) {
+    const fallback = await client
+      .from("investment_monthly_records")
+      .select("id,investment_account_id,record_month,month_end_value,additional_investment,note")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("record_month", { ascending: false });
+    investmentRecordsData = fallback.data;
+    investmentRecordsError = fallback.error;
+  }
   let investmentAccountsData: unknown = investmentAccountsResult.data;
   let investmentAccountsError = investmentAccountsResult.error;
   if (investmentAccountsError && /start_month|target_annual_rate|does not exist|存在しません/i.test(investmentAccountsError.message)) {
@@ -721,8 +734,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
-  if ((investmentAccountsError || investmentRecordsResult.error) && !investmentTableMissing) {
-    throwJapanese(investmentAccountsError ?? investmentRecordsResult.error, "投資データの取得に失敗しました。");
+  if ((investmentAccountsError || investmentRecordsError) && !investmentTableMissing) {
+    throwJapanese(investmentAccountsError ?? investmentRecordsError, "投資データの取得に失敗しました。");
   }
   if (investmentContributionChangesResult.error && !investmentContributionChangesMissing) throwJapanese(investmentContributionChangesResult.error, "投資積立額データの取得に失敗しました。");
   if (fixedCostOverridesError && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesError, "固定費の月別変更データの取得に失敗しました。");
@@ -823,12 +836,13 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       targetAnnualRate: Number(account.target_annual_rate ?? (Number(account.target_monthly_rate ?? 0) * 12)),
       color: account.color ?? "#0f766e"
     })),
-    investmentRecords: (investmentTableMissing ? [] : ((investmentRecordsResult.data ?? []) as DbInvestmentRecord[])).map((record): InvestmentMonthlyRecord => ({
+    investmentRecords: (investmentTableMissing ? [] : ((investmentRecordsData ?? []) as DbInvestmentRecord[])).map((record): InvestmentMonthlyRecord => ({
       id: record.id,
       investmentAccountId: record.investment_account_id,
       month: record.record_month.slice(0, 7),
       monthEndValue: toNumber(record.month_end_value),
       additionalInvestment: toNumber(record.additional_investment),
+      saleAmount: toNumber(record.sale_amount),
       note: record.note ?? undefined
     })),
     investmentContributionChanges: (investmentContributionChangesMissing ? [] : ((investmentContributionChangesResult.data ?? []) as DbInvestmentContributionChange[])).map((change): InvestmentContributionChange => ({
@@ -1037,8 +1051,21 @@ export async function upsertInvestmentRecord(householdId: string, input: Omit<In
     record_month: `${input.month}-01`,
     month_end_value: input.monthEndValue,
     additional_investment: input.additionalInvestment,
+    sale_amount: input.saleAmount,
     note: input.note || null
   }, { onConflict: "investment_account_id,record_month" });
+  if (error && /sale_amount|does not exist|存在しません/i.test(error.message)) {
+    const fallback = await client.from("investment_monthly_records").upsert({
+      household_id: householdId,
+      investment_account_id: input.investmentAccountId,
+      record_month: `${input.month}-01`,
+      month_end_value: input.monthEndValue,
+      additional_investment: input.additionalInvestment,
+      note: input.note || null
+    }, { onConflict: "investment_account_id,record_month" });
+    if (fallback.error) throwJapanese(fallback.error, "投資月次データの保存に失敗しました。");
+    return;
+  }
   if (error) throwJapanese(error, "投資月次データの保存に失敗しました。");
 }
 

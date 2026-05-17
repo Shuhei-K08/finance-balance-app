@@ -101,6 +101,7 @@ export type InvestmentMonthlyRecord = {
   month: string;
   monthEndValue: number;
   additionalInvestment: number;
+  saleAmount: number;
   note?: string;
 };
 
