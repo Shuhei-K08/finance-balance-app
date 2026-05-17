@@ -180,6 +180,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [notice, setNotice] = useState("");
+  const [userDisplayName, setUserDisplayName] = useState<string>("");
   const { theme, setTheme } = useTheme();
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | undefined>(() => {
     if (typeof window === "undefined") return undefined;
@@ -209,11 +210,14 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setIsAuthed(Boolean(session));
       if (session) {
+        const displayName = session.user.user_metadata?.display_name || session.user.user_metadata?.full_name || session.user.email?.split("@")[0] || "ユーザー";
+        setUserDisplayName(displayName);
         setTimeout(() => {
           refreshRemoteState().catch((error) => setNotice(toJapaneseError(error, "家計簿データの読み込みに失敗しました。")));
         }, 0);
       } else {
         setState(null);
+        setUserDisplayName("");
       }
     });
 
@@ -222,6 +226,8 @@ export default function App() {
       if (!mounted) return;
       setIsAuthed(Boolean(sessionResult.data.session));
       if (sessionResult.data.session) {
+        const displayName = sessionResult.data.session.user.user_metadata?.display_name || sessionResult.data.session.user.user_metadata?.full_name || sessionResult.data.session.user.email?.split("@")[0] || "ユーザー";
+        setUserDisplayName(displayName);
         try {
           await withTimeout(refreshRemoteState(), 12000, "家計簿データの読み込みがタイムアウトしました。");
         } catch (error) {
@@ -348,7 +354,7 @@ export default function App() {
     }
   }
 
-  const displayName = (state.householdName ?? "ようこそ").replace(/家計簿$/, "");
+  const displayName = userDisplayName || (state?.householdName ?? "ようこそ").replace(/家計簿$/, "");
   const greetingText = greetingByHour(new Date());
 
   return (
@@ -865,8 +871,6 @@ function HomeView({
         <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
         <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
-
-      <button type="button" style={{ width: "100%", padding: "12px", marginBottom: "16px", background: "var(--brand-soft)", border: "1px solid var(--brand)", borderRadius: "var(--radius-sm)", color: "var(--ink)", fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }} onClick={() => onNavigate("transactions")}><CalendarDays size={18} />カレンダーで家計簿を記入</button>
 
       <section className="panel">
         <div className="panel-title"><h2>クイック操作</h2><span className="panel-meta">取引タブから一覧/編集も可能</span></div>
