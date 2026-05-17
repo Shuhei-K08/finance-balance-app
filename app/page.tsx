@@ -962,17 +962,6 @@ function HomeView({
         )}
       </section>
 
-      <HomeCalendar
-        state={state}
-        setNotice={setNotice}
-        reload={reload}
-        onQuick={onQuick}
-        selectedMonth={calendarMonth}
-        setSelectedMonth={setCalendarMonth}
-        selectedDate={calendarDate}
-        setSelectedDate={setCalendarDate}
-      />
-
       {homeEntryModal && (
         <HomeEntryModal
           type={homeEntryModal}
@@ -1713,6 +1702,7 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
   const [filterAccount, setFilterAccount] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
   const [periodMode, setPeriodMode] = useState<"month" | "all">("month");
+  const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
 
   const filtered = useMemo(() => {
     const q = query.trim();
@@ -1749,66 +1739,91 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
     <div className="view-stack">
       <section className="panel">
         <div className="panel-title">
-          <h2>取引一覧</h2>
-          <span className="panel-meta">{filtered.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
-        </div>
-        <div className="tx-toolbar">
-          <div className="tx-search">
-            <Search className="search-icon" size={18} />
-            <input type="text" placeholder="メモ・カテゴリ・口座・金額で検索…" value={query} onChange={(event) => setQuery(event.target.value)} />
-          </div>
-          <div className="tx-filters">
-            <select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as "month" | "all")}>
-              <option value="month">{formatMonthLabel(monthKey)}のみ</option>
-              <option value="all">全期間</option>
-            </select>
-            <select value={filterType} onChange={(event) => setFilterType(event.target.value as "all" | TransactionType)}>
-              <option value="all">すべての種類</option>
-              <option value="expense">支出</option>
-              <option value="income">収入</option>
-              <option value="transfer">振替</option>
-            </select>
-            <select value={filterAccount} onChange={(event) => setFilterAccount(event.target.value)}>
-              <option value="all">すべての口座</option>
-              {state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-            </select>
-            <select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
-              <option value="all">すべてのカテゴリ</option>
-              {state.categories.filter((c) => !c.parentId).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-            </select>
-          </div>
+          <h2>取引</h2>
+          <span className="panel-meta" style={{ display: "flex", gap: "8px" }}>
+            <button className={viewMode === "calendar" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setViewMode("calendar")}>📅 カレンダー</button>
+            <button className={viewMode === "list" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setViewMode("list")}>📋 一覧</button>
+          </span>
         </div>
       </section>
 
-      {grouped.length === 0 ? (
-        <section className="panel">
-          <div className="empty-state">
-            <div className="empty-illustration"><Receipt size={20} /></div>
-            該当する取引はありません。右下の + ボタンから登録してみましょう。
-            <button className="primary-btn" type="button" style={{ marginTop: 8 }} onClick={() => onQuick()}><Plus size={16} /> 取引を追加</button>
-          </div>
-        </section>
+      {viewMode === "calendar" ? (
+        <HomeCalendar
+          state={state}
+          setNotice={setNotice}
+          reload={reload}
+          onQuick={(date) => onQuick(date, "expense")}
+          selectedMonth={monthKey}
+          setSelectedMonth={() => {}}
+          selectedDate={monthKey + "-01"}
+          setSelectedDate={() => {}}
+        />
       ) : (
-        <section className="panel">
-          {grouped.map(([date, items]) => {
-            const dayTotal = items.reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : tx.type === "expense" ? -tx.amount : 0), 0);
-            return (
-              <div key={date}>
-                <div className="tx-group-head">
-                  <span className="day">{formatDayLabel(date)}</span>
-                  <span className="total" style={{ color: dayTotal > 0 ? "var(--income)" : dayTotal < 0 ? "var(--expense)" : "var(--muted)" }}>
-                    {dayTotal > 0 ? "+" : ""}{yen.format(dayTotal)}
-                  </span>
-                </div>
-                <div className="tx-list">
-                  {items.map((transaction) => (
-                    <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />
-                  ))}
-                </div>
+        <>
+          <section className="panel">
+            <div className="panel-title">
+              <h2>取引一覧</h2>
+              <span className="panel-meta">{filtered.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
+            </div>
+            <div className="tx-toolbar">
+              <div className="tx-search">
+                <Search className="search-icon" size={18} />
+                <input type="text" placeholder="メモ・カテゴリ・口座・金額で検索…" value={query} onChange={(event) => setQuery(event.target.value)} />
               </div>
-            );
-          })}
-        </section>
+              <div className="tx-filters">
+                <select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as "month" | "all")}>
+                  <option value="month">{formatMonthLabel(monthKey)}のみ</option>
+                  <option value="all">全期間</option>
+                </select>
+                <select value={filterType} onChange={(event) => setFilterType(event.target.value as "all" | TransactionType)}>
+                  <option value="all">すべての種類</option>
+                  <option value="expense">支出</option>
+                  <option value="income">収入</option>
+                  <option value="transfer">振替</option>
+                </select>
+                <select value={filterAccount} onChange={(event) => setFilterAccount(event.target.value)}>
+                  <option value="all">すべての口座</option>
+                  {state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                </select>
+                <select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
+                  <option value="all">すべてのカテゴリ</option>
+                  {state.categories.filter((c) => !c.parentId).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </section>
+
+          {grouped.length === 0 ? (
+            <section className="panel">
+              <div className="empty-state">
+                <div className="empty-illustration"><Receipt size={20} /></div>
+                該当する取引はありません。右下の + ボタンから登録してみましょう。
+                <button className="primary-btn" type="button" style={{ marginTop: 8 }} onClick={() => onQuick()}><Plus size={16} /> 取引を追加</button>
+              </div>
+            </section>
+          ) : (
+            <section className="panel">
+              {grouped.map(([date, items]) => {
+                const dayTotal = items.reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : tx.type === "expense" ? -tx.amount : 0), 0);
+                return (
+                  <div key={date}>
+                    <div className="tx-group-head">
+                      <span className="day">{formatDayLabel(date)}</span>
+                      <span className="total" style={{ color: dayTotal > 0 ? "var(--income)" : dayTotal < 0 ? "var(--expense)" : "var(--muted)" }}>
+                        {dayTotal > 0 ? "+" : ""}{yen.format(dayTotal)}
+                      </span>
+                    </div>
+                    <div className="tx-list">
+                      {items.map((transaction) => (
+                        <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </section>
+          )}
+        </>
       )}
     </div>
   );
