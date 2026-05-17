@@ -79,7 +79,18 @@ export function calculateAccountBalance(account: Account, transactions: Transact
 }
 
 export function calculateAccountBalanceInState(account: Account, state: LedgerState, throughMonthKey?: string) {
-  if (!throughMonthKey) return calculateAccountBalance(account, state.transactions);
+  if (!throughMonthKey) {
+    // Use latest snapshot as base (avoids drift when opening balance is old)
+    const snapshots = state.assetSnapshots
+      .filter((snapshot) => snapshot.accountId === account.id)
+      .sort((a, b) => b.month.localeCompare(a.month));
+    const latestSnapshot = snapshots[0];
+    const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
+    const rows = state.transactions.filter((transaction) => !since || transactionLedgerDate(transaction) > since);
+    return rows.reduce((balance, transaction) => {
+      return balance + transactionAssetDeltaForAccount(transaction, account, state.accounts);
+    }, latestSnapshot?.amount ?? account.openingBalance);
+  }
   const snapshots = state.assetSnapshots
     .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < throughMonthKey)
     .sort((a, b) => b.month.localeCompare(a.month));

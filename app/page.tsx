@@ -140,7 +140,6 @@ const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "transactions", label: "取引", icon: Receipt },
   { id: "analysis", label: "分析", icon: BarChart3 },
   { id: "investments", label: "投資", icon: Landmark },
-  { id: "goals", label: "目標", icon: Target },
   { id: "settings", label: "設定", icon: Settings }
 ];
 
@@ -779,6 +778,7 @@ function HomeView({
   const suggestedPromptMonth = suggestedAssetSnapshotMonth(state);
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
   const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | "credit" | null>(null);
+  const [accountHistoryId, setAccountHistoryId] = useState<string | null>(null);
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -904,7 +904,7 @@ function HomeView({
                 const balance = calculateAccountBalanceInState(account, state);
                 const ratio = totalLiquid > 0 ? Math.max(Math.min(balance / totalLiquid, 1), 0) : 0;
                 return (
-                  <div className="account-row" key={account.id}>
+                  <div className="account-row account-row-clickable" key={account.id} onClick={() => setAccountHistoryId(account.id)} role="button" tabIndex={0}>
                     <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
                     <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
                     <div className="balance">{yen.format(balance)}<small>{(ratio * 100).toFixed(0)}%</small></div>
@@ -972,6 +972,13 @@ function HomeView({
           onClose={() => setHomeEntryModal(null)}
         />
       )}
+      {accountHistoryId && (
+        <AccountHistoryModal
+          accountId={accountHistoryId}
+          state={state}
+          onClose={() => setAccountHistoryId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -989,6 +996,77 @@ function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "inco
   );
   return (
     <button type="button" className={`kpi-card ${tone}`} onClick={onClick}>{content}</button>
+  );
+}
+
+function AccountHistoryModal({ accountId, state, onClose }: { accountId: string; state: LedgerState; onClose: () => void }) {
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!account) return null;
+
+  // Build last 13 months of balance data
+  const today = todayIso();
+  const currentMonth = today.slice(0, 7);
+  const months: string[] = [];
+  for (let i = 12; i >= 0; i--) {
+    const d = new Date(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)) - 1 - i, 1);
+    months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const chartData = months.map((month) => ({
+    label: `${Number(month.slice(5, 7))}月`,
+    fullLabel: `${month.slice(0, 4)}/${Number(month.slice(5, 7))}月`,
+    value: confirmedAccountBalance(account, state, month)
+  }));
+  const latest = chartData[chartData.length - 1].value;
+  const earliest = chartData[0].value;
+  const change = latest - earliest;
+
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 560px)" }}>
+        <div className="section-title">
+          <h2>
+            <span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: account.color, marginRight: 8, verticalAlign: "middle" }} />
+            {account.name}
+          </h2>
+          <span>{accountTypeLabel(account.type)}</span>
+        </div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div><div style={{ fontSize: 11, color: "var(--muted)" }}>現在残高</div><div style={{ fontSize: 20, fontWeight: 800, fontFamily: "var(--font-num)" }}>{yen.format(latest)}</div></div>
+          <div><div style={{ fontSize: 11, color: "var(--muted)" }}>12ヶ月変動</div><div style={{ fontSize: 18, fontWeight: 700, color: change >= 0 ? "var(--income)" : "var(--expense)", fontFamily: "var(--font-num)" }}>{change >= 0 ? "+" : ""}{yen.format(change)}</div></div>
+        </div>
+        <div style={{ marginTop: 4 }}>
+          <ResponsiveContainer width="100%" height={160}>
+            <AreaChart data={chartData} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="acctGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={account.color} stopOpacity={0.5} />
+                  <stop offset="100%" stopColor={account.color} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
+              <YAxis hide />
+              <Tooltip formatter={(v) => yen.format(Number(v))} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} />
+              <Area type="monotone" dataKey="value" name="残高" stroke={account.color} strokeWidth={2.5} fill="url(#acctGrad)" dot={false} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="account-history-list">
+          {[...chartData].reverse().slice(0, 7).map((row, i) => {
+            const prev = [...chartData].reverse()[i + 1];
+            const diff = prev ? row.value - prev.value : 0;
+            return (
+              <div key={row.fullLabel} className="account-history-row">
+                <span className="acct-hist-label">{row.fullLabel}</span>
+                <span className="acct-hist-value">{yen.format(row.value)}</span>
+                {prev && <span className={`acct-hist-diff ${diff >= 0 ? "positive" : "negative"}`}>{diff >= 0 ? "+" : ""}{yen.format(diff)}</span>}
+              </div>
+            );
+          })}
+        </div>
+        <button className="google-button" type="button" onClick={onClose}>閉じる</button>
+      </section>
+    </div>
   );
 }
 
@@ -2472,20 +2550,22 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
 
           <section className="panel">
             <div className="section-title"><h2>年ごとの投資実績</h2><span>{yearlyRows.length}年分</span></div>
-            <div className="investment-year-table">
-              <div><strong>年</strong><strong>年末評価額</strong><strong>積立</strong><strong>追加投資</strong><strong>売却</strong><strong>純利益</strong><strong>増減</strong><strong>年利</strong></div>
-              {yearlyRows.map((row) => (
-                <div key={row.year}>
-                  <span>{row.year}年</span>
-                  <span>{yen.format(row.endValue)}</span>
-                  <span>{yen.format(row.monthlyContribution)}</span>
-                  <span>{yen.format(row.additionalInvestment)}</span>
-                  <span>{yen.format(row.saleAmount)}</span>
-                  <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
-                  <span className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</span>
-                  <span className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</span>
-                </div>
-              ))}
+            <div className="investment-table-scroll">
+              <div className="investment-year-table">
+                <div><strong>年</strong><strong>年末評価額</strong><strong>積立</strong><strong>追加投資</strong><strong>売却</strong><strong>純利益</strong><strong>増減</strong><strong>年利</strong></div>
+                {yearlyRows.map((row) => (
+                  <div key={row.year}>
+                    <span>{row.year}年</span>
+                    <span>{yen.format(row.endValue)}</span>
+                    <span>{yen.format(row.monthlyContribution)}</span>
+                    <span>{yen.format(row.additionalInvestment)}</span>
+                    <span>{yen.format(row.saleAmount)}</span>
+                    <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                    <span className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</span>
+                    <span className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</span>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
 
@@ -2496,22 +2576,24 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               <span style={{ fontWeight: "bold" }}>{monthlyYear}年</span>
               <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
             </div>
-            <div className="investment-table">
-              <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>売却</strong><strong>達成率</strong><strong>操作</strong></div>
-              {monthlyRows.map((row) => (
-                <div key={row.month}>
-                  <span>{row.label}</span>
-                  <span>{yen.format(row.targetValue)}</span>
-                  <span>{yen.format(row.monthEndValue)}</span>
-                  <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
-                  <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
-                  <span>{yen.format(row.monthlyContribution)}</span>
-                  <span>{yen.format(row.additionalInvestment)}</span>
-                  <span>{yen.format(row.saleAmount)}</span>
-                  <span>{Math.round(row.achievementRate)}%</span>
-                  <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
-                </div>
-              ))}
+            <div className="investment-table-scroll">
+              <div className="investment-table">
+                <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>売却</strong><strong>達成率</strong><strong>操作</strong></div>
+                {monthlyRows.map((row) => (
+                  <div key={row.month}>
+                    <span>{row.label}</span>
+                    <span>{yen.format(row.targetValue)}</span>
+                    <span>{yen.format(row.monthEndValue)}</span>
+                    <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
+                    <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                    <span>{yen.format(row.monthlyContribution)}</span>
+                    <span>{yen.format(row.additionalInvestment)}</span>
+                    <span>{yen.format(row.saleAmount)}</span>
+                    <span>{Math.round(row.achievementRate)}%</span>
+                    <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
+                  </div>
+                ))}
+              </div>
             </div>
           </section>
         </>

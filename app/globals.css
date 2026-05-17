@@ -2814,16 +2814,23 @@ a { color: inherit; text-decoration: none; }
   border-color: var(--line);
 }
 
+/* Scroll wrapper for wide tables on mobile */
+.investment-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 -4px;
+  padding: 0 4px 4px;
+}
+
 .investment-table, .investment-year-table, .admin-table {
   display: grid;
   gap: 4px;
-  overflow-x: auto;
-  overflow-y: visible;
+  min-width: max-content;
 }
 
 .investment-table > div {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 10px 8px;
   background: var(--panel-soft);
@@ -2833,15 +2840,16 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
 }
 
-.investment-table > div > span {
+.investment-table > div > span,
+.investment-table > div > button {
   flex: 0 0 auto;
-  min-width: fit-content;
+  min-width: 48px;
   padding: 2px 4px;
 }
 
 .investment-year-table > div {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   padding: 10px 8px;
   background: var(--panel-soft);
@@ -2853,7 +2861,7 @@ a { color: inherit; text-decoration: none; }
 
 .investment-year-table > div > span {
   flex: 0 0 auto;
-  min-width: fit-content;
+  min-width: 56px;
   padding: 2px 4px;
 }
 
@@ -2947,21 +2955,11 @@ a { color: inherit; text-decoration: none; }
   .investment-change-list > div > button {
     grid-column: span 1;
   }
-  .investment-table > div {
-    gap: 6px;
-    padding: 8px 6px;
-    font-size: 9px;
-  }
-  .investment-table > div > span {
-    padding: 1px 2px;
-  }
+  .investment-table > div,
   .investment-year-table > div {
     gap: 6px;
     padding: 8px 6px;
-    font-size: 9px;
-  }
-  .investment-year-table > div > span {
-    padding: 1px 2px;
+    font-size: 10px;
   }
 }
 
@@ -3081,7 +3079,7 @@ a { color: inherit; text-decoration: none; }
 .fixed-occurrence-row {
   display: grid;
   grid-template-columns: 38px 1fr auto auto;
-  gap: 12px;
+  gap: 8px 12px;
   align-items: center;
   padding: 12px 14px;
   background: var(--panel-soft);
@@ -3102,10 +3100,10 @@ a { color: inherit; text-decoration: none; }
 
 .fixed-occurrence-row .tx-icon.fixed { background: linear-gradient(135deg, #fbbf24, #f97316); }
 
-.fixed-occurrence-row > div { display: grid; gap: 2px; min-width: 0; }
-.fixed-occurrence-row > div strong { font-weight: 600; font-size: 14px; }
-.fixed-occurrence-row > div span { font-size: 11px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
-.fixed-occurrence-row em { font-style: normal; font-family: var(--font-num); font-weight: 700; }
+.fixed-occurrence-row > div { display: grid; gap: 2px; min-width: 0; overflow: hidden; }
+.fixed-occurrence-row > div strong { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fixed-occurrence-row > div span { font-size: 11px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; line-height: 1.5; }
+.fixed-occurrence-row em { font-style: normal; font-family: var(--font-num); font-weight: 700; white-space: nowrap; }
 
 .fixed-occurrence-row .mini-button {
   padding: 6px 10px;
@@ -3346,6 +3344,67 @@ input[type="color"] {
 }
 
 .divider-line { height: 1px; background: var(--line); margin: 6px 0; }
+
+/* Account row — clickable */
+.account-row-clickable {
+  cursor: pointer;
+}
+.account-row-clickable:active {
+  background: var(--panel-elev);
+  transform: scale(0.99);
+}
+
+/* Account history modal */
+.account-history-list {
+  display: grid;
+  gap: 4px;
+}
+.account-history-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  background: var(--panel-soft);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.acct-hist-label {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+.acct-hist-value {
+  font-family: var(--font-num);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.acct-hist-diff {
+  font-family: var(--font-num);
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 80px;
+  text-align: right;
+}
+.acct-hist-diff.positive { color: var(--income); }
+.acct-hist-diff.negative { color: var(--expense); }
+
+/* Mobile: CalendarDay modal fixed-occurrence rows */
+@media (max-width: 480px) {
+  .fixed-occurrence-row {
+    grid-template-columns: 32px 1fr;
+    gap: 6px 10px;
+    padding: 10px 12px;
+  }
+  .fixed-occurrence-row em {
+    grid-column: 2;
+    font-size: 14px;
+  }
+  .fixed-occurrence-row .mini-button {
+    grid-column: 1 / -1;
+    width: 100%;
+    text-align: center;
+  }
+}
 
 /* Print */
 @media print {
