@@ -46,5 +46,7 @@ export const initialState: LedgerState = {
     { id: "g1", name: "生活防衛資金", targetAmount: 2000000, accountId: "saving", deadline: "2028-12-31", monthlyBoost: 0 },
     { id: "g2", name: "旅行資金", targetAmount: 450000, accountId: "saving", deadline: "2027-08-31", monthlyBoost: 12000 }
   ],
-  assetSnapshots: []
+  assetSnapshots: [],
+  investmentAccounts: [],
+  investmentRecords: []
 };

@@ -44,6 +44,7 @@ import {
   fixedCostOccurrencesForMonth,
   fixedCostForecast,
   goalProjection,
+  investmentAssets,
   monthTransactions,
   monthTransactionsByKey,
   monthlyCreditWithdrawals,
@@ -74,11 +75,14 @@ import {
   adminResumeUser,
   adminSuspendUser,
   createAccount,
+  createInvestmentAccount,
   createCategory,
   createFixedCost,
   createGoal,
   deleteAccount,
+  deleteInvestmentAccount,
   deleteCategory,
+  deleteInvestmentRecord,
   deleteFixedCost,
   deleteGoal,
   deleteSharedLedger,
@@ -97,12 +101,14 @@ import {
   signOut,
   signUpWithEmail,
   updateAccount,
+  updateInvestmentAccount,
   updateCategory,
   updateFixedCost,
   updateGoal,
   updateOpeningBalances,
   updateSubcategoryOrder,
   updateTransaction,
+  upsertInvestmentRecord,
   upsertFixedCostOverride,
   upsertAssetSnapshots,
   extractErrorText,
@@ -111,11 +117,12 @@ import {
 import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
-type Tab = "home" | "analysis" | "goals" | "settings" | "admin";
+type Tab = "home" | "analysis" | "investments" | "goals" | "settings" | "admin";
 
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
   { id: "analysis", label: "分析", icon: BarChart3 },
+  { id: "investments", label: "投資", icon: Landmark },
   { id: "goals", label: "目標", icon: Goal },
   { id: "settings", label: "設定", icon: Settings }
 ];
@@ -356,6 +363,7 @@ export default function App() {
           stats={stats}
         />
       )}
+      {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
       {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
       {tab === "admin" && state.profileRole === "admin" && <AdminView />}
@@ -1679,6 +1687,190 @@ function goalDeadlinePlan(goal: LedgerState["goals"][number], state: LedgerState
     averageSaving,
     gap: Math.max(requiredMonthly - averageSaving, 0)
   };
+}
+
+function InvestmentsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const investmentAccounts = state.investmentAccounts ?? [];
+  const investmentRecords = state.investmentRecords ?? [];
+  const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
+  const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
+  const [showAccountForm, setShowAccountForm] = useState(false);
+  const [accountDraft, setAccountDraft] = useState({ name: "証券口座", initialAmount: 0, monthlyContribution: 100000, targetMonthlyRate: 1, annualTargetAmount: 0, color: "#0f766e" });
+  const existingRecord = selected ? investmentRecords.find((record) => record.investmentAccountId === selected.id && record.month === monthKey) : undefined;
+  const [recordDraft, setRecordDraft] = useState({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
+  useEffect(() => {
+    setRecordDraft({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
+  }, [selected?.id, monthKey, existingRecord?.id]);
+  const summary = selected ? investmentSummary(state, selected.id, monthKey) : null;
+  const rows = selected ? investmentRows(state, selected.id, monthKey) : [];
+  const totalInvestments = investmentAssets(state, monthKey);
+
+  async function saveAccount() {
+    try {
+      await createInvestmentAccount(state.householdId ?? "", accountDraft);
+      await reload();
+      setShowAccountForm(false);
+      setNotice("投資口座を追加しました。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "投資口座の追加に失敗しました。"));
+    }
+  }
+
+  async function saveRecord() {
+    if (!selected) return;
+    try {
+      await upsertInvestmentRecord(state.householdId ?? "", {
+        investmentAccountId: selected.id,
+        month: monthKey,
+        monthEndValue: recordDraft.monthEndValue,
+        additionalInvestment: recordDraft.additionalInvestment,
+        note: recordDraft.note
+      });
+      await reload();
+      setNotice(`${formatMonthLabel(monthKey)}の投資実績を保存しました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "投資実績の保存に失敗しました。"));
+    }
+  }
+
+  return (
+    <div className="view-stack">
+      <section className="panel investment-hero">
+        <div className="section-title">
+          <h2>投資管理</h2>
+          <span>{formatMonthLabel(monthKey)}</span>
+        </div>
+        <div className="month-summary">
+          <span>投資評価額 <strong>{yen.format(totalInvestments)}</strong></span>
+          <span>月間損益 <strong>{yen.format(summary?.profit ?? 0)}</strong></span>
+          <span>目標達成率 <strong>{Math.round(summary?.achievementRate ?? 0)}%</strong></span>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="section-title"><h2>証券口座</h2><button className="mini-button" type="button" onClick={() => setShowAccountForm(!showAccountForm)}>{showAccountForm ? "閉じる" : "追加"}</button></div>
+        {showAccountForm && (
+          <div className="crud-form compact-form">
+            <label>口座名<input value={accountDraft.name} onChange={(event) => setAccountDraft({ ...accountDraft, name: event.target.value })} /></label>
+            <label>開始評価額<input type="number" value={numberInputValue(accountDraft.initialAmount)} onChange={(event) => setAccountDraft({ ...accountDraft, initialAmount: Number(event.target.value || 0) })} /></label>
+            <label>毎月積立額<input type="number" value={numberInputValue(accountDraft.monthlyContribution)} onChange={(event) => setAccountDraft({ ...accountDraft, monthlyContribution: Number(event.target.value || 0) })} /></label>
+            <label>目標月利(%)<input type="number" step="0.01" value={accountDraft.targetMonthlyRate} onChange={(event) => setAccountDraft({ ...accountDraft, targetMonthlyRate: Number(event.target.value || 0) })} /></label>
+            <label>年間目標額<input type="number" value={numberInputValue(accountDraft.annualTargetAmount)} onChange={(event) => setAccountDraft({ ...accountDraft, annualTargetAmount: Number(event.target.value || 0) })} /></label>
+            <label>色<input type="color" value={accountDraft.color} onChange={(event) => setAccountDraft({ ...accountDraft, color: event.target.value })} /></label>
+            <button className="full-primary" type="button" onClick={saveAccount}>投資口座を追加</button>
+          </div>
+        )}
+        {investmentAccounts.length === 0 ? (
+          <div className="empty-state"><span>投資口座を追加すると、月次の評価額と損益を管理できます。</span></div>
+        ) : (
+          <div className="ledger-switch compact-switch">
+            {investmentAccounts.map((account) => (
+              <button className={selected?.id === account.id ? "active" : ""} key={account.id} type="button" onClick={() => setSelectedId(account.id)}>
+                <span>{yen.format(latestInvestmentValue(state, account.id, monthKey))}</span>
+                {account.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {selected && (
+        <>
+          <section className="panel chart-panel">
+            <div className="section-title"><h2>{selected.name}の推移</h2><span>予想と実績</span></div>
+            <ResponsiveContainer width="100%" height={230}>
+              <LineChart data={rows}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} />
+                <YAxis hide />
+                <Tooltip formatter={(value) => yen.format(Number(value))} />
+                <Line type="monotone" dataKey="targetValue" name="予想資産" stroke="#2563eb" strokeWidth={2.5} strokeDasharray="4 4" />
+                <Line type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color} strokeWidth={3} />
+              </LineChart>
+            </ResponsiveContainer>
+          </section>
+
+          <section className="panel">
+            <div className="section-title"><h2>{formatMonthLabel(monthKey)}の入力</h2><span>単月追加投資もここで入力</span></div>
+            <div className="crud-form compact-form">
+              <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} /></label>
+              <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
+              <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
+              <button className="full-primary" type="button" onClick={saveRecord}>月次実績を保存</button>
+              {existingRecord && <button className="google-button" type="button" onClick={async () => { try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); } }}>この月の実績を削除</button>}
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-title"><h2>月次成績</h2><span>{rows.length}ヶ月</span></div>
+            <div className="investment-table">
+              <div><strong>月</strong><strong>予想</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong></div>
+              {rows.map((row) => (
+                <div key={row.month}>
+                  <span>{row.label}</span>
+                  <span>{yen.format(row.targetValue)}</span>
+                  <span>{yen.format(row.monthEndValue)}</span>
+                  <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
+                  <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                  <span>{yen.format(row.additionalInvestment)}</span>
+                  <span>{Math.round(row.achievementRate)}%</span>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+function latestInvestmentValue(state: LedgerState, accountId: string, monthKey: string) {
+  const account = (state.investmentAccounts ?? []).find((item) => item.id === accountId);
+  const latest = (state.investmentRecords ?? []).filter((record) => record.investmentAccountId === accountId && record.month <= monthKey).sort((a, b) => b.month.localeCompare(a.month))[0];
+  return latest?.monthEndValue ?? account?.initialAmount ?? 0;
+}
+
+function investmentSummary(state: LedgerState, accountId: string, monthKey: string) {
+  return investmentRows(state, accountId, monthKey).find((row) => row.month === monthKey);
+}
+
+function investmentRows(state: LedgerState, accountId: string, endMonthKey: string) {
+  const account = (state.investmentAccounts ?? []).find((item) => item.id === accountId);
+  if (!account) return [];
+  const records = (state.investmentRecords ?? []).filter((record) => record.investmentAccountId === accountId);
+  const months = new Set<string>();
+  records.forEach((record) => {
+    if (record.month <= endMonthKey) months.add(record.month);
+  });
+  months.add(endMonthKey);
+  const sortedMonths = Array.from(months).sort();
+  let previousActual = account.initialAmount;
+  let previousTarget = account.initialAmount;
+  return sortedMonths.map((month) => {
+    const record = records.find((item) => item.month === month);
+    const additionalInvestment = record?.additionalInvestment ?? 0;
+    const contribution = account.monthlyContribution + additionalInvestment;
+    const targetValue = Math.round(previousTarget * (1 + account.targetMonthlyRate / 100) + contribution);
+    const monthEndValue = record?.monthEndValue ?? targetValue;
+    const assetDelta = monthEndValue - previousActual;
+    const profit = monthEndValue - previousActual - contribution;
+    const monthlyReturnRate = previousActual + contribution > 0 ? (profit / (previousActual + contribution)) * 100 : 0;
+    const achievementRate = targetValue > 0 ? (monthEndValue / targetValue) * 100 : 0;
+    previousActual = monthEndValue;
+    previousTarget = targetValue;
+    return {
+      month,
+      label: `${Number(month.slice(5, 7))}月`,
+      targetValue,
+      monthEndValue,
+      additionalInvestment,
+      assetDelta,
+      profit,
+      monthlyReturnRate,
+      achievementRate,
+      note: record?.note ?? ""
+    };
+  });
 }
 
 function TransactionDetail({ transaction, state }: { transaction: LedgerState["transactions"][number]; state: LedgerState }) {

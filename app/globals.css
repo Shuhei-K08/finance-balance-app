@@ -432,6 +432,58 @@ h2 {
   font-weight: 900;
 }
 
+.investment-hero {
+  border-color: rgba(15, 118, 110, 0.28);
+  background: linear-gradient(135deg, #ecfdf5, #fffaf2);
+}
+
+.compact-switch {
+  margin: 0;
+}
+
+.compact-form {
+  margin-top: 8px;
+}
+
+.investment-table {
+  display: grid;
+  overflow-x: auto;
+}
+
+.investment-table > div {
+  display: grid;
+  grid-template-columns: 58px repeat(6, minmax(98px, 1fr));
+  min-width: 740px;
+  border-bottom: 1px solid var(--line);
+}
+
+.investment-table > div:first-child {
+  border-top: 1px solid var(--line);
+  background: #ecfeff;
+}
+
+.investment-table span,
+.investment-table strong {
+  padding: 9px 8px;
+  border-right: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.investment-table span:first-child,
+.investment-table strong:first-child {
+  text-align: center;
+}
+
+.investment-table .positive {
+  color: #dc2626;
+}
+
+.investment-table .negative {
+  color: #2563eb;
+}
+
 .credit-card-totals {
   display: grid;
   gap: 8px;

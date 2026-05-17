@@ -14,6 +14,8 @@ import {
   Goal,
   HouseholdMember,
   HouseholdSummary,
+  InvestmentAccount,
+  InvestmentMonthlyRecord,
   LedgerMode,
   LedgerState,
   SpaceType,
@@ -199,6 +201,25 @@ type DbAssetSnapshot = {
   account_id: string;
   snapshot_month: string;
   amount: number | string;
+};
+
+type DbInvestmentAccount = {
+  id: string;
+  name: string;
+  initial_amount: number | string;
+  monthly_contribution: number | string;
+  target_monthly_rate: number | string;
+  annual_target_amount: number | string;
+  color: string | null;
+};
+
+type DbInvestmentRecord = {
+  id: string;
+  investment_account_id: string;
+  record_month: string;
+  month_end_value: number | string;
+  additional_investment: number | string;
+  note: string | null;
 };
 
 function requireSupabase() {
@@ -397,7 +418,9 @@ export async function deleteOwnedLedger(householdId: string) {
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
-    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_monthly_records").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
 }
 
@@ -436,7 +459,9 @@ export async function deleteSharedLedger(householdId: string) {
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
-    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_monthly_records").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
 }
 
@@ -452,7 +477,9 @@ export async function adminDeleteHousehold(householdId: string) {
     client.from("fixed_costs").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("fixed_cost_overrides").update({ deleted_at: deletedAt }).eq("household_id", householdId),
     client.from("saving_goals").update({ deleted_at: deletedAt }).eq("household_id", householdId),
-    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId)
+    client.from("monthly_asset_snapshots").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_accounts").update({ deleted_at: deletedAt }).eq("household_id", householdId),
+    client.from("investment_monthly_records").update({ deleted_at: deletedAt }).eq("household_id", householdId)
   ]);
 }
 
@@ -590,7 +617,9 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     fixedCostsResult,
     fixedCostOverridesResult,
     goalsResult,
-    assetSnapshotsResult
+    assetSnapshotsResult,
+    investmentAccountsResult,
+    investmentRecordsResult
   ] = await Promise.all([
     client.from("profiles").select("role,deleted_at").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
@@ -600,10 +629,14 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false })
+    client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
+    client.from("investment_accounts").select("id,name,initial_amount,monthly_contribution,target_monthly_rate,annual_target_amount,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false })
   ]);
 
   const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
+  const investmentTableMissing = (investmentAccountsResult.error && /investment_accounts|does not exist|存在しません/i.test(investmentAccountsResult.error.message)) ||
+    (investmentRecordsResult.error && /investment_monthly_records|does not exist|存在しません/i.test(investmentRecordsResult.error.message));
   const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
   let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
   let fixedCostOverridesError = fixedCostOverridesResult.error;
@@ -658,6 +691,9 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     if (result.error) throwJapanese(result.error, "家計簿データの取得に失敗しました。");
   }
   if (assetSnapshotsResult.error && !assetSnapshotTableMissing) throwJapanese(assetSnapshotsResult.error, "月末資産データの取得に失敗しました。");
+  if ((investmentAccountsResult.error || investmentRecordsResult.error) && !investmentTableMissing) {
+    throwJapanese(investmentAccountsResult.error ?? investmentRecordsResult.error, "投資データの取得に失敗しました。");
+  }
   if (fixedCostOverridesError && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesError, "固定費の月別変更データの取得に失敗しました。");
   if ((profileResult.data as DbProfile | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
@@ -746,6 +782,23 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       accountId: snapshot.account_id,
       month: snapshot.snapshot_month.slice(0, 7),
       amount: toNumber(snapshot.amount)
+    })),
+    investmentAccounts: (investmentTableMissing ? [] : ((investmentAccountsResult.data ?? []) as DbInvestmentAccount[])).map((account): InvestmentAccount => ({
+      id: account.id,
+      name: account.name,
+      initialAmount: toNumber(account.initial_amount),
+      monthlyContribution: toNumber(account.monthly_contribution),
+      targetMonthlyRate: Number(account.target_monthly_rate ?? 0),
+      annualTargetAmount: toNumber(account.annual_target_amount),
+      color: account.color ?? "#0f766e"
+    })),
+    investmentRecords: (investmentTableMissing ? [] : ((investmentRecordsResult.data ?? []) as DbInvestmentRecord[])).map((record): InvestmentMonthlyRecord => ({
+      id: record.id,
+      investmentAccountId: record.investment_account_id,
+      month: record.record_month.slice(0, 7),
+      monthEndValue: toNumber(record.month_end_value),
+      additionalInvestment: toNumber(record.additional_investment),
+      note: record.note ?? undefined
     }))
   };
 }
@@ -855,6 +908,62 @@ export async function upsertAssetSnapshots(householdId: string, month: string, b
     .from("monthly_asset_snapshots")
     .upsert(rows, { onConflict: "household_id,account_id,snapshot_month" });
   if (error) throwJapanese(error, "月末資産の確定に失敗しました。");
+}
+
+export async function createInvestmentAccount(householdId: string, input: Omit<InvestmentAccount, "id">) {
+  const client = requireSupabase();
+  if (!input.name.trim()) throw new Error("投資口座名を入力してください。");
+  const { error } = await client.from("investment_accounts").insert({
+    household_id: householdId,
+    name: input.name.trim(),
+    initial_amount: input.initialAmount,
+    monthly_contribution: input.monthlyContribution,
+    target_monthly_rate: input.targetMonthlyRate,
+    annual_target_amount: input.annualTargetAmount,
+    color: input.color || "#0f766e"
+  });
+  if (error) throwJapanese(error, "投資口座の追加に失敗しました。");
+}
+
+export async function updateInvestmentAccount(accountId: string, input: Omit<InvestmentAccount, "id">) {
+  const client = requireSupabase();
+  if (!input.name.trim()) throw new Error("投資口座名を入力してください。");
+  const { error } = await client.from("investment_accounts").update({
+    name: input.name.trim(),
+    initial_amount: input.initialAmount,
+    monthly_contribution: input.monthlyContribution,
+    target_monthly_rate: input.targetMonthlyRate,
+    annual_target_amount: input.annualTargetAmount,
+    color: input.color || "#0f766e"
+  }).eq("id", accountId);
+  if (error) throwJapanese(error, "投資口座の更新に失敗しました。");
+}
+
+export async function deleteInvestmentAccount(accountId: string) {
+  const client = requireSupabase();
+  const deletedAt = new Date().toISOString();
+  const { error } = await client.from("investment_accounts").update({ deleted_at: deletedAt }).eq("id", accountId);
+  if (error) throwJapanese(error, "投資口座の削除に失敗しました。");
+  await client.from("investment_monthly_records").update({ deleted_at: deletedAt }).eq("investment_account_id", accountId);
+}
+
+export async function upsertInvestmentRecord(householdId: string, input: Omit<InvestmentMonthlyRecord, "id">) {
+  const client = requireSupabase();
+  const { error } = await client.from("investment_monthly_records").upsert({
+    household_id: householdId,
+    investment_account_id: input.investmentAccountId,
+    record_month: `${input.month}-01`,
+    month_end_value: input.monthEndValue,
+    additional_investment: input.additionalInvestment,
+    note: input.note || null
+  }, { onConflict: "investment_account_id,record_month" });
+  if (error) throwJapanese(error, "投資月次データの保存に失敗しました。");
+}
+
+export async function deleteInvestmentRecord(recordId: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("investment_monthly_records").update({ deleted_at: new Date().toISOString() }).eq("id", recordId);
+  if (error) throwJapanese(error, "投資月次データの削除に失敗しました。");
 }
 
 export async function createAccount(householdId: string, input: { name: string; type: AccountType; openingBalance: number; openingBalanceDate: string; color?: string; closingDay?: number; withdrawalDay?: number; withdrawalAccountId?: string }) {

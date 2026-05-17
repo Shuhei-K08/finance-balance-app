@@ -121,9 +121,19 @@ export function confirmedAccountBalance(account: Account, state: LedgerState, mo
 }
 
 export function totalAssets(state: LedgerState, throughMonthKey?: string) {
-  return state.accounts
+  const cashAssets = state.accounts
     .filter((account) => account.type !== "credit")
     .reduce((total, account) => total + (throughMonthKey ? confirmedAccountBalance(account, state, throughMonthKey) : calculateAccountBalanceInState(account, state)), 0);
+  return cashAssets + investmentAssets(state, throughMonthKey);
+}
+
+export function investmentAssets(state: LedgerState, throughMonthKey = todayIso().slice(0, 7)) {
+  return (state.investmentAccounts ?? []).reduce((sum, account) => {
+    const latest = (state.investmentRecords ?? [])
+      .filter((record) => record.investmentAccountId === account.id && record.month <= throughMonthKey)
+      .sort((a, b) => b.month.localeCompare(a.month))[0];
+    return sum + (latest?.monthEndValue ?? account.initialAmount);
+  }, 0);
 }
 
 function transactionAssetDeltaForAccount(transaction: Transaction, account: Account, accounts: Account[]) {

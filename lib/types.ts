@@ -85,6 +85,25 @@ export type AssetSnapshot = {
   amount: number;
 };
 
+export type InvestmentAccount = {
+  id: string;
+  name: string;
+  initialAmount: number;
+  monthlyContribution: number;
+  targetMonthlyRate: number;
+  annualTargetAmount: number;
+  color: string;
+};
+
+export type InvestmentMonthlyRecord = {
+  id: string;
+  investmentAccountId: string;
+  month: string;
+  monthEndValue: number;
+  additionalInvestment: number;
+  note?: string;
+};
+
 export type HouseholdSummary = {
   id: string;
   name: string;
@@ -135,4 +154,6 @@ export type LedgerState = {
   fixedCostOverrides: FixedCostOverride[];
   goals: Goal[];
   assetSnapshots: AssetSnapshot[];
+  investmentAccounts: InvestmentAccount[];
+  investmentRecords: InvestmentMonthlyRecord[];
 };
