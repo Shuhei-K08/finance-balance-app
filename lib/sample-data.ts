@@ -48,5 +48,6 @@ export const initialState: LedgerState = {
   ],
   assetSnapshots: [],
   investmentAccounts: [],
-  investmentRecords: []
+  investmentRecords: [],
+  investmentContributionChanges: []
 };

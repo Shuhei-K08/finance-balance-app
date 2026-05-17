@@ -15,6 +15,7 @@ import {
   HouseholdMember,
   HouseholdSummary,
   InvestmentAccount,
+  InvestmentContributionChange,
   InvestmentMonthlyRecord,
   LedgerMode,
   LedgerState,
@@ -222,6 +223,13 @@ type DbInvestmentRecord = {
   month_end_value: number | string;
   additional_investment: number | string;
   note: string | null;
+};
+
+type DbInvestmentContributionChange = {
+  id: string;
+  investment_account_id: string;
+  effective_month: string;
+  monthly_contribution: number | string;
 };
 
 function requireSupabase() {
@@ -626,7 +634,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     goalsResult,
     assetSnapshotsResult,
     investmentAccountsResult,
-    investmentRecordsResult
+    investmentRecordsResult,
+    investmentContributionChangesResult
   ] = await Promise.all([
     client.from("profiles").select("role,deleted_at").eq("id", userId).maybeSingle(),
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
@@ -638,12 +647,14 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
     client.from("investment_accounts").select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
-    client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false })
+    client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false }),
+    client.from("investment_contribution_changes").select("id,investment_account_id,effective_month,monthly_contribution").eq("household_id", householdId).is("deleted_at", null).order("effective_month", { ascending: false })
   ]);
 
   const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
   const investmentTableMissing = (investmentAccountsResult.error && /investment_accounts|does not exist|存在しません/i.test(investmentAccountsResult.error.message)) ||
     (investmentRecordsResult.error && /investment_monthly_records|does not exist|存在しません/i.test(investmentRecordsResult.error.message));
+  const investmentContributionChangesMissing = investmentContributionChangesResult.error && /investment_contribution_changes|does not exist|存在しません/i.test(investmentContributionChangesResult.error.message);
   let investmentAccountsData: unknown = investmentAccountsResult.data;
   let investmentAccountsError = investmentAccountsResult.error;
   if (investmentAccountsError && /start_month|target_annual_rate|does not exist|存在しません/i.test(investmentAccountsError.message)) {
@@ -713,6 +724,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   if ((investmentAccountsError || investmentRecordsResult.error) && !investmentTableMissing) {
     throwJapanese(investmentAccountsError ?? investmentRecordsResult.error, "投資データの取得に失敗しました。");
   }
+  if (investmentContributionChangesResult.error && !investmentContributionChangesMissing) throwJapanese(investmentContributionChangesResult.error, "投資積立額データの取得に失敗しました。");
   if (fixedCostOverridesError && !fixedCostOverridesMissing) throwJapanese(fixedCostOverridesError, "固定費の月別変更データの取得に失敗しました。");
   if ((profileResult.data as DbProfile | null)?.deleted_at) throw new Error("このアカウントは停止されています。管理者に確認してください。");
 
@@ -818,6 +830,12 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       monthEndValue: toNumber(record.month_end_value),
       additionalInvestment: toNumber(record.additional_investment),
       note: record.note ?? undefined
+    })),
+    investmentContributionChanges: (investmentContributionChangesMissing ? [] : ((investmentContributionChangesResult.data ?? []) as DbInvestmentContributionChange[])).map((change): InvestmentContributionChange => ({
+      id: change.id,
+      investmentAccountId: change.investment_account_id,
+      month: change.effective_month.slice(0, 7),
+      monthlyContribution: toNumber(change.monthly_contribution)
     }))
   };
 }
@@ -991,6 +1009,24 @@ export async function deleteInvestmentAccount(accountId: string) {
   const { error } = await client.from("investment_accounts").update({ deleted_at: deletedAt }).eq("id", accountId);
   if (error) throwJapanese(error, "投資口座の削除に失敗しました。");
   await client.from("investment_monthly_records").update({ deleted_at: deletedAt }).eq("investment_account_id", accountId);
+  await client.from("investment_contribution_changes").update({ deleted_at: deletedAt }).eq("investment_account_id", accountId);
+}
+
+export async function upsertInvestmentContributionChange(householdId: string, input: Omit<InvestmentContributionChange, "id">) {
+  const client = requireSupabase();
+  const { error } = await client.from("investment_contribution_changes").upsert({
+    household_id: householdId,
+    investment_account_id: input.investmentAccountId,
+    effective_month: `${input.month}-01`,
+    monthly_contribution: input.monthlyContribution
+  }, { onConflict: "investment_account_id,effective_month" });
+  if (error) throwJapanese(error, "積立額の変更保存に失敗しました。");
+}
+
+export async function deleteInvestmentContributionChange(changeId: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("investment_contribution_changes").update({ deleted_at: new Date().toISOString() }).eq("id", changeId);
+  if (error) throwJapanese(error, "積立額の変更削除に失敗しました。");
 }
 
 export async function upsertInvestmentRecord(householdId: string, input: Omit<InvestmentMonthlyRecord, "id">) {

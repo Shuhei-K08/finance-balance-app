@@ -95,6 +95,7 @@ import {
   createGoal,
   deleteAccount,
   deleteInvestmentAccount,
+  deleteInvestmentContributionChange,
   deleteCategory,
   deleteInvestmentRecord,
   deleteFixedCost,
@@ -122,6 +123,7 @@ import {
   updateOpeningBalances,
   updateSubcategoryOrder,
   updateTransaction,
+  upsertInvestmentContributionChange,
   upsertInvestmentRecord,
   upsertFixedCostOverride,
   upsertAssetSnapshots,
@@ -2202,6 +2204,7 @@ function goalDeadlinePlan(goal: LedgerState["goals"][number], state: LedgerState
 function InvestmentsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
   const investmentAccounts = state.investmentAccounts ?? [];
   const investmentRecords = state.investmentRecords ?? [];
+  const investmentContributionChanges = state.investmentContributionChanges ?? [];
   const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
   const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
   const [showAccountForm, setShowAccountForm] = useState(false);
@@ -2210,6 +2213,8 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   const [recordMonth, setRecordMonth] = useState(monthKey);
   const existingRecord = selected ? investmentRecords.find((record) => record.investmentAccountId === selected.id && record.month === recordMonth) : undefined;
   const [recordDraft, setRecordDraft] = useState({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
+  const [contributionDraft, setContributionDraft] = useState({ month: monthKey, monthlyContribution: selected ? investmentContributionForMonth(state, selected, monthKey) : 0 });
+  const selectedContributionChanges = selected ? investmentContributionChanges.filter((change) => change.investmentAccountId === selected.id).sort((a, b) => b.month.localeCompare(a.month)) : [];
   useEffect(() => {
     if (selected && !selectedId) setSelectedId(selected.id);
   }, [selected?.id, selectedId]);
@@ -2219,6 +2224,9 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   useEffect(() => {
     setRecordDraft({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, note: existingRecord?.note ?? "" });
   }, [selected?.id, recordMonth, existingRecord?.id]);
+  useEffect(() => {
+    setContributionDraft({ month: monthKey, monthlyContribution: selected ? investmentContributionForMonth(state, selected, monthKey) : 0 });
+  }, [selected?.id, monthKey, (state.investmentContributionChanges ?? []).length]);
   const summary = selected ? investmentSummary(state, selected.id, monthKey) : null;
   const rows = selected ? investmentRows(state, selected.id, monthKey >= recordMonth ? monthKey : recordMonth) : [];
   const totalInvestments = investmentAssets(state, monthKey);
@@ -2296,6 +2304,25 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     }
   }
 
+  async function saveContributionChange() {
+    if (!selected) return;
+    if (!contributionDraft.month) {
+      setNotice("変更開始月を選択してください。");
+      return;
+    }
+    try {
+      await upsertInvestmentContributionChange(state.householdId ?? "", {
+        investmentAccountId: selected.id,
+        month: contributionDraft.month,
+        monthlyContribution: contributionDraft.monthlyContribution
+      });
+      await reload();
+      setNotice(`${formatMonthLabel(contributionDraft.month)}からの積立額を保存しました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "積立額の変更保存に失敗しました。"));
+    }
+  }
+
   return (
     <div className="view-stack">
       <section className="panel investment-hero">
@@ -2339,7 +2366,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <div className="investment-account-detail">
             <div>
               <strong>{selected.name}</strong>
-              <span>開始月 {formatMonthLabel(selected.startMonth)} / 開始評価額 {yen.format(selected.initialAmount)} / 毎月積立 {yen.format(selected.monthlyContribution)} / 目標年利 {selected.targetAnnualRate}%</span>
+              <span>開始月 {formatMonthLabel(selected.startMonth)} / 開始評価額 {yen.format(selected.initialAmount)} / 現在の毎月積立 {yen.format(investmentContributionForMonth(state, selected, monthKey))} / 目標年利 {selected.targetAnnualRate}%</span>
             </div>
             <div className="investment-account-actions">
               <button className="mini-button" type="button" onClick={startEditAccount}>編集</button>
@@ -2367,6 +2394,29 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           </section>
 
           <section className="panel">
+            <div className="section-title"><h2>積立額の変更</h2><span>指定月以降の毎月積立に反映</span></div>
+            <div className="crud-form compact-form">
+              <label>変更開始月<input type="month" value={contributionDraft.month} onChange={(event) => setContributionDraft({ ...contributionDraft, month: event.target.value || monthKey })} /></label>
+              <label>毎月積立額<input type="number" value={numberInputValue(contributionDraft.monthlyContribution)} onChange={(event) => setContributionDraft({ ...contributionDraft, monthlyContribution: Number(event.target.value || 0) })} /></label>
+              <button className="full-primary" type="button" onClick={saveContributionChange}>積立額を保存</button>
+            </div>
+            <div className="investment-change-list">
+              <div>
+                <span>開始時</span>
+                <strong>{yen.format(selected.monthlyContribution)}</strong>
+              </div>
+              {selectedContributionChanges.map((change) => (
+                <div key={change.id}>
+                  <span>{formatMonthLabel(change.month)}から</span>
+                  <strong>{yen.format(change.monthlyContribution)}</strong>
+                  <button className="mini-button" type="button" onClick={() => setContributionDraft({ month: change.month, monthlyContribution: change.monthlyContribution })}>編集</button>
+                  <button className="danger-button" type="button" onClick={async () => { try { await deleteInvestmentContributionChange(change.id); await reload(); setNotice("積立額の変更を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "積立額の変更削除に失敗しました。")); } }}>削除</button>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="panel">
             <div className="section-title"><h2>{formatMonthLabel(recordMonth)}の入力</h2><span>過去月も追加・更新できます</span></div>
             <div className="crud-form compact-form">
               <label>入力月<input type="month" value={recordMonth} onChange={(event) => setRecordMonth(event.target.value || monthKey)} /></label>
@@ -2381,7 +2431,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <section className="panel">
             <div className="section-title"><h2>月次成績</h2><span>{rows.length}ヶ月</span></div>
             <div className="investment-table">
-              <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>追加投資</strong><strong>達成率</strong><strong>操作</strong></div>
+              <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>達成率</strong><strong>操作</strong></div>
               {rows.map((row) => (
                 <div key={row.month}>
                   <span>{row.label}</span>
@@ -2389,6 +2439,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   <span>{yen.format(row.monthEndValue)}</span>
                   <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
                   <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                  <span>{yen.format(row.monthlyContribution)}</span>
                   <span>{yen.format(row.additionalInvestment)}</span>
                   <span>{Math.round(row.achievementRate)}%</span>
                   <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
@@ -2412,6 +2463,13 @@ function latestInvestmentValue(state: LedgerState, accountId: string, monthKey: 
   return latest?.monthEndValue ?? account?.initialAmount ?? 0;
 }
 
+function investmentContributionForMonth(state: LedgerState, account: LedgerState["investmentAccounts"][number], monthKey: string) {
+  const change = (state.investmentContributionChanges ?? [])
+    .filter((item) => item.investmentAccountId === account.id && item.month <= monthKey)
+    .sort((a, b) => b.month.localeCompare(a.month))[0];
+  return change?.monthlyContribution ?? account.monthlyContribution;
+}
+
 function investmentSummary(state: LedgerState, accountId: string, monthKey: string) {
   return investmentRows(state, accountId, monthKey).find((row) => row.month === monthKey);
 }
@@ -2432,7 +2490,8 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   return sortedMonths.map((month) => {
     const record = records.find((item) => item.month === month);
     const additionalInvestment = record?.additionalInvestment ?? 0;
-    const contribution = account.monthlyContribution + additionalInvestment;
+    const monthlyContribution = investmentContributionForMonth(state, account, month);
+    const contribution = monthlyContribution + additionalInvestment;
     const targetValue = Math.round(previousTarget * (1 + monthlyTargetRate) + contribution);
     const monthEndValue = record?.monthEndValue ?? targetValue;
     const assetDelta = monthEndValue - previousActual;
@@ -2446,6 +2505,7 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
       label: `${Number(month.slice(5, 7))}月`,
       targetValue,
       monthEndValue,
+      monthlyContribution,
       additionalInvestment,
       assetDelta,
       profit,

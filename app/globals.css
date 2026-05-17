@@ -2822,7 +2822,7 @@ a { color: inherit; text-decoration: none; }
 
 .investment-table > div {
   display: grid;
-  grid-template-columns: 60px repeat(6, minmax(86px, 1fr)) 64px;
+  grid-template-columns: 60px repeat(7, minmax(86px, 1fr)) 64px;
   gap: 8px;
   padding: 8px 10px;
   background: var(--panel-soft);
@@ -2877,6 +2877,33 @@ a { color: inherit; text-decoration: none; }
   justify-content: flex-end;
 }
 
+.investment-change-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.investment-change-list > div {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.investment-change-list span {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.investment-change-list strong {
+  color: var(--ink);
+  font-size: 14px;
+}
+
 @media (max-width: 640px) {
   .investment-account-detail {
     grid-template-columns: 1fr;
@@ -2886,6 +2913,12 @@ a { color: inherit; text-decoration: none; }
   }
   .investment-account-actions > button {
     flex: 1;
+  }
+  .investment-change-list > div {
+    grid-template-columns: 1fr auto;
+  }
+  .investment-change-list > div > button {
+    grid-column: span 1;
   }
 }
 

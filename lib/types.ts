@@ -104,6 +104,13 @@ export type InvestmentMonthlyRecord = {
   note?: string;
 };
 
+export type InvestmentContributionChange = {
+  id: string;
+  investmentAccountId: string;
+  month: string;
+  monthlyContribution: number;
+};
+
 export type HouseholdSummary = {
   id: string;
   name: string;
@@ -156,4 +163,5 @@ export type LedgerState = {
   assetSnapshots: AssetSnapshot[];
   investmentAccounts: InvestmentAccount[];
   investmentRecords: InvestmentMonthlyRecord[];
+  investmentContributionChanges: InvestmentContributionChange[];
 };
