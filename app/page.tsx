@@ -907,7 +907,7 @@ function HomeView({
                   <div className="account-row account-row-clickable" key={account.id} onClick={() => setAccountHistoryId(account.id)} role="button" tabIndex={0}>
                     <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
                     <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
-                    <div className="balance">{yen.format(balance)}<small>{(ratio * 100).toFixed(0)}%</small></div>
+                    <div className="balance">{yen.format(balance)}</div>
                     <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
                   </div>
                 );
@@ -935,20 +935,6 @@ function HomeView({
           )}
         </section>
       </div>
-
-      {goal && goalP && (
-        <section className="panel">
-          <div className="panel-title">
-            <h2>目標貯金 — {goal.name}</h2>
-            <button className="panel-action" type="button" onClick={() => onNavigate("goals")}>詳細 <ChevronRight size={14} /></button>
-          </div>
-          <div className="progress"><span style={{ width: `${goalP.progress}%` }} /></div>
-          <div className="goal-numbers" style={{ marginTop: 12 }}>
-            <strong>{Math.round(goalP.progress)}%</strong>
-            <span>不足 {yen.format(goalP.remaining)} / 達成予測 {goalP.projectedDate}</span>
-          </div>
-        </section>
-      )}
 
       <section className="panel">
         <div className="panel-title">
@@ -2550,22 +2536,20 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
 
           <section className="panel">
             <div className="section-title"><h2>年ごとの投資実績</h2><span>{yearlyRows.length}年分</span></div>
-            <div className="investment-table-scroll">
-              <div className="investment-year-table">
-                <div><strong>年</strong><strong>年末評価額</strong><strong>積立</strong><strong>追加投資</strong><strong>売却</strong><strong>純利益</strong><strong>増減</strong><strong>年利</strong></div>
-                {yearlyRows.map((row) => (
-                  <div key={row.year}>
-                    <span>{row.year}年</span>
-                    <span>{yen.format(row.endValue)}</span>
-                    <span>{yen.format(row.monthlyContribution)}</span>
-                    <span>{yen.format(row.additionalInvestment)}</span>
-                    <span>{yen.format(row.saleAmount)}</span>
-                    <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
-                    <span className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</span>
-                    <span className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</span>
-                  </div>
-                ))}
-              </div>
+            <div className="investment-year-table">
+              <div><strong>年</strong><strong>年末評価額</strong><strong>積立</strong><strong>追加投資</strong><strong>売却</strong><strong>純利益</strong><strong>増減</strong><strong>年利</strong></div>
+              {yearlyRows.map((row) => (
+                <div key={row.year}>
+                  <span>{row.year}年</span>
+                  <span>{yen.format(row.endValue)}</span>
+                  <span>{yen.format(row.monthlyContribution)}</span>
+                  <span>{yen.format(row.additionalInvestment)}</span>
+                  <span>{yen.format(row.saleAmount)}</span>
+                  <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                  <span className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</span>
+                  <span className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</span>
+                </div>
+              ))}
             </div>
           </section>
 
@@ -2576,24 +2560,22 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               <span style={{ fontWeight: "bold" }}>{monthlyYear}年</span>
               <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
             </div>
-            <div className="investment-table-scroll">
-              <div className="investment-table">
-                <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>売却</strong><strong>達成率</strong><strong>操作</strong></div>
-                {monthlyRows.map((row) => (
-                  <div key={row.month}>
-                    <span>{row.label}</span>
-                    <span>{yen.format(row.targetValue)}</span>
-                    <span>{yen.format(row.monthEndValue)}</span>
-                    <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
-                    <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
-                    <span>{yen.format(row.monthlyContribution)}</span>
-                    <span>{yen.format(row.additionalInvestment)}</span>
-                    <span>{yen.format(row.saleAmount)}</span>
-                    <span>{Math.round(row.achievementRate)}%</span>
-                    <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
-                  </div>
-                ))}
-              </div>
+            <div className="investment-table">
+              <div><strong>月</strong><strong>目標額</strong><strong>評価額</strong><strong>月利</strong><strong>純利益</strong><strong>積立額</strong><strong>追加投資</strong><strong>売却</strong><strong>達成率</strong><strong>操作</strong></div>
+              {monthlyRows.map((row) => (
+                <div key={row.month}>
+                  <span>{row.label}</span>
+                  <span>{yen.format(row.targetValue)}</span>
+                  <span>{yen.format(row.monthEndValue)}</span>
+                  <span className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</span>
+                  <span className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</span>
+                  <span>{yen.format(row.monthlyContribution)}</span>
+                  <span>{yen.format(row.additionalInvestment)}</span>
+                  <span>{yen.format(row.saleAmount)}</span>
+                  <span>{Math.round(row.achievementRate)}%</span>
+                  <button className="mini-button" type="button" onClick={() => setRecordMonth(row.month)}>編集</button>
+                </div>
+              ))}
             </div>
           </section>
         </>
