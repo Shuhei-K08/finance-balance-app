@@ -1,41 +1,43 @@
 <svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#7c5cff;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#4f8bff;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#06d4c1;stop-opacity:1" />
+    <linearGradient id="frameGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#06d4c1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="trendGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4f8bff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
     </linearGradient>
   </defs>
 
-  <!-- Background -->
-  <rect width="200" height="200" rx="44" fill="url(#bgGrad)"/>
+  <!-- Rounded square frame (list icon) -->
+  <rect x="30" y="30" width="100" height="120" rx="12" fill="none" stroke="url(#frameGrad)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
 
-  <!-- Main icon group -->
-  <g transform="translate(100, 100)">
-    <!-- Subtle background circle -->
-    <circle cx="0" cy="0" r="70" fill="rgba(255,255,255,0.08)"/>
+  <!-- List lines inside frame -->
+  <line x1="50" y1="55" x2="90" y2="55" stroke="url(#frameGrad)" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <line x1="50" y1="75" x2="90" y2="75" stroke="url(#frameGrad)" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <line x1="50" y1="95" x2="90" y2="95" stroke="url(#frameGrad)" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
 
-    <!-- Ascending line chart -->
-    <g opacity="0.95">
-      <!-- Point 1 -->
-      <circle cx="-48" cy="28" r="3.5" fill="white"/>
-      <!-- Point 2 -->
-      <circle cx="-24" cy="8" r="3.5" fill="white"/>
-      <!-- Point 3 -->
-      <circle cx="0" cy="-12" r="3.5" fill="white"/>
-      <!-- Point 4 -->
-      <circle cx="24" cy="-28" r="3.5" fill="white"/>
+  <!-- Bottom frame baseline -->
+  <path d="M 30 135 Q 30 145 40 145 L 130 145 Q 140 145 140 135" fill="none" stroke="url(#frameGrad)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
 
-      <!-- Connecting line -->
-      <path d="M -48 28 L -24 8 L 0 -12 L 24 -28"
-            stroke="white" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-    </g>
-
-    <!-- Bottom baseline -->
-    <line x1="-54" y1="40" x2="54" y2="40" stroke="rgba(255,255,255,0.3)" stroke-width="2.5" stroke-linecap="round"/>
-
-    <!-- Growth indicator accent -->
-    <path d="M 28 -32 L 36 -40 L 40 -32"
-          fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
+  <!-- Bar chart inside frame -->
+  <g opacity="0.8">
+    <rect x="110" y="105" width="8" height="25" rx="4" fill="url(#trendGrad)"/>
+    <rect x="120" y="95" width="8" height="35" rx="4" fill="url(#trendGrad)"/>
   </g>
+
+  <!-- Trend line (upward arrow) -->
+  <g opacity="0.95">
+    <!-- Main trend line -->
+    <path d="M 85 115 L 105 85 L 120 100 L 145 65"
+          fill="none" stroke="url(#trendGrad)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Arrow head -->
+    <path d="M 145 65 L 135 70 M 145 65 L 142 52"
+          fill="none" stroke="url(#trendGrad)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Accent sun circle -->
+  <circle cx="155" cy="50" r="10" fill="url(#trendGrad)" opacity="0.85"/>
 </svg>
