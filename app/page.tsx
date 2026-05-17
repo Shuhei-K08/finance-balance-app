@@ -403,7 +403,6 @@ export default function App() {
             <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "28px", height: "28px" }} /></div>
             <div className="brand-text">
               <strong>Mirai Ledger</strong>
-              <small>{greetingText}、{displayName}さん</small>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>

@@ -1,50 +1,41 @@
 <svg width="200" height="200" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="mainGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#7c5cff;stop-opacity:1" />
-      <stop offset="45%" style="stop-color:#4f8bff;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#4f8bff;stop-opacity:1" />
       <stop offset="100%" style="stop-color:#06d4c1;stop-opacity:1" />
     </linearGradient>
-    <filter id="softGlow">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
-      <feMerge>
-        <feMergeNode in="coloredBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
   </defs>
 
-  <!-- Main rounded square background -->
-  <rect x="20" y="20" width="160" height="160" rx="36" fill="url(#mainGrad)" opacity="0.95"/>
+  <!-- Background -->
+  <rect width="200" height="200" rx="44" fill="url(#bgGrad)"/>
 
-  <!-- Inner accent circle -->
-  <circle cx="100" cy="100" r="75" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
-
-  <!-- Central icon group -->
+  <!-- Main icon group -->
   <g transform="translate(100, 100)">
-    <!-- Rising trend lines (representing growth) -->
-    <g opacity="0.9">
-      <!-- Line 1 -->
-      <path d="M -28 12 L -18 0 L -8 8" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Subtle background circle -->
+    <circle cx="0" cy="0" r="70" fill="rgba(255,255,255,0.08)"/>
 
-      <!-- Line 2 (parallel offset) -->
-      <path d="M -20 18 L -10 6 L 0 14" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+    <!-- Ascending line chart -->
+    <g opacity="0.95">
+      <!-- Point 1 -->
+      <circle cx="-48" cy="28" r="3.5" fill="white"/>
+      <!-- Point 2 -->
+      <circle cx="-24" cy="8" r="3.5" fill="white"/>
+      <!-- Point 3 -->
+      <circle cx="0" cy="-12" r="3.5" fill="white"/>
+      <!-- Point 4 -->
+      <circle cx="24" cy="-28" r="3.5" fill="white"/>
 
-      <!-- Line 3 (main trend) -->
-      <path d="M -12 22 L 0 8 L 12 16 L 24 2" fill="none" stroke="white" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <!-- Connecting line -->
+      <path d="M -48 28 L -24 8 L 0 -12 L 24 -28"
+            stroke="white" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
     </g>
 
-    <!-- Accent dot at peak -->
-    <circle cx="24" cy="2" r="4.5" fill="white"/>
+    <!-- Bottom baseline -->
+    <line x1="-54" y1="40" x2="54" y2="40" stroke="rgba(255,255,255,0.3)" stroke-width="2.5" stroke-linecap="round"/>
 
-    <!-- Base line -->
-    <line x1="-28" y1="28" x2="28" y2="28" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round"/>
-
-    <!-- Decorative elements -->
-    <circle cx="-22" cy="20" r="2.5" fill="white" opacity="0.6"/>
-    <circle cx="18" cy="22" r="2" fill="white" opacity="0.5"/>
+    <!-- Growth indicator accent -->
+    <path d="M 28 -32 L 36 -40 L 40 -32"
+          fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.8"/>
   </g>
-
-  <!-- Subtle corner accent -->
-  <circle cx="155" cy="155" r="8" fill="rgba(255,255,255,0.25)"/>
 </svg>
