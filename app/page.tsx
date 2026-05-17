@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -8,6 +8,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -19,18 +20,30 @@ import {
 } from "recharts";
 import {
   ArrowDownUp,
+  ArrowDownLeft,
+  ArrowUpRight,
   BarChart3,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  CreditCard,
   Copy,
   Goal,
   Home,
   Landmark,
-  ListPlus,
+  LineChart as LineChartIcon,
+  LogOut,
+  Moon,
   PiggyBank,
+  Plus,
+  Receipt,
+  Search,
   Settings,
   Sparkles,
-  LogOut,
-  Mail,
-  Lock,
+  Sun,
+  Target,
+  TrendingDown,
+  TrendingUp,
   UserPlus,
   Wallet
 } from "lucide-react";
@@ -38,6 +51,7 @@ import {
   balanceTrend,
   averageMonthlySaving,
   calculateAccountBalance,
+  calculateAccountBalanceInState,
   confirmedAccountBalance,
   categoryExpense,
   creditStatusLabel,
@@ -117,13 +131,14 @@ import {
 import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
-type Tab = "home" | "analysis" | "investments" | "goals" | "settings" | "admin";
+type Tab = "home" | "transactions" | "analysis" | "investments" | "goals" | "settings" | "admin";
 
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
+  { id: "transactions", label: "取引", icon: Receipt },
   { id: "analysis", label: "分析", icon: BarChart3 },
   { id: "investments", label: "投資", icon: Landmark },
-  { id: "goals", label: "目標", icon: Goal },
+  { id: "goals", label: "目標", icon: Target },
   { id: "settings", label: "設定", icon: Settings }
 ];
 
@@ -133,6 +148,24 @@ const accountColorForType = (type: AccountType) => {
   if (type === "credit") return "#7c3aed";
   return "#2563eb";
 };
+
+type ThemeMode = "dark" | "light";
+
+function useTheme() {
+  const [theme, setTheme] = useState<ThemeMode>("dark");
+  useEffect(() => {
+    const stored = window.localStorage.getItem("mirai-ledger-theme");
+    const value: ThemeMode = stored === "light" ? "light" : "dark";
+    setTheme(value);
+    document.documentElement.setAttribute("data-theme", value);
+  }, []);
+  function toggle(next: ThemeMode) {
+    setTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    window.localStorage.setItem("mirai-ledger-theme", next);
+  }
+  return { theme, setTheme: toggle };
+}
 
 export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
@@ -144,6 +177,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [notice, setNotice] = useState("");
+  const { theme, setTheme } = useTheme();
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | undefined>(() => {
     if (typeof window === "undefined") return undefined;
     return window.localStorage.getItem("mirai-ledger-household-id") || undefined;
@@ -232,10 +266,10 @@ export default function App() {
     setState(next);
   }
 
-  if (!authReady) return <main className="boot"><div><strong>Mirai Ledger</strong><span>資産データを読み込んでいます</span></div></main>;
+  if (!authReady) return <main className="boot"><div><strong>Mirai Ledger</strong><span>あなたのお金のデータを読み込んでいます…</span></div></main>;
 
   if (supabase && !isAuthed) {
-    return <AuthScreen notice={notice} setNotice={setNotice} />;
+    return <AuthScreen notice={notice} setNotice={setNotice} theme={theme} />;
   }
 
   if (!supabase) {
@@ -310,71 +344,137 @@ export default function App() {
     }
   }
 
+  const displayName = (state.householdName ?? "ようこそ").replace(/家計簿$/, "");
+  const greetingText = greetingByHour(new Date());
+
   return (
     <main className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}>
-      <section className="topbar">
-        <div className="brand-heading">
-          <img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" />
-          <div>
-            <p className="eyebrow">{state.activeSpace === "shared" ? "共有カレンダー" : "Mirai Ledger"}</p>
-            <h1>{state.householdName ?? "未来残高を見ながら整える家計簿"}</h1>
+      {/* Desktop sidebar */}
+      <aside className="app-sidebar" aria-label="メインメニュー">
+        <div>
+          <div className="brand-row">
+            <div className="brand-mark"><Wallet size={20} /></div>
+            <div className="brand-text">
+              <strong>Mirai Ledger</strong>
+              <small>Personal Wealth OS</small>
+            </div>
           </div>
         </div>
-        <div className="top-actions">
-          <button className="ghost-icon" type="button" onClick={() => signOut().catch((error) => setNotice(toJapaneseError(error)))} aria-label="ログアウト">
-            <LogOut size={20} />
-          </button>
+        <nav className="sidebar-nav">
+          {visibleTabs.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>
+                <Icon size={18} /> {item.label}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="sidebar-foot">
+          <div className="theme-toggle">
+            <span>テーマ</span>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button className={theme === "dark" ? "active" : ""} type="button" onClick={() => setTheme("dark")} aria-label="ダークテーマ"><Moon size={14} /> 夜</button>
+              <button className={theme === "light" ? "active" : ""} type="button" onClick={() => setTheme("light")} aria-label="ライトテーマ"><Sun size={14} /> 昼</button>
+            </div>
+          </div>
+          <div className="user-chip">
+            <div className="avatar">{displayName.slice(0, 1)}</div>
+            <div className="name">{displayName}<span>{state.profileRole === "admin" ? "管理者" : "ユーザー"}</span></div>
+            <button className="icon-btn" type="button" onClick={() => signOut().catch((error) => setNotice(toJapaneseError(error)))} aria-label="ログアウト"><LogOut size={16} /></button>
+          </div>
         </div>
-      </section>
-      {(state.households ?? []).length > 1 && (
-        <section className="ledger-switch" aria-label="家計簿切替">
-          {(state.households ?? []).map((household) => (
-            <button
-              className={household.id === state.householdId ? "active" : ""}
-              key={household.id}
-              type="button"
-              onClick={() => switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
-            >
-              <span>{household.spaceType === "shared" ? "共有" : "個人"}</span>
-              {household.name}
+      </aside>
+
+      {/* Main column */}
+      <div className="app-main">
+        <section className="app-topbar">
+          <div className="brand">
+            <div className="brand-mark"><Wallet size={18} /></div>
+            <div className="brand-text">
+              <strong>Mirai Ledger</strong>
+              <small>{greetingText}、{displayName}さん</small>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="テーマ切り替え">
+              {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-          ))}
+            <button className="icon-button" type="button" onClick={() => signOut().catch((error) => setNotice(toJapaneseError(error)))} aria-label="ログアウト">
+              <LogOut size={18} />
+            </button>
+          </div>
         </section>
-      )}
-      {notice && <section className="notice" role="status">{notice}</section>}
 
-      {tab === "home" && (
-        <HomeView
-          state={state}
-          stats={stats}
-          setNotice={setNotice}
-          reload={() => refreshRemoteState()}
-          onQuick={openQuick}
-          calendarMonth={calendarMonth}
-          setCalendarMonth={setCalendarMonth}
-          calendarDate={calendarDate}
-          setCalendarDate={setCalendarDate}
-        />
-      )}
-      {tab === "analysis" && (
-        <AnalysisView
-          state={state}
-          monthKey={calendarMonth}
-          stats={stats}
-        />
-      )}
-      {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
-      {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
-      {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
-      {tab === "admin" && state.profileRole === "admin" && <AdminView />}
+        {/* Greeting + household switcher */}
+        <section className="greeting-bar">
+          <div>
+            <h1>{greetingText}、{displayName}さん。</h1>
+            <span>{formatTodayLabel()} ・ 今月の予定純資産は <strong className="gradient-text">{yen.format(stats.forecast)}</strong></span>
+          </div>
+          <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
+        </section>
 
-      <button className="floating-add-button" type="button" onClick={() => openQuick()} aria-label="取引を追加">
-        <ListPlus size={24} />
+        {(state.households ?? []).length > 1 && (
+          <section className="household-pills" aria-label="家計簿切替">
+            {(state.households ?? []).map((household) => (
+              <button
+                className={`household-pill ${household.id === state.householdId ? "active" : ""}`}
+                key={household.id}
+                type="button"
+                onClick={() => switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
+              >
+                <span className="pill-tag">{household.spaceType === "shared" ? "共有" : "個人"}</span>
+                {household.name}
+              </button>
+            ))}
+          </section>
+        )}
+
+        {notice && <section className="notice" role="status">{notice}</section>}
+
+        {tab === "home" && (
+          <HomeView
+            state={state}
+            stats={stats}
+            setNotice={setNotice}
+            reload={() => refreshRemoteState()}
+            onQuick={openQuick}
+            calendarMonth={calendarMonth}
+            setCalendarMonth={setCalendarMonth}
+            calendarDate={calendarDate}
+            setCalendarDate={setCalendarDate}
+            onNavigate={setTab}
+          />
+        )}
+        {tab === "transactions" && (
+          <TransactionsView
+            state={state}
+            monthKey={calendarMonth}
+            setNotice={setNotice}
+            reload={() => refreshRemoteState()}
+            onQuick={openQuick}
+          />
+        )}
+        {tab === "analysis" && (
+          <AnalysisView
+            state={state}
+            monthKey={calendarMonth}
+            stats={stats}
+          />
+        )}
+        {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
+        {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
+        {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} />}
+        {tab === "admin" && state.profileRole === "admin" && <AdminView />}
+      </div>
+
+      <button className="fab" type="button" onClick={() => openQuick()} aria-label="取引を追加">
+        <Plus size={24} />
       </button>
 
-      <section className="bottom-controls">
-        <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
-        <nav className="bottom-nav">
+      <nav className="bottom-bar" aria-label="メインメニュー">
+        <div className="bottom-nav">
           {visibleTabs.map((item) => {
             const Icon = item.icon;
             return (
@@ -385,17 +485,30 @@ export default function App() {
                 onClick={() => setTab(item.id)}
                 aria-label={item.label}
               >
-                <Icon size={20} />
+                <Icon size={19} />
                 <span>{item.label}</span>
               </button>
             );
           })}
-        </nav>
-      </section>
+        </div>
+      </nav>
 
       {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
     </main>
   );
+}
+
+function greetingByHour(date: Date) {
+  const hour = date.getHours();
+  if (hour < 5) return "こんばんは";
+  if (hour < 11) return "おはようございます";
+  if (hour < 17) return "こんにちは";
+  return "こんばんは";
+}
+
+function formatTodayLabel(date = new Date()) {
+  const weekday = ["日", "月", "火", "水", "木", "金", "土"][date.getDay()];
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日（${weekday}）`;
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string) {
@@ -413,20 +526,33 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string) 
 function SetupScreen() {
   return (
     <main className="auth-shell">
-      <section className="auth-card">
-        <p className="eyebrow">初期設定</p>
-        <h1>アプリの接続設定が必要です</h1>
-        <p className="auth-copy">ログイン機能を使うための接続情報がまだ設定されていません。</p>
-        <div className="setup-code">
-          <code>NEXT_PUBLIC_SUPABASE_URL=...</code>
-          <code>NEXT_PUBLIC_SUPABASE_ANON_KEY=...</code>
+      <section className="auth-hero">
+        <div className="brand">
+          <div className="brand-mark"><Wallet size={20} /></div>
+          Mirai Ledger
+        </div>
+        <div>
+          <h1>未来の残高を、<br />今日の手元で。</h1>
+          <p className="lead">資産・収支・固定費・カード引落・目標貯金まで、ひとつの画面で管理できる新しい家計OS。</p>
+        </div>
+        <div className="auth-foot">© Mirai Ledger</div>
+      </section>
+      <section className="auth-form-wrap">
+        <div className="auth-card">
+          <p className="eyebrow">初期設定が必要です</p>
+          <h2>接続情報を設定してください</h2>
+          <p className="sub">アプリを動かすために <code>.env.local</code> に Supabase の接続情報を入力してください。</p>
+          <div className="setup-code">
+            <code>NEXT_PUBLIC_SUPABASE_URL=...</code>
+            <code>NEXT_PUBLIC_SUPABASE_ANON_KEY=...</code>
+          </div>
         </div>
       </section>
     </main>
   );
 }
 
-function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message: string) => void }) {
+function AuthScreen({ notice, setNotice, theme }: { notice: string; setNotice: (message: string) => void; theme: ThemeMode }) {
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
@@ -468,41 +594,106 @@ function AuthScreen({ notice, setNotice }: { notice: string; setNotice: (message
 
   return (
     <main className="auth-shell">
-      <section className="auth-card">
-        <p className="eyebrow">Mirai Ledger</p>
-        <h1>{mode === "login" ? "ログイン" : "アカウント作成"}</h1>
-        <p className="auth-copy">未来の残高を見ながら、収入・支出・資産をまとめて管理できます。</p>
-        {notice && <div className="notice" role="status">{notice}</div>}
-        <form className="auth-form" onSubmit={(event) => { event.preventDefault(); submit(new FormData(event.currentTarget)); }}>
-          {mode === "signup" && (
-            <label><UserPlus size={16} />表示名<input name="displayName" autoComplete="name" placeholder="山田 太郎" /></label>
-          )}
-          <label><Mail size={16} />メールアドレス<input name="email" type="email" autoComplete="email" required placeholder="you@example.com" /></label>
-          <label><Lock size={16} />パスワード<input name="password" type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required placeholder="8文字以上" /></label>
-          {mode === "signup" && (
-            <label><Lock size={16} />確認用パスワード<input name="confirmPassword" type="password" minLength={8} autoComplete="new-password" required placeholder="もう一度入力" /></label>
-          )}
-          <button className="full-primary" type="submit" disabled={busy}>{busy ? "処理中" : mode === "login" ? "ログイン" : "作成する"}</button>
-        </form>
-        <button className="google-button" type="button" disabled={googleBusy} onClick={continueWithGoogle}>{googleBusy ? "Googleへ移動中" : "Googleで続ける"}</button>
-        <button className="switch-auth" type="button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>
-          {mode === "login" ? "アカウントを作成する" : "ログインに戻る"}
-        </button>
+      <section className="auth-hero">
+        <div className="brand">
+          <div className="brand-mark"><Wallet size={20} /></div>
+          Mirai Ledger
+        </div>
+        <div>
+          <h1>未来の残高を、<br />今日の手元で。</h1>
+          <p className="lead">資産・収支・固定費・カード引落・目標貯金まで、ひとつの画面で管理できる新しい家計OS。</p>
+          <div className="auth-hero-features">
+            <div className="auth-hero-feature">
+              <div className="feat-icon"><LineChartIcon size={20} /></div>
+              <div>
+                <strong>月末残高を自動予測</strong>
+                <span>固定費・カード引落・既存取引から、今月末の純資産を毎日リアルタイムに試算します。</span>
+              </div>
+            </div>
+            <div className="auth-hero-feature">
+              <div className="feat-icon"><PiggyBank size={20} /></div>
+              <div>
+                <strong>目標から逆算した貯金プラン</strong>
+                <span>達成期限から必要な月額を算出し、AIが改善ポイントをやさしく提案します。</span>
+              </div>
+            </div>
+            <div className="auth-hero-feature">
+              <div className="feat-icon"><CreditCard size={20} /></div>
+              <div>
+                <strong>クレカ・現金・口座を横断管理</strong>
+                <span>残高・締め日・引落日まで一元化、口座ごとの収支グラフで支出のクセが見える化。</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="auth-foot">© Mirai Ledger — Personal Wealth Operating System</div>
+      </section>
+
+      <section className="auth-form-wrap">
+        <div className="auth-card">
+          <p className="eyebrow">Welcome back</p>
+          <h2>{mode === "login" ? "ログイン" : "アカウントを作成"}</h2>
+          <p className="sub">{mode === "login" ? "メールアドレスまたはGoogleアカウントで続行できます。" : "数十秒で開始できます。すでにご利用中ならログインへ。"}</p>
+          {notice && <div className="notice" role="status">{notice}</div>}
+          <form className="auth-form" onSubmit={(event) => { event.preventDefault(); submit(new FormData(event.currentTarget)); }}>
+            {mode === "signup" && (
+              <label>表示名<input name="displayName" autoComplete="name" placeholder="例: 山田 太郎" /></label>
+            )}
+            <label>メールアドレス<input name="email" type="email" autoComplete="email" required placeholder="you@example.com" /></label>
+            <label>パスワード<input name="password" type="password" minLength={8} autoComplete={mode === "login" ? "current-password" : "new-password"} required placeholder="8文字以上" /></label>
+            {mode === "signup" && (
+              <label>確認用パスワード<input name="confirmPassword" type="password" minLength={8} autoComplete="new-password" required placeholder="もう一度入力" /></label>
+            )}
+            <button className="primary-btn" type="submit" disabled={busy} style={{ marginTop: 6 }}>{busy ? "処理中…" : mode === "login" ? "ログインする" : "アカウントを作成する"}</button>
+          </form>
+          <div className="divider">または</div>
+          <button className="google-btn" type="button" disabled={googleBusy} onClick={continueWithGoogle}>
+            <GoogleLogo />{googleBusy ? "Googleへ移動中…" : "Googleで続ける"}
+          </button>
+          <div className="auth-switch">
+            {mode === "login" ? "アカウントをお持ちでないですか？" : "すでにアカウントをお持ちですか？"}
+            <button type="button" onClick={() => setMode(mode === "login" ? "signup" : "login")}>{mode === "login" ? "新規作成" : "ログインへ"}</button>
+          </div>
+        </div>
       </section>
     </main>
+  );
+}
+
+function GoogleLogo() {
+  return (
+    <svg className="google-mark" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z"/>
+      <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.583-5.036-3.71H.96v2.331A9 9 0 0 0 9 18z"/>
+      <path fill="#FBBC05" d="M3.964 10.708A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.708V4.96H.96A9 9 0 0 0 0 9c0 1.452.348 2.827.96 4.04l3.004-2.332z"/>
+      <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A9 9 0 0 0 .96 4.96l3.004 2.332C4.672 5.163 6.656 3.58 9 3.58z"/>
+    </svg>
   );
 }
 
 function DbErrorScreen({ notice, onRetry }: { notice: string; onRetry: () => void }) {
   return (
     <main className="auth-shell">
-      <section className="auth-card">
-        <p className="eyebrow">Mirai Ledger</p>
-        <h1>データの読み込みで止まりました</h1>
-        <p className="auth-copy">家計簿データの取得または初期作成で失敗しています。時間をおいて再試行してください。</p>
-        {notice && <div className="notice" role="status">{notice}</div>}
-        <button className="full-primary" type="button" onClick={onRetry}>再読み込み</button>
-        <button className="switch-auth" type="button" onClick={() => signOut()}>ログアウト</button>
+      <section className="auth-hero">
+        <div className="brand">
+          <div className="brand-mark"><Wallet size={20} /></div>
+          Mirai Ledger
+        </div>
+        <div>
+          <h1>データの読み込みで<br />止まりました。</h1>
+          <p className="lead">家計簿データの取得または初期作成で失敗しています。時間をおいて再試行してください。</p>
+        </div>
+        <div className="auth-foot">© Mirai Ledger</div>
+      </section>
+      <section className="auth-form-wrap">
+        <div className="auth-card">
+          <p className="eyebrow">接続エラー</p>
+          <h2>もう一度試してみましょう</h2>
+          <p className="sub">回線または Supabase の状態を確認してから再読み込みしてください。</p>
+          {notice && <div className="notice" role="status">{notice}</div>}
+          <button className="primary-btn" type="button" onClick={onRetry}>再読み込み</button>
+          <button className="switch-auth" type="button" onClick={() => signOut()}>ログアウト</button>
+        </div>
       </section>
     </main>
   );
@@ -566,7 +757,8 @@ function HomeView({
   calendarMonth,
   setCalendarMonth,
   calendarDate,
-  setCalendarDate
+  setCalendarDate,
+  onNavigate
 }: {
   state: LedgerState;
   stats: Record<string, number>;
@@ -577,6 +769,7 @@ function HomeView({
   setCalendarMonth: (value: string) => void;
   calendarDate: string;
   setCalendarDate: (value: string) => void;
+  onNavigate: (tab: Tab) => void;
 }) {
   const monthLabel = formatMonthLabel(calendarMonth);
   const isCurrentMonth = calendarMonth === todayIso().slice(0, 7);
@@ -596,16 +789,49 @@ function HomeView({
   useEffect(() => {
     if (promptMonth && isAssetSnapshotConfirmed(state, promptMonth)) setPromptMonth(null);
   }, [state.assetSnapshots.length, promptMonth]);
+
   const savingAmount = stats.income - stats.expense;
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
   const displayAssets = isCurrentMonth ? stats.forecast : stats.assets;
+
+  const trend = useMemo(() => balanceTrend(state, calendarMonth), [state, calendarMonth]);
+  const lastActual = trend.filter((point) => point.actual != null).slice(-2);
+  const monthChange = lastActual.length === 2 ? (lastActual[1].actual ?? 0) - (lastActual[0].actual ?? 0) : 0;
+  const monthChangePct = lastActual.length === 2 && lastActual[0].actual ? (monthChange / Math.max(Math.abs(lastActual[0].actual), 1)) * 100 : 0;
+  const sparkData = trend.filter((point) => point.actual != null).map((point) => ({ label: point.label, value: point.actual }));
+  const recentTx = state.transactions.slice(0, 5);
+  const upcoming = useMemo(() => upcomingBills(state, 14), [state]);
+  const liquidAccounts = state.accounts.filter((account) => account.type !== "credit");
+  const totalLiquid = liquidAccounts.reduce((sum, account) => sum + calculateAccountBalanceInState(account, state), 0);
+  const goal = state.goals[0];
+  const goalP = goal ? goalProjection(goal, state) : null;
+
   return (
     <div className="view-stack">
-      <section className="hero-panel">
-        <div>
-          <p>{isCurrentMonth ? "予定総資産" : `${monthLabel}時点の総資産`}</p>
-          <strong>{yen.format(displayAssets)}</strong>
-          <span>{isCurrentMonth ? "今月の収支と引落予定を反映" : "確定済み月末資産と収支を反映"}</span>
+      <section className="wealth-hero">
+        <div className="label"><span className="dot" />{isCurrentMonth ? "今月末の予定総資産" : `${monthLabel} 時点の総資産`}</div>
+        <div className="amount">{yen.format(displayAssets)}</div>
+        <div className="sub-line">
+          {Math.abs(monthChange) > 0 && (
+            <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
+              {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+              {monthChange > 0 ? "+" : ""}{yen.format(monthChange)}（{monthChangePct.toFixed(1)}%）
+            </span>
+          )}
+          <span>{isCurrentMonth ? "今月の収支と引落予定を反映" : "確定残高と収支を反映"}</span>
+        </div>
+        <div className="spark">
+          <ResponsiveContainer width="100%" height={70}>
+            <AreaChart data={sparkData} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+              <defs>
+                <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#7c5cff" stopOpacity={0.6} />
+                  <stop offset="100%" stopColor="#06d4c1" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <Area type="monotone" dataKey="value" stroke="#a78bfa" strokeWidth={2} fill="url(#sparkGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
       </section>
 
@@ -628,12 +854,106 @@ function HomeView({
         />
       )}
 
-      <div className="stat-grid">
-        <Metric icon={Wallet} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} onClick={() => setHomeEntryModal("expense")} />
-        <Metric icon={Landmark} label={`${monthLabel} 収入`} value={yen.format(stats.income)} onClick={() => setHomeEntryModal("income")} />
-        <Metric icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)} / ${savingRate}%`} />
-        <Metric icon={ArrowDownUp} label={`${monthLabel} カード引落`} value={yen.format(stats.credit)} onClick={() => setHomeEntryModal("credit")} />
+      <div className="kpi-grid">
+        <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
+        <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} sub={`固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
+        <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
+        <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
+
+      <section className="panel">
+        <div className="panel-title"><h2>クイック操作</h2><span className="panel-meta">取引タブから一覧/編集も可能</span></div>
+        <div className="quick-actions">
+          <button type="button" className="qa expense" onClick={() => onQuick()}>
+            <div className="qa-icon"><ArrowUpRight size={18} /></div>
+            支出を追加
+          </button>
+          <button type="button" className="qa income" onClick={() => onQuick()}>
+            <div className="qa-icon"><ArrowDownLeft size={18} /></div>
+            収入を追加
+          </button>
+          <button type="button" className="qa transfer" onClick={() => onQuick()}>
+            <div className="qa-icon"><ArrowDownUp size={18} /></div>
+            振替する
+          </button>
+          <button type="button" className="qa card" onClick={() => onNavigate("transactions")}>
+            <div className="qa-icon"><Receipt size={18} /></div>
+            一覧を見る
+          </button>
+        </div>
+      </section>
+
+      <div className="home-chart-grid">
+        <section className="panel">
+          <div className="panel-title">
+            <h2>口座と残高</h2>
+            <span className="panel-meta">{liquidAccounts.length}件 / 合計 {yen.format(totalLiquid)}</span>
+          </div>
+          {liquidAccounts.length === 0 ? (
+            <div className="empty-state"><div className="empty-illustration"><Wallet size={20} /></div>設定タブから口座を追加してください。</div>
+          ) : (
+            <div className="account-list">
+              {liquidAccounts.map((account) => {
+                const balance = calculateAccountBalanceInState(account, state);
+                const ratio = totalLiquid > 0 ? Math.max(Math.min(balance / totalLiquid, 1), 0) : 0;
+                return (
+                  <div className="account-row" key={account.id}>
+                    <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
+                    <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
+                    <div className="balance">{yen.format(balance)}<small>{(ratio * 100).toFixed(0)}%</small></div>
+                    <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="panel">
+          <div className="panel-title"><h2>これからの予定</h2><span className="panel-meta">向こう2週間の固定費・引落</span></div>
+          {upcoming.length === 0 ? (
+            <div className="empty-state"><div className="empty-illustration"><CalendarDays size={20} /></div>2週間以内の引落予定はありません。</div>
+          ) : (
+            <div className="account-list">
+              {upcoming.slice(0, 6).map((item) => (
+                <div className="account-row" key={`${item.id}-${item.date}`}>
+                  <div className="account-mark" style={{ background: item.kind === "income" ? "#10b981" : item.kind === "transfer" ? "#3b82f6" : "#f97316" }}>
+                    {item.kind === "income" ? <ArrowDownLeft size={14} /> : item.kind === "transfer" ? <ArrowDownUp size={14} /> : <ArrowUpRight size={14} />}
+                  </div>
+                  <div className="account-name"><strong>{item.name}</strong><small>{formatDayLabel(item.date)}</small></div>
+                  <div className="balance">{item.kind === "income" ? "+" : item.kind === "expense" ? "-" : ""}{yen.format(item.amount)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      {goal && goalP && (
+        <section className="panel">
+          <div className="panel-title">
+            <h2>目標貯金 — {goal.name}</h2>
+            <button className="panel-action" type="button" onClick={() => onNavigate("goals")}>詳細 <ChevronRight size={14} /></button>
+          </div>
+          <div className="progress"><span style={{ width: `${goalP.progress}%` }} /></div>
+          <div className="goal-numbers" style={{ marginTop: 12 }}>
+            <strong>{Math.round(goalP.progress)}%</strong>
+            <span>不足 {yen.format(goalP.remaining)} / 達成予測 {goalP.projectedDate}</span>
+          </div>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="panel-title">
+          <h2>最近の取引</h2>
+          <button className="panel-action" type="button" onClick={() => onNavigate("transactions")}>すべて見る <ChevronRight size={14} /></button>
+        </div>
+        {recentTx.length === 0 ? (
+          <div className="empty-state"><div className="empty-illustration"><Receipt size={20} /></div>右下の + ボタンから最初の取引を登録してみましょう。</div>
+        ) : (
+          <TransactionList state={{ ...state, transactions: recentTx }} setNotice={setNotice} reload={reload} />
+        )}
+      </section>
 
       <HomeCalendar
         state={state}
@@ -645,6 +965,7 @@ function HomeView({
         selectedDate={calendarDate}
         setSelectedDate={setCalendarDate}
       />
+
       {homeEntryModal && (
         <HomeEntryModal
           type={homeEntryModal}
@@ -657,6 +978,55 @@ function HomeView({
       )}
     </div>
   );
+}
+
+function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "income" | "expense" | "saving" | "credit"; icon: React.ElementType; label: string; value: string; sub?: string; onClick?: () => void }) {
+  const content = (
+    <>
+      <div className="kpi-head">
+        {label}
+        <span className="kpi-icon"><Icon size={14} /></span>
+      </div>
+      <div className="kpi-value">{value}</div>
+      {sub && <div className="kpi-sub">{sub}</div>}
+    </>
+  );
+  return (
+    <button type="button" className={`kpi-card ${tone}`} onClick={onClick}>{content}</button>
+  );
+}
+
+function accountTypeLabel(type: AccountType) {
+  if (type === "bank") return "銀行口座";
+  if (type === "saving") return "貯金口座";
+  if (type === "cash") return "現金";
+  return "クレジットカード";
+}
+
+function formatDayLabel(date: string) {
+  const d = new Date(`${date}T00:00:00`);
+  return `${d.getMonth() + 1}/${d.getDate()}（${["日","月","火","水","木","金","土"][d.getDay()]}）`;
+}
+
+function upcomingBills(state: LedgerState, days: number) {
+  const today = todayIso();
+  const cutoff = new Date(`${today}T00:00:00`);
+  cutoff.setDate(cutoff.getDate() + days);
+  const fromMonth = today.slice(0, 7);
+  const toMonth = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}`;
+  const months = fromMonth === toMonth ? [fromMonth] : [fromMonth, toMonth];
+  const occurrences = months.flatMap((month) => fixedCostOccurrencesForMonth(state.fixedCosts, month, state));
+  return occurrences
+    .filter((cost) => cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
+    .map((cost) => ({
+      id: cost.id,
+      name: cost.name,
+      amount: cost.amount,
+      kind: cost.kind,
+      date: cost.date,
+      daysLeft: Math.max(0, Math.ceil((new Date(`${cost.date}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / (24 * 60 * 60 * 1000)))
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function AssetSnapshotPanel({
@@ -999,18 +1369,19 @@ function HomeCalendar({
     setSelectedDate(`${nextKey}-01`);
   }
 
+  const today = todayIso();
   return (
     <div className="view-stack">
-      <section className="panel">
-        <div className="section-title calendar-title">
-          <button type="button" onClick={() => moveMonth(-1)}>前月</button>
-          <strong>{formatMonthLabel(monthKey)}</strong>
-          <button type="button" onClick={() => moveMonth(1)}>翌月</button>
+      <section className="panel calendar-card">
+        <div className="calendar-head">
+          <button type="button" onClick={() => moveMonth(-1)} aria-label="前月"><ChevronLeft size={16} /></button>
+          <strong>{formatMonthLabel(monthKey)}のカレンダー</strong>
+          <button type="button" onClick={() => moveMonth(1)} aria-label="翌月"><ChevronRight size={16} /></button>
         </div>
         <div className="month-summary">
-          <span>収入 <strong>{yen.format(monthIncome)}</strong></span>
-          <span>支出 <strong>{yen.format(monthExpense)}</strong></span>
-          <span>収支 <strong>{yen.format(monthIncome - monthExpense)}</strong></span>
+          <span>収入<strong>{yen.format(monthIncome)}</strong></span>
+          <span>支出<strong>{yen.format(monthExpense)}</strong></span>
+          <span>収支<strong>{yen.format(monthIncome - monthExpense)}</strong></span>
         </div>
         <div className="calendar-grid">
           {["日", "月", "火", "水", "木", "金", "土"].map((day) => <b key={day}>{day}</b>)}
@@ -1024,14 +1395,21 @@ function HomeCalendar({
             const fixedIncome = fixedRows.filter((row) => row.date === date && row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
             const fixed = fixedRows.filter((row) => row.date === date && row.kind === "expense").reduce((sum, row) => sum + row.amount, 0);
             const fixedTransfer = fixedRows.filter((row) => row.date === date && row.kind === "transfer").reduce((sum, row) => sum + row.amount, 0);
-            return <button className={date === selectedDate ? "selected-day" : ""} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yen.format(income + fixedIncome)}</span>}{expense > 0 && <span>-{yen.format(expense)}</span>}{fixed > 0 && <span className="fixed-mini">固定 -{yen.format(fixed)}</span>}{transfer + fixedTransfer > 0 && <span className="transfer-mini">振替 {yen.format(transfer + fixedTransfer)}</span>}</button>;
+            const classes = [date === selectedDate ? "selected-day" : "", date === today ? "today" : ""].filter(Boolean).join(" ");
+            return <button className={classes} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yenShort(income + fixedIncome)}</span>}{expense > 0 && <span>-{yenShort(expense)}</span>}{fixed > 0 && <span className="fixed-mini">{yenShort(fixed)}</span>}{transfer + fixedTransfer > 0 && <span className="transfer-mini">{yenShort(transfer + fixedTransfer)}</span>}</button>;
           })}
         </div>
-        <button className="full-primary" type="button" onClick={() => setModalDate(selectedDate)}>選択日の取引を開く</button>
+        <button className="ghost-btn" type="button" onClick={() => setModalDate(selectedDate)} style={{ marginTop: 14, width: "100%" }}>選択日の取引を表示</button>
       </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
     </div>
   );
+}
+
+function yenShort(amount: number) {
+  if (amount >= 10000) return `${(amount / 10000).toFixed(amount >= 100000 ? 0 : 1)}万`;
+  if (amount >= 1000) return `${(amount / 1000).toFixed(0)}千`;
+  return `${amount}`;
 }
 
 function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: { type: "expense" | "income" | "credit"; monthKey: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
@@ -1310,6 +1688,113 @@ function AnnualSavingsAi({ state, monthKey }: { state: LedgerState; monthKey: st
   );
 }
 
+function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onQuick: (date?: string) => void }) {
+  const [query, setQuery] = useState("");
+  const [filterType, setFilterType] = useState<"all" | TransactionType>("all");
+  const [filterAccount, setFilterAccount] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [periodMode, setPeriodMode] = useState<"month" | "all">("month");
+
+  const filtered = useMemo(() => {
+    const q = query.trim();
+    return state.transactions.filter((tx) => {
+      if (periodMode === "month" && !transactionLedgerDate(tx).startsWith(monthKey)) return false;
+      if (filterType !== "all" && tx.type !== filterType) return false;
+      if (filterAccount !== "all" && tx.accountId !== filterAccount && tx.transferToAccountId !== filterAccount) return false;
+      if (filterCategory !== "all" && tx.categoryId !== filterCategory) return false;
+      if (q) {
+        const memo = (tx.memo ?? "").toLowerCase();
+        const cat = (state.categories.find((c) => c.id === tx.categoryId)?.name ?? "").toLowerCase();
+        const acc = (state.accounts.find((a) => a.id === tx.accountId)?.name ?? "").toLowerCase();
+        if (!memo.includes(q.toLowerCase()) && !cat.includes(q.toLowerCase()) && !acc.includes(q.toLowerCase()) && !String(tx.amount).includes(q)) return false;
+      }
+      return true;
+    });
+  }, [state.transactions, state.categories, state.accounts, query, filterType, filterAccount, filterCategory, monthKey, periodMode]);
+
+  const grouped = useMemo(() => {
+    const map = new Map<string, typeof filtered>();
+    filtered.forEach((tx) => {
+      const date = transactionLedgerDate(tx);
+      const arr = map.get(date) ?? [];
+      arr.push(tx);
+      map.set(date, arr);
+    });
+    return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
+  }, [filtered]);
+
+  const totalIncome = filtered.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
+  const totalExpense = filtered.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+
+  return (
+    <div className="view-stack">
+      <section className="panel">
+        <div className="panel-title">
+          <h2>取引一覧</h2>
+          <span className="panel-meta">{filtered.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
+        </div>
+        <div className="tx-toolbar">
+          <div className="tx-search">
+            <Search className="search-icon" size={18} />
+            <input type="text" placeholder="メモ・カテゴリ・口座・金額で検索…" value={query} onChange={(event) => setQuery(event.target.value)} />
+          </div>
+          <div className="tx-filters">
+            <select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as "month" | "all")}>
+              <option value="month">{formatMonthLabel(monthKey)}のみ</option>
+              <option value="all">全期間</option>
+            </select>
+            <select value={filterType} onChange={(event) => setFilterType(event.target.value as "all" | TransactionType)}>
+              <option value="all">すべての種類</option>
+              <option value="expense">支出</option>
+              <option value="income">収入</option>
+              <option value="transfer">振替</option>
+            </select>
+            <select value={filterAccount} onChange={(event) => setFilterAccount(event.target.value)}>
+              <option value="all">すべての口座</option>
+              {state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            </select>
+            <select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
+              <option value="all">すべてのカテゴリ</option>
+              {state.categories.filter((c) => !c.parentId).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      {grouped.length === 0 ? (
+        <section className="panel">
+          <div className="empty-state">
+            <div className="empty-illustration"><Receipt size={20} /></div>
+            該当する取引はありません。右下の + ボタンから登録してみましょう。
+            <button className="primary-btn" type="button" style={{ marginTop: 8 }} onClick={() => onQuick()}><Plus size={16} /> 取引を追加</button>
+          </div>
+        </section>
+      ) : (
+        <section className="panel">
+          {grouped.map(([date, items]) => {
+            const dayTotal = items.reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : tx.type === "expense" ? -tx.amount : 0), 0);
+            return (
+              <div key={date}>
+                <div className="tx-group-head">
+                  <span className="day">{formatDayLabel(date)}</span>
+                  <span className="total" style={{ color: dayTotal > 0 ? "var(--income)" : dayTotal < 0 ? "var(--expense)" : "var(--muted)" }}>
+                    {dayTotal > 0 ? "+" : ""}{yen.format(dayTotal)}
+                  </span>
+                </div>
+                <div className="tx-list">
+                  {items.map((transaction) => (
+                    <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </section>
+      )}
+    </div>
+  );
+}
+
 function AnalysisView({
   state,
   monthKey,
@@ -1327,9 +1812,9 @@ function AnalysisView({
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
   const bars = [
-    { name: "収入", value: stats.income, fill: "#16a34a" },
-    { name: "支出", value: stats.expense, fill: "#dc2626" },
-    { name: "貯金", value: Math.max(stats.income - stats.expense, 0), fill: "#0f766e" }
+    { name: "収入", value: stats.income, fill: "#34d399" },
+    { name: "支出", value: stats.expense, fill: "#f87171" },
+    { name: "貯金", value: Math.max(stats.income - stats.expense, 0), fill: "#7c5cff" }
   ];
   const trend = monthlyTrend(state, monthKey);
   const savingAverage = averageMonthlySaving(state);
@@ -1382,29 +1867,32 @@ function AnalysisView({
         </div>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>収支推移</h2><span>{monthLabel}までの6ヶ月</span></div>
-        <ResponsiveContainer width="100%" height={230}>
+        <div className="panel-title"><h2>収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+        <ResponsiveContainer width="100%" height={250}>
           <LineChart data={trend}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
             <YAxis hide />
             <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Line type="monotone" dataKey="income" name="収入" stroke="#16a34a" strokeWidth={3} />
-            <Line type="monotone" dataKey="expense" name="支出" stroke="#dc2626" strokeWidth={3} />
-            <Line type="monotone" dataKey="saving" name="貯金" stroke="#0f766e" strokeWidth={3} />
+            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
+            <Line type="monotone" dataKey="income" name="収入" stroke="#34d399" strokeWidth={2.5} dot={false} />
+            <Line type="monotone" dataKey="expense" name="支出" stroke="#f87171" strokeWidth={2.5} dot={false} />
+            <Line type="monotone" dataKey="saving" name="貯金" stroke="#7c5cff" strokeWidth={3} dot={{ r: 3, fill: "#7c5cff" }} />
           </LineChart>
         </ResponsiveContainer>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2><span>{drillParent ? "戻る" : monthLabel}</span></div>
-        {drillParent && <button className="google-button" type="button" onClick={() => setDrillParentId(null)}>カテゴリー全体に戻る</button>}
-        <ResponsiveContainer width="100%" height={190}>
+        <div className="panel-title">
+          <h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2>
+          {drillParent && <button className="panel-action" type="button" onClick={() => setDrillParentId(null)}><ChevronLeft size={14} /> 戻る</button>}
+        </div>
+        <ResponsiveContainer width="100%" height={210}>
           <PieChart>
-            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={4} onClick={(entry) => {
+            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={58} outerRadius={90} paddingAngle={4} stroke="none" onClick={(entry) => {
               const parent = state.categories.find((item) => item.name === entry.name && !item.parentId);
               if (parent) setDrillParentId(parent.id);
             }}>
-              {(drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+              {(drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
             </Pie>
             <Tooltip formatter={(value) => yen.format(Number(value))} />
           </PieChart>
@@ -1412,10 +1900,10 @@ function AnalysisView({
         <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>支出カテゴリごとの推移</h2><span>{monthLabel}までの6ヶ月</span></div>
-        <ResponsiveContainer width="100%" height={230}>
+        <div className="panel-title"><h2>カテゴリ別の月別推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+        <ResponsiveContainer width="100%" height={250}>
           <LineChart data={categoryTrend.rows}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="label" tickLine={false} axisLine={false} />
             <YAxis hide />
             <Tooltip formatter={(value) => yen.format(Number(value))} />
@@ -1425,8 +1913,9 @@ function AnalysisView({
                 type="monotone"
                 dataKey={categoryItem.name}
                 name={categoryItem.name}
-                stroke={categoryItem.fill || ["#0f766e", "#ea580c", "#2563eb", "#8b5cf6", "#dc2626", "#64748b"][index % 6]}
+                stroke={categoryItem.fill || ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"][index % 6]}
                 strokeWidth={2.5}
+                dot={false}
               />
             ))}
           </LineChart>
@@ -1435,11 +1924,11 @@ function AnalysisView({
       </section>
       <div className="home-chart-grid">
         <section className="panel chart-panel">
-          <div className="section-title"><h2>口座別支出</h2><span>{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={176}>
+          <div className="panel-title"><h2>口座別支出</h2><span className="panel-meta">{monthLabel}</span></div>
+          <ResponsiveContainer width="100%" height={186}>
             <PieChart>
-              <Pie data={accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3}>
-                {(accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+              <Pie data={accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={80} paddingAngle={3} stroke="none">
+                {(accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
@@ -1447,13 +1936,13 @@ function AnalysisView({
           <PieLegend data={accountExpense} total={accountExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
         </section>
         <section className="panel chart-panel">
-          <div className="section-title"><h2>支払い方法別支出</h2><span>{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={176}>
+          <div className="panel-title"><h2>支払い方法別</h2><span className="panel-meta">{monthLabel}</span></div>
+          <ResponsiveContainer width="100%" height={186}>
             <PieChart>
-              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]} dataKey="value" nameKey="name" innerRadius={48} outerRadius={72} paddingAngle={3} onClick={(entry) => {
+              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={80} paddingAngle={3} stroke="none" onClick={(entry) => {
                 if ("id" in entry && typeof entry.id === "string") setSelectedPaymentId(entry.id);
               }}>
-                {(paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#d6d3d1" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+                {(paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
               </Pie>
               <Tooltip formatter={(value) => yen.format(Number(value))} />
             </PieChart>
@@ -1463,7 +1952,7 @@ function AnalysisView({
         </section>
       </div>
       <section className="panel">
-        <div className="section-title"><h2>カテゴリー別割合</h2><span>{monthLabel}</span></div>
+        <div className="panel-title"><h2>カテゴリー別割合</h2><span className="panel-meta">{monthLabel}</span></div>
         <div className="analysis-table">
           <div><strong>カテゴリ</strong><strong>金額</strong><strong>割合</strong></div>
           {category.map((item) => (
@@ -1476,14 +1965,16 @@ function AnalysisView({
         </div>
       </section>
       <section className="panel chart-panel">
-        <div className="section-title"><h2>月別収支</h2><span>{monthLabel}</span></div>
-        <ResponsiveContainer width="100%" height={220}>
+        <div className="panel-title"><h2>月別収支</h2><span className="panel-meta">{monthLabel}</span></div>
+        <ResponsiveContainer width="100%" height={240}>
           <BarChart data={bars}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis dataKey="name" tickLine={false} axisLine={false} />
             <YAxis hide />
             <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Bar dataKey="value" radius={[8, 8, 0, 0]} />
+            <Bar dataKey="value" radius={[10, 10, 0, 0]}>
+              {bars.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
+            </Bar>
           </BarChart>
         </ResponsiveContainer>
       </section>
@@ -1780,12 +2271,13 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
             <div className="section-title"><h2>{selected.name}の推移</h2><span>予想と実績</span></div>
             <ResponsiveContainer width="100%" height={230}>
               <LineChart data={rows}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5ded2" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} />
                 <YAxis hide />
                 <Tooltip formatter={(value) => yen.format(Number(value))} />
-                <Line type="monotone" dataKey="targetValue" name="予想資産" stroke="#2563eb" strokeWidth={2.5} strokeDasharray="4 4" />
-                <Line type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color} strokeWidth={3} />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
+                <Line type="monotone" dataKey="targetValue" name="予想資産" stroke="#06b6d4" strokeWidth={2.5} strokeDasharray="4 4" dot={false} />
+                <Line type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           </section>
@@ -1944,36 +2436,47 @@ function GoalsView({ state, monthKey, setNotice, reload }: { state: LedgerState;
         </div>
       </section>
       <section className="panel">
-        <div className="section-title"><h2>目標貯金</h2><span>1つの目標を集中管理</span></div>
-        {!primaryGoal && <button className="full-primary" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}>目標を設定する</button>}
+        <div className="panel-title">
+          <h2>目標貯金</h2>
+          <button className="panel-action" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}><Plus size={14} /> {showForm ? "閉じる" : "目標を追加"}</button>
+        </div>
+        {state.goals.length === 0 && !showForm && (
+          <div className="empty-state">
+            <div className="empty-illustration"><Target size={20} /></div>
+            まだ目標がありません。「目標を追加」から最初の目標を設定してみましょう。
+          </div>
+        )}
         {showForm && (
           <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal()} onCancel={() => setShowForm(false)} />
         )}
       </section>
-      {state.goals.slice(0, 1).map((goal) => {
+      {state.goals.map((goal) => {
         const projection = goalProjection(goal, state);
         const deadlinePlan = goalDeadlinePlan(goal, state);
         const isEditing = editingId === goal.id;
         return (
           <section className="panel goal-panel" key={goal.id}>
-            <div className="section-title"><h2>{goal.name}</h2><span>期限 {goal.deadline}</span></div>
+            <div className="panel-title">
+              <h2>{goal.name}</h2>
+              <span className="panel-meta">期限 {goal.deadline}</span>
+            </div>
             {isEditing ? (
               <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal(goal.id)} onCancel={() => setEditingId(null)} onDelete={async () => { await deleteGoal(goal.id); await reload(); setEditingId(null); setNotice("目標を削除しました。"); }} />
             ) : (
-            <>
-            <div className="progress"><span style={{ width: `${projection.progress}%` }} /></div>
-            <div className="goal-numbers">
-              <strong>{Math.round(projection.progress)}%</strong>
-              <span>不足 {yen.format(projection.remaining)} / 必要 {yen.format(deadlinePlan.requiredMonthly)}/月</span>
-            </div>
-            <section className="advice goal-advice"><Sparkles size={18} /><p>{goalAdvice(goal, state)}</p></section>
-            <div className="goal-auto">
-              <span>過去実績から見た月平均貯金 / 期限まで</span>
-              <strong>{yen.format(averageMonthlySaving(state))}</strong>
-              <span>{deadlinePlan.months}ヶ月</span>
-            </div>
-            <button className="google-button" type="button" onClick={() => { setEditingId(goal.id); setShowForm(false); setDraft({ name: goal.name, targetAmount: goal.targetAmount, accountId: goal.accountId, deadline: goal.deadline, monthlyBoost: goal.monthlyBoost }); }}>編集する</button>
-            </>
+              <>
+                <div className="progress"><span style={{ width: `${projection.progress}%` }} /></div>
+                <div className="goal-numbers">
+                  <strong>{Math.round(projection.progress)}%</strong>
+                  <span>不足 {yen.format(projection.remaining)} ／ 必要 {yen.format(deadlinePlan.requiredMonthly)}/月</span>
+                </div>
+                <section className="advice"><Sparkles size={18} /><p>{goalAdvice(goal, state)}</p></section>
+                <div className="goal-auto">
+                  <span>過去平均の月貯金 / 期限まで</span>
+                  <strong>{yen.format(averageMonthlySaving(state))}</strong>
+                  <span>{deadlinePlan.months}ヶ月</span>
+                </div>
+                <button className="ghost-btn" type="button" onClick={() => { setEditingId(goal.id); setShowForm(false); setDraft({ name: goal.name, targetAmount: goal.targetAmount, accountId: goal.accountId, deadline: goal.deadline, monthlyBoost: goal.monthlyBoost }); }}>編集する</button>
+              </>
             )}
           </section>
         );
@@ -3289,17 +3792,21 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
       </article>
     );
   }
+  const Icon = transaction.type === "income" ? ArrowDownLeft : transaction.type === "expense" ? ArrowUpRight : ArrowDownUp;
   return (
     <article className={`tx-row${expanded ? " expanded" : ""}`}>
       <button className="tx-main" type="button" onClick={() => setExpanded(!expanded)}>
-        <div className={`tx-icon ${transaction.type}`}><ArrowDownUp size={16} /></div>
-        <div><strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong><span>{transactionLedgerDate(transaction)} / {account?.name}{transaction.reflectedDate ? ` / 使用日 ${transaction.date}` : ""}{transaction.creditStatus ? ` / ${creditStatusLabel[transaction.creditStatus]}` : ""}</span></div>
-        <em>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
+        <div className={`tx-ico ${transaction.type}`}><Icon size={16} /></div>
+        <div className="tx-body">
+          <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
+          <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}{transaction.creditStatus ? ` ・ ${creditStatusLabel[transaction.creditStatus]}` : ""}</small>
+        </div>
+        <em className={`tx-amount ${transaction.type}`}>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
       </button>
       {expanded && (
-        <div className="tx-row-actions">
-          <button className="mini-button" type="button" onClick={() => setEditing(true)}>編集する</button>
-          <button className="mini-button danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除する</button>
+        <div className="tx-actions">
+          <button type="button" onClick={() => setEditing(true)}>編集</button>
+          <button className="danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除</button>
         </div>
       )}
     </article>
