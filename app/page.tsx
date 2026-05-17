@@ -415,11 +415,8 @@ export default function App() {
           </div>
         </section>
 
-        {/* Greeting + household switcher */}
+        {/* Month control */}
         <section className="greeting-bar">
-          <div>
-            <h1>{greetingText}、{displayName}さん。</h1>
-          </div>
           <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
         </section>
 
