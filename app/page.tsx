@@ -88,6 +88,8 @@ import {
   adminDeleteUser,
   adminResumeUser,
   adminSuspendUser,
+  adminToggleUserRole,
+  adminUpdateUserDisplayName,
   createAccount,
   createInvestmentAccount,
   createCategory,
@@ -3333,7 +3335,8 @@ function AdminView() {
   const [adminTab, setAdminTab] = useState<"summary" | "users" | "households">("summary");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | null>(null);
-  const [confirmAction, setConfirmAction] = useState<"deleteHousehold" | "suspendUser" | "resumeUser" | "deleteUser" | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"deleteHousehold" | "suspendUser" | "resumeUser" | "deleteUser" | "toggleRole" | null>(null);
+  const [editingDisplayName, setEditingDisplayName] = useState<string | null>(null);
   async function reloadDashboard() {
     setError("");
     setDashboard(await loadAdminDashboard());
@@ -3438,6 +3441,7 @@ function AdminView() {
                   </div>
                   <div className="ledger-info-grid">
                     <div><span>ユーザーID</span><strong>{selectedUser.id}</strong></div>
+                    <div><span>表示名</span><strong>{editingDisplayName !== null ? <input type="text" value={editingDisplayName} onChange={(e) => setEditingDisplayName(e.target.value)} placeholder="ユーザー名" /> : selectedUser.displayName}</strong></div>
                     <div><span>権限</span><strong>{selectedUser.role === "admin" ? "管理者" : "一般"}</strong></div>
                     <div><span>作成日時</span><strong>{formatDateTime(selectedUser.createdAt)}</strong></div>
                     <div><span>停止日時</span><strong>{formatDateTime(selectedUser.deletedAt)}</strong></div>
@@ -3453,8 +3457,16 @@ function AdminView() {
                     ))}
                   </div>
                   <div className="delete-confirm-box">
-                    {!confirmAction && (
+                    {editingDisplayName !== null ? (
                       <div>
+                        <input type="text" value={editingDisplayName} onChange={(e) => setEditingDisplayName(e.target.value)} placeholder="新しい表示名" />
+                        <button type="button" onClick={async () => { try { await adminUpdateUserDisplayName(selectedUser.id, editingDisplayName); await reloadDashboard(); setEditingDisplayName(null); } catch (caught) { setError(toJapaneseError(caught, "ユーザー名の更新に失敗しました。")); } }}>保存</button>
+                        <button type="button" onClick={() => setEditingDisplayName(null)}>キャンセル</button>
+                      </div>
+                    ) : !confirmAction ? (
+                      <div>
+                        <button type="button" onClick={() => setEditingDisplayName(selectedUser.displayName || "")}>名前を編集</button>
+                        <button type="button" onClick={() => setConfirmAction("toggleRole")}>権限を{selectedUser.role === "admin" ? "解除" : "付与"}</button>
                         {selectedUser.deletedAt ? (
                           <button type="button" onClick={() => setConfirmAction("resumeUser")}>アカウントを再開</button>
                         ) : (
@@ -3462,7 +3474,7 @@ function AdminView() {
                         )}
                         <button className="danger-button" type="button" onClick={() => setConfirmAction("deleteUser")}>アカウントを削除</button>
                       </div>
-                    )}
+                    ) : null}
                     {confirmAction === "suspendUser" && (
                       <>
                         <p>「{selectedUser.displayName}」のアカウントを停止しますか？</p>
@@ -3477,6 +3489,15 @@ function AdminView() {
                         <p>「{selectedUser.displayName}」のアカウントを再開しますか？</p>
                         <div>
                           <button type="button" onClick={async () => { try { await adminResumeUser(selectedUser.id); await reloadDashboard(); setSelectedUserId(null); setConfirmAction(null); } catch (caught) { setError(toJapaneseError(caught, "アカウント再開に失敗しました。")); } }}>再開する</button>
+                          <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
+                        </div>
+                      </>
+                    )}
+                    {confirmAction === "toggleRole" && (
+                      <>
+                        <p>「{selectedUser.displayName}」の権限を{selectedUser.role === "admin" ? "一般ユーザーに変更" : "管理者に昇格"}しますか？</p>
+                        <div>
+                          <button type="button" onClick={async () => { try { await adminToggleUserRole(selectedUser.id); await reloadDashboard(); setConfirmAction(null); } catch (caught) { setError(toJapaneseError(caught, "権限の変更に失敗しました。")); } }}>確認</button>
                           <button type="button" onClick={() => setConfirmAction(null)}>キャンセル</button>
                         </div>
                       </>

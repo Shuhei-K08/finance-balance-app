@@ -530,6 +530,21 @@ export async function adminDeleteUser(userId: string) {
   await Promise.all(((ownedHouseholds ?? []) as Array<{ id: string }>).map((household) => adminDeleteHousehold(household.id)));
 }
 
+export async function adminToggleUserRole(userId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("admin_toggle_user_role", { target_user_id: userId });
+  if (error) throwJapanese(error, "権限の変更に失敗しました。");
+}
+
+export async function adminUpdateUserDisplayName(userId: string, displayName: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("admin_update_user_display_name", {
+    target_user_id: userId,
+    new_display_name: displayName
+  });
+  if (error) throwJapanese(error, "ユーザー名の更新に失敗しました。");
+}
+
 export async function loadAdminDashboard(): Promise<AdminDashboard> {
   const client = requireSupabase();
   const [profilesResult, householdsResult, membersResult] = await Promise.all([

@@ -211,7 +211,8 @@ begin
   insert into profiles (id, display_name, role)
   values (auth.uid(), '管理者', 'admin')
   on conflict (id) do update
-    set role = 'admin',
+    set display_name = coalesce(profiles.display_name, '管理者'),
+        role = 'admin',
         deleted_at = null;
 end;
 $$;
@@ -242,7 +243,8 @@ begin
   insert into profiles (id, display_name, role)
   values (current_user_id, current_email, 'admin')
   on conflict (id) do update
-    set role = 'admin',
+    set display_name = coalesce(profiles.display_name, current_email),
+        role = 'admin',
         deleted_at = null;
 end;
 $$;
@@ -427,7 +429,8 @@ begin
   insert into profiles (id, display_name)
   values (current_user_id, coalesce(auth.jwt() ->> 'email', 'ユーザー'))
   on conflict (id) do update
-    set deleted_at = null;
+    set display_name = coalesce(profiles.display_name, coalesce(auth.jwt() ->> 'email', 'ユーザー')),
+        deleted_at = null;
 
   select id into household_id
   from households
@@ -707,6 +710,7 @@ alter table saving_goals enable row level security;
 
 drop policy if exists "profiles select own or admin" on profiles;
 drop policy if exists "profiles insert own" on profiles;
+drop policy if exists "profiles update own" on profiles;
 drop policy if exists "profiles update own basic or admin" on profiles;
 drop policy if exists "admin email allowlist admin only" on admin_email_allowlist;
 drop policy if exists "households member select" on households;
@@ -728,9 +732,12 @@ create policy "profiles select own or admin" on profiles
   for select using (id = auth.uid() or public.is_admin());
 create policy "profiles insert own" on profiles
   for insert with check (id = auth.uid());
-create policy "profiles update own basic or admin" on profiles
-  for update using (id = auth.uid() or public.is_admin())
-  with check ((id = auth.uid() and role = 'user') or public.is_admin());
+create policy "profiles update own" on profiles
+  for update using (id = auth.uid())
+  with check (id = auth.uid() and role = 'user');
+create policy "profiles admin update all" on profiles
+  for update using (public.is_admin())
+  with check (public.is_admin());
 
 create policy "admin email allowlist admin only" on admin_email_allowlist
   for all using (public.is_admin())
@@ -777,3 +784,63 @@ create policy "fixed costs member access" on fixed_costs
 create policy "saving goals member access" on saving_goals
   for all using (public.is_household_member(household_id) or public.is_admin())
   with check (public.is_household_member(household_id) or public.is_admin());
+
+create or replace function public.admin_toggle_user_role(target_user_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+  current_role text;
+begin
+  if current_user_id is null then
+    raise exception 'login required';
+  end if;
+
+  if not public.is_admin() then
+    raise exception 'This action requires admin privileges.';
+  end if;
+
+  select role into current_role
+  from profiles
+  where id = target_user_id
+    and deleted_at is null;
+
+  if current_role is null then
+    raise exception 'User not found';
+  end if;
+
+  if target_user_id = current_user_id then
+    raise exception 'Cannot toggle your own admin role';
+  end if;
+
+  update profiles
+  set role = case when role = 'admin' then 'user' else 'admin' end
+  where id = target_user_id;
+end;
+$$;
+
+create or replace function public.admin_update_user_display_name(target_user_id uuid, new_display_name text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_user_id uuid := auth.uid();
+begin
+  if current_user_id is null then
+    raise exception 'login required';
+  end if;
+
+  if not public.is_admin() then
+    raise exception 'This action requires admin privileges.';
+  end if;
+
+  update profiles
+  set display_name = nullif(trim(new_display_name), '')
+  where id = target_user_id;
+end;
+$$;
