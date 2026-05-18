@@ -414,11 +414,6 @@ export default function App() {
           </div>
         </section>
 
-        {/* Month control */}
-        <section className="greeting-bar">
-          <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
-        </section>
-
         {(state.households ?? []).length > 1 && (
           <section className="household-pills" aria-label="家計簿切替">
             {(state.households ?? []).map((household) => (
@@ -476,6 +471,11 @@ export default function App() {
       <button className="fab" type="button" onClick={() => openQuick()} aria-label="取引を追加">
         <Plus size={24} />
       </button>
+
+      {/* Month control */}
+      <section className="month-control-bar">
+        <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
+      </section>
 
       <nav className="bottom-bar" aria-label="メインメニュー">
         <div className="bottom-nav">

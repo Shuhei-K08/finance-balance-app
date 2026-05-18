@@ -685,30 +685,6 @@ a { color: inherit; text-decoration: none; }
   min-width: 0;
 }
 
-/* Greeting/header */
-.greeting-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 2px;
-}
-
-.greeting-bar h1 {
-  margin: 0;
-  font-size: clamp(20px, 2.4vw, 26px);
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.greeting-bar span {
-  display: block;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 500;
-  margin-top: 2px;
-}
-
 /* Household pills */
 .household-pills {
   display: flex;
@@ -1387,6 +1363,25 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ============================================================
+   Month control bar (above bottom nav)
+   ============================================================ */
+.month-control-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  background: transparent;
+  z-index: 24;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: center;
+}
+
+@media (min-width: 1100px) {
+  .month-control-bar { display: none; }
+}
+
+/* ============================================================
    Bottom nav (mobile)
    ============================================================ */
 .bottom-bar {
@@ -1502,9 +1497,13 @@ a { color: inherit; text-decoration: none; }
   color: var(--ink-soft);
   display: grid;
   place-items: center;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: all 0.18s var(--easing);
 }
 
 .calendar-head button:hover { background: var(--brand-soft); color: var(--ink); }
+.calendar-head button:active { transform: scale(0.95); }
 
 .month-summary {
   display: grid;
