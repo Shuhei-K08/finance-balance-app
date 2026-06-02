@@ -865,7 +865,6 @@ function HomeView({
       )}
 
       <div className="kpi-grid">
-        <KpiCard tone="saving" icon={Wallet} label="総資産" value={yen.format(displayAssets)} sub={isCurrentMonth ? "予定総資産" : `${monthLabel} 時点`} />
         <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={yen.format(investmentTotal)} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
         <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
         <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
@@ -874,27 +873,6 @@ function HomeView({
         <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
 
-      <section className="panel">
-        <div className="panel-title"><h2>クイック操作</h2><span className="panel-meta">取引タブから一覧/編集も可能</span></div>
-        <div className="quick-actions">
-          <button type="button" className="qa expense" onClick={() => onQuick(undefined, "expense")}>
-            <div className="qa-icon"><ArrowUpRight size={18} /></div>
-            支出を追加
-          </button>
-          <button type="button" className="qa income" onClick={() => onQuick(undefined, "income")}>
-            <div className="qa-icon"><ArrowDownLeft size={18} /></div>
-            収入を追加
-          </button>
-          <button type="button" className="qa transfer" onClick={() => onQuick(undefined, "transfer")}>
-            <div className="qa-icon"><ArrowDownUp size={18} /></div>
-            振替する
-          </button>
-          <button type="button" className="qa card" onClick={() => onNavigate("transactions")}>
-            <div className="qa-icon"><Receipt size={18} /></div>
-            一覧を見る
-          </button>
-        </div>
-      </section>
 
       <div className="home-chart-grid">
         <section className="panel">
@@ -974,6 +952,7 @@ function HomeView({
       {showAllAccounts && (
         <AllAccountsModal
           state={state}
+          monthKey={calendarMonth}
           onClose={() => setShowAllAccounts(false)}
           onSelect={(id) => { setShowAllAccounts(false); setAccountHistoryId(id); }}
         />
@@ -998,10 +977,9 @@ function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "inco
   );
 }
 
-function AllAccountsModal({ state, onClose, onSelect }: { state: LedgerState; onClose: () => void; onSelect: (id: string) => void }) {
+function AllAccountsModal({ state, monthKey, onClose, onSelect }: { state: LedgerState; monthKey: string; onClose: () => void; onSelect: (id: string) => void }) {
   const accounts = state.accounts.filter((a) => a.type !== "credit");
-  const currentMonth = todayIso().slice(0, 7);
-  const total = accounts.reduce((sum, a) => sum + confirmedAccountBalance(a, state, currentMonth), 0);
+  const total = accounts.reduce((sum, a) => sum + confirmedAccountBalance(a, state, monthKey), 0);
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
@@ -1011,7 +989,7 @@ function AllAccountsModal({ state, onClose, onSelect }: { state: LedgerState; on
         </div>
         <div className="account-list" style={{ marginTop: 8 }}>
           {accounts.map((account) => {
-            const balance = confirmedAccountBalance(account, state, currentMonth);
+            const balance = confirmedAccountBalance(account, state, monthKey);
             const ratio = total > 0 ? Math.max(Math.min(balance / total, 1), 0) : 0;
             return (
               <div className="account-row account-row-clickable" key={account.id} onClick={() => onSelect(account.id)} role="button" tabIndex={0}>
