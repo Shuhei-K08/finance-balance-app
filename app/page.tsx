@@ -2058,16 +2058,16 @@ function AnalysisView({
         <section className="panel chart-panel">
           <div className="panel-title"><h2>口座の残高推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
           <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={accountBalanceTrend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} />
+            <BarChart data={accountBalanceTrend} barSize={28}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis hide />
               <Tooltip formatter={(value) => yen.format(Number(value))} />
-              <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
+              <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
               {liquidAccounts.map((acc, i) => (
-                <Line key={acc.id} type="monotone" dataKey={acc.name} stroke={acc.color || accountColors[i % accountColors.length]} strokeWidth={2.5} dot={false} />
+                <Bar key={acc.id} dataKey={acc.name} stackId="balance" fill={acc.color || accountColors[i % accountColors.length]} radius={i === liquidAccounts.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
               ))}
-            </LineChart>
+            </BarChart>
           </ResponsiveContainer>
         </section>
       )}
