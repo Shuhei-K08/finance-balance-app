@@ -2456,21 +2456,31 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
             </ResponsiveContainer>
           </section>
 
-          {/* 月次実績入力 */}
-          <section className="panel">
-            <div className="section-title"><h2>{formatMonthLabel(recordMonth)}の実績入力</h2><button className="mini-button" type="button" onClick={() => setShowRecordForm(!showRecordForm)}>{showRecordForm ? "閉じる" : "入力"}</button></div>
-            {showRecordForm && (
-              <div className="crud-form compact-form">
-                <label>入力月<input type="month" value={recordMonth} onChange={(event) => setRecordMonth(event.target.value || monthKey)} /></label>
-                <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} /></label>
-                <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
-                <label>売却額<input type="number" value={numberInputValue(recordDraft.saleAmount)} onChange={(event) => setRecordDraft({ ...recordDraft, saleAmount: Number(event.target.value || 0) })} /></label>
-                <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
-                <button className="full-primary" type="button" onClick={saveRecord}>月次実績を保存</button>
-                {existingRecord && <button className="google-button" type="button" onClick={async () => { try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); } }}>この月の実績を削除</button>}
-              </div>
-            )}
-          </section>
+          {/* 月次実績入力モーダル */}
+          {showRecordForm && (
+            <div className="sheet-backdrop center-backdrop" onClick={() => setShowRecordForm(false)}>
+              <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 420px)" }}>
+                <div className="section-title">
+                  <h2>{formatMonthLabel(recordMonth)}の実績入力</h2>
+                  <span>{selected?.name}</span>
+                </div>
+                <div className="crud-form compact-form">
+                  <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} autoFocus /></label>
+                  <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
+                  <label>売却額<input type="number" value={numberInputValue(recordDraft.saleAmount)} onChange={(event) => setRecordDraft({ ...recordDraft, saleAmount: Number(event.target.value || 0) })} /></label>
+                  <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
+                  <button className="full-primary" type="button" onClick={async () => { await saveRecord(); setShowRecordForm(false); }}>保存</button>
+                  {existingRecord && (
+                    <button className="google-button" type="button" onClick={async () => {
+                      try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); setShowRecordForm(false); }
+                      catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); }
+                    }}>この月の実績を削除</button>
+                  )}
+                  <button className="google-button" type="button" onClick={() => setShowRecordForm(false)}>キャンセル</button>
+                </div>
+              </section>
+            </div>
+          )}
 
           {/* 年次実績 */}
           <section className="panel">
@@ -2503,19 +2513,25 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
             </div>
             <div className="inv-month-list">
               {monthlyRows.length === 0 ? (
-                <div className="empty-state"><span>この年の月次データはまだありません。</span></div>
-              ) : monthlyRows.map((row) => (
-                <div key={row.month} className="inv-month-row">
-                  <div className="inv-month-label">{row.label}</div>
-                  <div className="inv-month-body">
-                    <div><span>評価額</span><strong>{yen.format(row.monthEndValue)}</strong></div>
-                    <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
-                    <div><span>月利</span><strong className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</strong></div>
-                    <div><span>達成率</span><strong>{Math.round(row.achievementRate)}%</strong></div>
+                <div className="empty-state"><span>行をタップして実績を入力できます。</span></div>
+              ) : monthlyRows.map((row) => {
+                const hasRecord = (state.investmentRecords ?? []).some((r) => r.investmentAccountId === selected?.id && r.month === row.month);
+                return (
+                  <div key={row.month} className="inv-month-row account-row-clickable" role="button" tabIndex={0}
+                    onClick={() => { setRecordMonth(row.month); setShowRecordForm(true); }}>
+                    <div className="inv-month-label">
+                      {row.label}
+                      {!hasRecord && <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 4 }}>未入力</span>}
+                    </div>
+                    <div className="inv-month-body">
+                      <div><span>評価額</span><strong>{yen.format(row.monthEndValue)}</strong></div>
+                      <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
+                      <div><span>月利</span><strong className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</strong></div>
+                      <div><span>達成率</span><strong>{Math.round(row.achievementRate)}%</strong></div>
+                    </div>
                   </div>
-                  <button className="mini-button" type="button" style={{ marginTop: 4 }} onClick={() => { setRecordMonth(row.month); setShowRecordForm(true); }}>編集</button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         </>
