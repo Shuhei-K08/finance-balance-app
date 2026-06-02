@@ -154,12 +154,19 @@ export function investmentAssets(state: LedgerState, throughMonthKey = todayIso(
 function transactionAssetDeltaForAccount(transaction: Transaction, account: Account, accounts: Account[]) {
   if (transaction.type === "income" && transaction.accountId === account.id) return transaction.amount;
   if (transaction.type === "expense") {
-    // クレジットカードの支出は口座残高に影響しない（振替で支払う時のみ減る）
     const sourceAccount = accounts.find((item) => item.id === transaction.accountId);
-    if (sourceAccount?.type === "credit") return 0;
+    if (sourceAccount?.type === "credit") {
+      // クレジット支出は引落口座から即時控除
+      return sourceAccount.withdrawalAccountId === account.id ? -transaction.amount : 0;
+    }
     return transaction.accountId === account.id && account.type !== "credit" ? -transaction.amount : 0;
   }
-  if (transaction.type === "transfer" && transaction.accountId === account.id) return -transaction.amount;
+  if (transaction.type === "transfer" && transaction.accountId === account.id) {
+    // クレジットカードへの振替（カード支払い）は除外：クレジット費用は即時控除済みのため二重計上を防ぐ
+    const toAccount = accounts.find((a) => a.id === transaction.transferToAccountId);
+    if (toAccount?.type === "credit") return 0;
+    return -transaction.amount;
+  }
   if (transaction.type === "transfer" && transaction.transferToAccountId === account.id) return transaction.amount;
   return 0;
 }
@@ -172,8 +179,10 @@ function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Accou
     if (cost.transferToAccountId === account.id) return cost.amount;
     return 0;
   }
-  // クレジットカードの固定費は口座残高に影響しない（振替で支払う時のみ減る）
-  if (sourceAccount?.type === "credit") return 0;
+  // クレジット固定費は引落口座から即時控除（transactionAssetDeltaForAccountと同じロジック）
+  if (sourceAccount?.type === "credit") {
+    return sourceAccount.withdrawalAccountId === account.id ? -cost.amount : 0;
+  }
   return cost.accountId === account.id && account.type !== "credit" ? -cost.amount : 0;
 }
 
