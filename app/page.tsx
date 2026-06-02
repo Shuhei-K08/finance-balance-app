@@ -1935,6 +1935,8 @@ function AnalysisView({
   const [selectedAccountHistoryId, setSelectedAccountHistoryId] = useState<string | null>(null);
   const [balancePeriod, setBalancePeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
   const [categoryPeriod, setCategoryPeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
+  const [categoryDrill, setCategoryDrill] = useState<{ monthKey: string; categoryId: string } | null>(null);
+  const [paymentDrill, setPaymentDrill] = useState<string | null>(null); // accountId
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
@@ -2067,7 +2069,7 @@ function AnalysisView({
               {rows.map(({ account, total }) => {
                 const ratio = grandTotal > 0 ? total / grandTotal : 0;
                 return (
-                  <div className="account-row" key={account.id}>
+                  <div className="account-row account-row-clickable" key={account.id} role="button" tabIndex={0} onClick={() => setPaymentDrill(account.id)}>
                     <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
                     <div className="account-name">
                       <strong>{account.name}</strong>
@@ -2175,11 +2177,130 @@ function AnalysisView({
             />
             <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 11 }} />
             {expenseCategories.map((cat) => (
-              <Bar key={cat.id} dataKey={cat.name} stackId="cat" fill={cat.color} radius={[0, 0, 0, 0]} />
+              <Bar key={cat.id} dataKey={cat.name} stackId="cat" fill={cat.color} radius={[0, 0, 0, 0]} style={{ cursor: "pointer" }}
+                onClick={(data) => {
+                  const mKey = categoryMonths.find((m) => m.label === data.label)?.key;
+                  if (mKey) setCategoryDrill({ monthKey: mKey, categoryId: cat.id });
+                }}
+              />
             ))}
           </BarChart>
         </ResponsiveContainer>
+        <p style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", marginTop: 4 }}>棒をクリックするとカテゴリー詳細を表示</p>
       </section>
+
+      {/* カテゴリー詳細モーダル */}
+      {categoryDrill && (() => {
+        const cat = state.categories.find((c) => c.id === categoryDrill.categoryId);
+        const childIds = new Set([categoryDrill.categoryId, ...state.categories.filter((c) => c.parentId === categoryDrill.categoryId).map((c) => c.id)]);
+        const mLabel = formatMonthLabel(categoryDrill.monthKey);
+        const txs = monthTransactionsByKey(state.transactions, categoryDrill.monthKey)
+          .filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId))
+          .sort((a, b) => b.date.localeCompare(a.date));
+        const fixedOcc = fixedCostOccurrencesForMonth(state.fixedCosts, categoryDrill.monthKey, state)
+          .filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId));
+        const total = txs.reduce((s, t) => s + t.amount, 0) + fixedOcc.reduce((s, c) => s + c.amount, 0);
+        // サブカテゴリ集計
+        const subMap = new Map<string, number>();
+        [...txs.map((t) => ({ catId: t.categoryId!, amt: t.amount })), ...fixedOcc.map((c) => ({ catId: c.categoryId, amt: c.amount }))].forEach(({ catId, amt }) => {
+          const sub = state.categories.find((c) => c.id === catId);
+          const label = sub?.parentId ? sub.name : "その他";
+          subMap.set(label, (subMap.get(label) ?? 0) + amt);
+        });
+        return (
+          <div className="sheet-backdrop center-backdrop" onClick={() => setCategoryDrill(null)}>
+            <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
+              <div className="section-title">
+                <h2><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: cat?.color, marginRight: 6 }} />{cat?.name}</h2>
+                <span>{mLabel} · {yen.format(total)}</span>
+              </div>
+              {subMap.size > 1 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
+                  {[...subMap.entries()].sort((a, b) => b[1] - a[1]).map(([name, amt]) => (
+                    <span key={name} style={{ fontSize: 11, background: "var(--surface)", borderRadius: 6, padding: "2px 8px" }}>
+                      {name} <strong>{yen.format(amt)}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+                {fixedOcc.map((c) => (
+                  <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.date} · 定期</div>
+                    </div>
+                    <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(c.amount)}</div>
+                  </div>
+                ))}
+                {txs.map((t) => {
+                  const subCat = state.categories.find((c) => c.id === t.categoryId || c.id === t.subcategoryId);
+                  return (
+                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.memo || subCat?.name || "支出"}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.date}{subCat?.parentId ? ` · ${subCat.name}` : ""}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(t.amount)}</div>
+                    </div>
+                  );
+                })}
+                {txs.length === 0 && fixedOcc.length === 0 && <div className="empty-state">この月の取引はありません。</div>}
+              </div>
+              <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setCategoryDrill(null)}>閉じる</button>
+            </section>
+          </div>
+        );
+      })()}
+
+      {/* 支払い方法詳細モーダル */}
+      {paymentDrill && (() => {
+        const account = state.accounts.find((a) => a.id === paymentDrill);
+        const txs = monthTransactionsByKey(state.transactions, monthKey)
+          .filter((t) => t.type === "expense" && t.accountId === paymentDrill)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        const fixedOcc = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+          .filter((c) => c.kind === "expense" && c.accountId === paymentDrill);
+        const total = txs.reduce((s, t) => s + t.amount, 0) + fixedOcc.reduce((s, c) => s + c.amount, 0);
+        return (
+          <div className="sheet-backdrop center-backdrop" onClick={() => setPaymentDrill(null)}>
+            <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
+              <div className="section-title">
+                <h2><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: account?.color, marginRight: 6 }} />{account?.name}</h2>
+                <span>{monthLabel} · {yen.format(total)}</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
+                {fixedOcc.map((c) => {
+                  const cat = state.categories.find((x) => x.id === c.categoryId);
+                  return (
+                    <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.date} · 定期{cat ? ` · ${cat.name}` : ""}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(c.amount)}</div>
+                    </div>
+                  );
+                })}
+                {txs.map((t) => {
+                  const cat = state.categories.find((x) => x.id === t.categoryId);
+                  return (
+                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.memo || cat?.name || "支出"}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.date}{cat ? ` · ${cat.name}` : ""}</div>
+                      </div>
+                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(t.amount)}</div>
+                    </div>
+                  );
+                })}
+                {txs.length === 0 && fixedOcc.length === 0 && <div className="empty-state">この月の取引はありません。</div>}
+              </div>
+              <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setPaymentDrill(null)}>閉じる</button>
+            </section>
+          </div>
+        );
+      })()}
 
       {selectedAccountHistoryId && (
         <AccountHistoryModal
