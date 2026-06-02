@@ -2010,6 +2010,49 @@ function AnalysisView({
         )}
       </section>
 
+      {/* 支払い方法別支出 */}
+      {(() => {
+        const allAccounts = state.accounts;
+        const monthTx = monthTransactionsByKey(state.transactions, monthKey);
+        const fixedOccurrences = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+        const rows = allAccounts
+          .map((account) => {
+            const txTotal = monthTx
+              .filter((t) => t.type === "expense" && t.accountId === account.id)
+              .reduce((s, t) => s + t.amount, 0);
+            const fixedTotal = fixedOccurrences
+              .filter((c) => c.kind === "expense" && c.accountId === account.id)
+              .reduce((s, c) => s + c.amount, 0);
+            return { account, total: txTotal + fixedTotal };
+          })
+          .filter((r) => r.total > 0)
+          .sort((a, b) => b.total - a.total);
+        const grandTotal = rows.reduce((s, r) => s + r.total, 0);
+        if (rows.length === 0) return null;
+        return (
+          <section className="panel">
+            <div className="panel-title"><h2>支払い方法別支出</h2><span className="panel-meta">{monthLabel}</span></div>
+            <div className="account-list">
+              {rows.map(({ account, total }) => {
+                const ratio = grandTotal > 0 ? total / grandTotal : 0;
+                return (
+                  <div className="account-row" key={account.id}>
+                    <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
+                    <div className="account-name">
+                      <strong>{account.name}</strong>
+                      <small>{accountTypeLabel(account.type)}</small>
+                    </div>
+                    <div className="balance" style={{ color: "var(--expense)" }}>{yen.format(total)}</div>
+                    <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ textAlign: "right", fontSize: 12, color: "var(--muted)", marginTop: 4 }}>合計 {yen.format(grandTotal)}</div>
+          </section>
+        );
+      })()}
+
       {/* 口座残高推移 */}
       {liquidAccounts.length > 0 && (
         <section className="panel chart-panel">
