@@ -140,7 +140,7 @@ type Tab = "home" | "transactions" | "analysis" | "investments" | "goals" | "set
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
   { id: "transactions", label: "取引", icon: Receipt },
-  { id: "analysis", label: "分析", icon: BarChart3 },
+  { id: "analysis", label: "口座", icon: Wallet },
   { id: "investments", label: "投資", icon: Landmark },
   { id: "settings", label: "設定", icon: Settings }
 ];
@@ -781,6 +781,7 @@ function HomeView({
   const [promptMonth, setPromptMonth] = useState<string | null>(null);
   const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | "credit" | null>(null);
   const [accountHistoryId, setAccountHistoryId] = useState<string | null>(null);
+  const [showAllAccounts, setShowAllAccounts] = useState(false);
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -795,9 +796,8 @@ function HomeView({
   const savingAmount = stats.income - stats.expense;
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
   const investmentTotal = investmentAssets(state, calendarMonth);
-  const accountAssets = state.accounts
-    .filter((account) => account.type !== "credit")
-    .reduce((sum, account) => sum + confirmedAccountBalance(account, state, calendarMonth), 0);
+  const liquidAccounts = state.accounts.filter((account) => account.type !== "credit");
+  const accountAssets = liquidAccounts.reduce((sum, account) => sum + calculateAccountBalanceInState(account, state), 0);
   const displayAssets = accountAssets + investmentTotal;
 
   const trend = useMemo(() => balanceTrend(state, calendarMonth), [state, calendarMonth]);
@@ -807,8 +807,7 @@ function HomeView({
   const sparkData = trend.filter((point) => point.actual != null).map((point) => ({ label: point.label, value: point.actual }));
   const recentTx = state.transactions.slice(0, 5);
   const upcoming = useMemo(() => upcomingBills(state, 14), [state]);
-  const liquidAccounts = state.accounts.filter((account) => account.type !== "credit");
-  const totalLiquid = liquidAccounts.reduce((sum, account) => sum + calculateAccountBalanceInState(account, state), 0);
+  const totalLiquid = accountAssets;
   const goal = state.goals[0];
   const goalP = goal ? goalProjection(goal, state) : null;
 
@@ -863,7 +862,7 @@ function HomeView({
       <div className="kpi-grid">
         <KpiCard tone="saving" icon={Wallet} label="総資産" value={yen.format(displayAssets)} sub={isCurrentMonth ? "予定総資産" : `${monthLabel} 時点`} />
         <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={yen.format(investmentTotal)} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
-        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" />
+        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
         <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
         <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} sub={`固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
         <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
@@ -967,6 +966,13 @@ function HomeView({
           onClose={() => setAccountHistoryId(null)}
         />
       )}
+      {showAllAccounts && (
+        <AllAccountsModal
+          state={state}
+          onClose={() => setShowAllAccounts(false)}
+          onSelect={(id) => { setShowAllAccounts(false); setAccountHistoryId(id); }}
+        />
+      )}
     </div>
   );
 }
@@ -984,6 +990,36 @@ function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "inco
   );
   return (
     <button type="button" className={`kpi-card ${tone}`} onClick={onClick}>{content}</button>
+  );
+}
+
+function AllAccountsModal({ state, onClose, onSelect }: { state: LedgerState; onClose: () => void; onSelect: (id: string) => void }) {
+  const accounts = state.accounts.filter((a) => a.type !== "credit");
+  const total = accounts.reduce((sum, a) => sum + calculateAccountBalanceInState(a, state), 0);
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
+        <div className="section-title">
+          <h2>口座残高一覧</h2>
+          <span>合計 {yen.format(total)}</span>
+        </div>
+        <div className="account-list" style={{ marginTop: 8 }}>
+          {accounts.map((account) => {
+            const balance = calculateAccountBalanceInState(account, state);
+            const ratio = total > 0 ? Math.max(Math.min(balance / total, 1), 0) : 0;
+            return (
+              <div className="account-row account-row-clickable" key={account.id} onClick={() => onSelect(account.id)} role="button" tabIndex={0}>
+                <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
+                <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
+                <div className="balance">{yen.format(balance)}</div>
+                <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
+              </div>
+            );
+          })}
+        </div>
+        <button className="google-button" type="button" onClick={onClose} style={{ marginTop: 16 }}>閉じる</button>
+      </section>
+    </div>
   );
 }
 
@@ -1415,7 +1451,8 @@ function HomeCalendar({
   selectedMonth,
   setSelectedMonth,
   selectedDate,
-  setSelectedDate
+  setSelectedDate,
+  hideMonthNav
 }: {
   state: LedgerState;
   setNotice: (message: string) => void;
@@ -1425,6 +1462,7 @@ function HomeCalendar({
   setSelectedMonth: (value: string) => void;
   selectedDate: string;
   setSelectedDate: (value: string) => void;
+  hideMonthNav?: boolean;
 }) {
   const [modalDate, setModalDate] = useState<string | null>(null);
   const monthKey = selectedMonth;
@@ -1448,9 +1486,9 @@ function HomeCalendar({
     <div className="view-stack">
       <section className="panel calendar-card">
         <div className="calendar-head">
-          <button type="button" onClick={() => moveMonth(-1)} aria-label="前月"><ChevronLeft size={16} /></button>
+          {!hideMonthNav && <button type="button" onClick={() => moveMonth(-1)} aria-label="前月"><ChevronLeft size={16} /></button>}
           <strong>{formatMonthLabel(monthKey)}のカレンダー</strong>
-          <button type="button" onClick={() => moveMonth(1)} aria-label="翌月"><ChevronRight size={16} /></button>
+          {!hideMonthNav && <button type="button" onClick={() => moveMonth(1)} aria-label="翌月"><ChevronRight size={16} /></button>}
         </div>
         <div className="month-summary">
           <span>収入<strong>{yen.format(monthIncome)}</strong></span>
@@ -1823,6 +1861,7 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
           setSelectedMonth={() => {}}
           selectedDate={monthKey + "-01"}
           setSelectedDate={() => {}}
+          hideMonthNav
         />
       ) : (
         <>
@@ -1907,65 +1946,84 @@ function AnalysisView({
   const monthLabel = formatMonthLabel(monthKey);
   const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
-  const [selectedPaymentId, setSelectedPaymentId] = useState<string | null>(null);
+  const [selectedAccountHistoryId, setSelectedAccountHistoryId] = useState<string | null>(null);
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
-  const bars = [
-    { name: "収入", value: stats.income, fill: "#34d399" },
-    { name: "支出", value: stats.expense, fill: "#f87171" },
-    { name: "貯金", value: Math.max(stats.income - stats.expense, 0), fill: "#7c5cff" }
-  ];
-  const trend = monthlyTrend(state, monthKey);
-  const savingAverage = averageMonthlySaving(state);
-  const month = monthTransactionsByKey(state.transactions, monthKey);
   const income = monthlyIncomeWithFixedByKey(state, monthKey);
   const expense = monthlyExpenseWithFixedByKey(state, monthKey);
-  const savingRate = Math.round((income - expense) / Math.max(income, 1) * 100);
-  const topCategory = [...category].sort((a, b) => b.value - a.value)[0];
-  const categoryTrend = expenseCategoryTrend(state, monthKey);
-  const accountExpense = expenseByAccountKind(state, monthKey, "account");
-  const paymentExpense = expenseByAccountKind(state, monthKey, "payment");
-  const analysisStats = {
-    assets: totalAssets(state, monthKey),
-    expense,
-    income,
-    forecast: projectedMonthEnd(state, monthKey),
-    fixed: fixedCostForecast(state.fixedCosts, monthKey),
-    credit: monthlyCreditWithdrawalsByKey(state, monthKey)
-  };
+  const trend = monthlyTrend(state, monthKey);
+  const liquidAccounts = state.accounts.filter((a) => a.type !== "credit");
+
+  // 口座別残高推移（過去6ヶ月）
+  const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
+  const trendMonths = Array.from({ length: 6 }).map((_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
+    return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${d.getMonth() + 1}月` };
+  });
+  const accountBalanceTrend = trendMonths.map((m) => {
+    const row: Record<string, string | number> = { label: m.label };
+    liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
+    return row;
+  });
+  const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
+
   return (
     <div className="view-stack">
+      {/* 月次収支サマリー */}
       <section className="panel month-context">
-        <div className="section-title"><h2>{monthLabel} の分析</h2><span>カレンダー選択月と連動</span></div>
+        <div className="section-title"><h2>{monthLabel} の収支</h2><span>カレンダー選択月と連動</span></div>
         <div className="month-summary">
-          <span>総資産 <strong>{yen.format(analysisStats.assets)}</strong></span>
-          <span>支出 <strong>{yen.format(expense)}</strong></span>
-          <span>収支 <strong>{yen.format(income - expense)}</strong></span>
+          <span>収入 <strong style={{ color: "var(--income)" }}>{yen.format(income)}</strong></span>
+          <span>支出 <strong style={{ color: "var(--expense)" }}>{yen.format(expense)}</strong></span>
+          <span>収支 <strong style={{ color: income - expense >= 0 ? "var(--income)" : "var(--expense)" }}>{income - expense >= 0 ? "+" : ""}{yen.format(income - expense)}</strong></span>
         </div>
       </section>
-      <section className="insight-grid">
-        <div className="insight-card teal">
-          <PiggyBank size={28} />
-          <span>AI年間貯金予測</span>
-          <AnnualSavingsAi state={state} monthKey={monthKey} />
-          <strong>{yen.format(savingAverage * 12)}</strong>
-          <div className="mini-bars">{[0.42, 0.52, 0.61, 0.72, 0.86, 1].map((height) => <i key={height} style={{ height: `${height * 34}px` }} />)}</div>
-        </div>
-        <div className="insight-card orange">
-          <Goal size={30} />
-          <span>AIが{monthLabel}の支出を分析</span>
-          <AiCommentary state={state} stats={analysisStats} category={category} monthKey={monthKey} limit={1} />
-          <strong>{Math.max(savingRate, 0)}%</strong>
-          <div className="progress"><span style={{ width: `${Math.min(Math.max(savingRate, 0), 100)}%` }} /></div>
-        </div>
-        <div className="insight-card warn">
-          <Sparkles size={30} />
-          <span>{monthLabel}の支出トップ</span>
-          <p>カテゴリー別の金額と割合を下の表で確認できます。</p>
-          <strong>{topCategory ? `${topCategory.name} ${yen.format(topCategory.value)}` : "支出なし"}</strong>
-        </div>
+
+      {/* 口座残高一覧 */}
+      <section className="panel">
+        <div className="panel-title"><h2>口座残高</h2><span className="panel-meta">{monthLabel} 時点</span></div>
+        {liquidAccounts.length === 0 ? (
+          <div className="empty-state"><div className="empty-illustration"><Wallet size={20} /></div>設定タブから口座を追加してください。</div>
+        ) : (
+          <div className="account-list">
+            {liquidAccounts.map((account) => {
+              const balance = confirmedAccountBalance(account, state, monthKey);
+              const total = liquidAccounts.reduce((s, a) => s + confirmedAccountBalance(a, state, monthKey), 0);
+              const ratio = total > 0 ? Math.max(Math.min(balance / total, 1), 0) : 0;
+              return (
+                <div className="account-row account-row-clickable" key={account.id} onClick={() => setSelectedAccountHistoryId(account.id)} role="button" tabIndex={0}>
+                  <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
+                  <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
+                  <div className="balance">{yen.format(balance)}</div>
+                  <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </section>
+
+      {/* 口座残高推移 */}
+      {liquidAccounts.length > 0 && (
+        <section className="panel chart-panel">
+          <div className="panel-title"><h2>口座の残高推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={accountBalanceTrend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis dataKey="label" tickLine={false} axisLine={false} />
+              <YAxis hide />
+              <Tooltip formatter={(value) => yen.format(Number(value))} />
+              <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
+              {liquidAccounts.map((acc, i) => (
+                <Line key={acc.id} type="monotone" dataKey={acc.name} stroke={acc.color || accountColors[i % accountColors.length]} strokeWidth={2.5} dot={false} />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </section>
+      )}
+
+      {/* 収支推移 */}
       <section className="panel chart-panel">
         <div className="panel-title"><h2>収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
         <ResponsiveContainer width="100%" height={250}>
@@ -1977,13 +2035,15 @@ function AnalysisView({
             <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
             <Line type="monotone" dataKey="income" name="収入" stroke="#34d399" strokeWidth={2.5} dot={false} />
             <Line type="monotone" dataKey="expense" name="支出" stroke="#f87171" strokeWidth={2.5} dot={false} />
-            <Line type="monotone" dataKey="saving" name="貯金" stroke="#7c5cff" strokeWidth={3} dot={{ r: 3, fill: "#7c5cff" }} />
+            <Line type="monotone" dataKey="saving" name="収支" stroke="#7c5cff" strokeWidth={3} dot={{ r: 3, fill: "#7c5cff" }} />
           </LineChart>
         </ResponsiveContainer>
       </section>
+
+      {/* カテゴリー別支出 */}
       <section className="panel chart-panel">
         <div className="panel-title">
-          <h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー分析"}</h2>
+          <h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー別支出"}</h2>
           {drillParent && <button className="panel-action" type="button" onClick={() => setDrillParentId(null)}><ChevronLeft size={14} /> 戻る</button>}
         </div>
         <ResponsiveContainer width="100%" height={210}>
@@ -1999,58 +2059,8 @@ function AnalysisView({
         </ResponsiveContainer>
         <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
-      <section className="panel chart-panel">
-        <div className="panel-title"><h2>カテゴリ別の月別推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
-        <ResponsiveContainer width="100%" height={250}>
-          <LineChart data={categoryTrend.rows}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => yen.format(Number(value))} />
-            {categoryTrend.categories.map((categoryItem, index) => (
-              <Line
-                key={categoryItem.name}
-                type="monotone"
-                dataKey={categoryItem.name}
-                name={categoryItem.name}
-                stroke={categoryItem.fill || ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"][index % 6]}
-                strokeWidth={2.5}
-                dot={false}
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-        <PieLegend data={categoryTrend.categories.map((item) => ({ name: item.name, value: item.total, fill: item.fill }))} total={categoryTrend.categories.reduce((sum, item) => sum + item.total, 0)} emptyLabel="支出なし" />
-      </section>
-      <div className="home-chart-grid">
-        <section className="panel chart-panel">
-          <div className="panel-title"><h2>口座別支出</h2><span className="panel-meta">{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={186}>
-            <PieChart>
-              <Pie data={accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={80} paddingAngle={3} stroke="none">
-                {(accountExpense.length ? accountExpense : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip formatter={(value) => yen.format(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-          <PieLegend data={accountExpense} total={accountExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
-        </section>
-        <section className="panel chart-panel">
-          <div className="panel-title"><h2>支払い方法別</h2><span className="panel-meta">{monthLabel}</span></div>
-          <ResponsiveContainer width="100%" height={186}>
-            <PieChart>
-              <Pie data={paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={52} outerRadius={80} paddingAngle={3} stroke="none" onClick={(entry) => {
-                if ("id" in entry && typeof entry.id === "string") setSelectedPaymentId(entry.id);
-              }}>
-                {(paymentExpense.length ? paymentExpense : [{ name: "カード支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-              </Pie>
-              <Tooltip formatter={(value) => yen.format(Number(value))} />
-            </PieChart>
-          </ResponsiveContainer>
-          <PieLegend data={paymentExpense} total={paymentExpense.reduce((sum, item) => sum + item.value, 0)} emptyLabel="カード支出なし" />
-          {selectedPaymentId && <PaymentMethodBreakdown state={state} monthKey={monthKey} accountId={selectedPaymentId} onClose={() => setSelectedPaymentId(null)} />}
-        </section>
-      </div>
+
+      {/* カテゴリー別割合テーブル */}
       <section className="panel">
         <div className="panel-title"><h2>カテゴリー別割合</h2><span className="panel-meta">{monthLabel}</span></div>
         <div className="analysis-table">
@@ -2064,20 +2074,14 @@ function AnalysisView({
           ))}
         </div>
       </section>
-      <section className="panel chart-panel">
-        <div className="panel-title"><h2>月別収支</h2><span className="panel-meta">{monthLabel}</span></div>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={bars}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="name" tickLine={false} axisLine={false} />
-            <YAxis hide />
-            <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Bar dataKey="value" radius={[10, 10, 0, 0]}>
-              {bars.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </section>
+
+      {selectedAccountHistoryId && (
+        <AccountHistoryModal
+          accountId={selectedAccountHistoryId}
+          state={state}
+          onClose={() => setSelectedAccountHistoryId(null)}
+        />
+      )}
     </div>
   );
 }
