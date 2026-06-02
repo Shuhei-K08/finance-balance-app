@@ -1963,15 +1963,18 @@ function AnalysisView({
   const trend = monthlyTrend(state, monthKey);
   const liquidAccounts = state.accounts.filter((a) => a.type !== "credit");
 
-  // 口座別残高推移（過去6ヶ月）
+  // 口座残高 + 収支の複合グラフデータ（過去6ヶ月）
   const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
   const trendMonths = Array.from({ length: 6 }).map((_, i) => {
     const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
     return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${d.getMonth() + 1}月` };
   });
-  const accountBalanceTrend = trendMonths.map((m) => {
+  const combinedTrend = trendMonths.map((m) => {
     const row: Record<string, string | number> = { label: m.label };
     liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
+    const inc = monthlyIncomeWithFixedByKey(state, m.key);
+    const exp = monthlyExpenseWithFixedByKey(state, m.key);
+    row["saving"] = inc - exp;
     return row;
   });
   const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
@@ -2055,49 +2058,34 @@ function AnalysisView({
         );
       })()}
 
-      {/* 口座残高推移 */}
+      {/* 口座残高推移 + 収支推移 複合グラフ */}
       {liquidAccounts.length > 0 && (
         <section className="panel chart-panel">
-          <div className="panel-title"><h2>口座の残高推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={accountBalanceTrend} barSize={28}>
+          <div className="panel-title"><h2>残高・収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+          <ResponsiveContainer width="100%" height={280}>
+            <ComposedChart data={combinedTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis hide />
-              <Tooltip formatter={(value) => yen.format(Number(value))} />
+              <YAxis yAxisId="balance" hide />
+              <YAxis yAxisId="saving" orientation="right" hide />
+              <ReferenceLine yAxisId="saving" y={0} stroke="rgba(255,255,255,0.2)" />
+              <Tooltip
+                formatter={(value, name) => [yen.format(Number(value)), name]}
+                contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+              />
               <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
+              <Bar yAxisId="saving" dataKey="saving" name="収支" barSize={20} radius={[3, 3, 0, 0]}>
+                {combinedTrend.map((row, i) => (
+                  <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.8} />
+                ))}
+              </Bar>
               {liquidAccounts.map((acc, i) => (
-                <Bar key={acc.id} dataKey={acc.name} stackId="balance" fill={acc.color || accountColors[i % accountColors.length]} radius={i === liquidAccounts.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                <Line key={acc.id} yAxisId="balance" type="monotone" dataKey={acc.name} stroke={acc.color || accountColors[i % accountColors.length]} strokeWidth={2.5} dot={false} />
               ))}
-            </BarChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </section>
       )}
-
-      {/* 収支推移 */}
-      <section className="panel chart-panel">
-        <div className="panel-title"><h2>収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
-        <ResponsiveContainer width="100%" height={250}>
-          <ComposedChart data={trend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-            <YAxis hide />
-            <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
-            <Tooltip
-              formatter={(value, name) => [yen.format(Number(value)), name]}
-              contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-            />
-            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-            <Line type="monotone" dataKey="income" name="収入" stroke="#34d399" strokeWidth={2} dot={false} strokeOpacity={0.6} />
-            <Line type="monotone" dataKey="expense" name="支出" stroke="#f87171" strokeWidth={2} dot={false} strokeOpacity={0.6} />
-            <Bar dataKey="saving" name="収支" barSize={24} radius={[3, 3, 0, 0]}>
-              {trend.map((row, i) => (
-                <Cell key={i} fill={(row.saving ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.85} />
-              ))}
-            </Bar>
-          </ComposedChart>
-        </ResponsiveContainer>
-      </section>
 
       {/* カテゴリー別支出 */}
       <section className="panel chart-panel">
