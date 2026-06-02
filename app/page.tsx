@@ -1497,7 +1497,6 @@ function HomeCalendar({
             return <button className={classes} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yenShort(income + fixedIncome)}</span>}{expense > 0 && <span>-{yenShort(expense)}</span>}{fixed > 0 && <span className="fixed-mini">{yenShort(fixed)}</span>}{transfer + fixedTransfer > 0 && <span className="transfer-mini">{yenShort(transfer + fixedTransfer)}</span>}</button>;
           })}
         </div>
-        <button className="ghost-btn" type="button" onClick={() => setModalDate(selectedDate)} style={{ marginTop: 14, width: "100%" }}>選択日の取引を表示</button>
       </section>
       {modalDate && <CalendarDayModal date={modalDate} state={state} setNotice={setNotice} reload={reload} onClose={() => setModalDate(null)} onQuick={(date) => { setModalDate(null); onQuick(date); }} />}
     </div>
