@@ -669,12 +669,38 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   ]);
 
   const assetSnapshotTableMissing = assetSnapshotsResult.error && /monthly_asset_snapshots|does not exist|存在しません/i.test(assetSnapshotsResult.error.message);
-  const investmentTableMissing = (investmentAccountsResult.error && /investment_accounts|does not exist|存在しません/i.test(investmentAccountsResult.error.message)) ||
-    (investmentRecordsResult.error && /investment_monthly_records|does not exist|存在しません/i.test(investmentRecordsResult.error.message));
   const investmentContributionChangesMissing = investmentContributionChangesResult.error && /investment_contribution_changes|does not exist|存在しません/i.test(investmentContributionChangesResult.error.message);
+
+  // --- investment_accounts fallback (account_kind column may not exist) ---
+  let investmentAccountsData: unknown = investmentAccountsResult.data;
+  let investmentAccountsError = investmentAccountsResult.error;
+  if (investmentAccountsError && /account_kind/i.test(investmentAccountsError.message)) {
+    // account_kind column missing — retry without it
+    const fallback = await client
+      .from("investment_accounts")
+      .select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("created_at");
+    investmentAccountsData = fallback.data;
+    investmentAccountsError = fallback.error;
+  }
+  if (investmentAccountsError && /start_month|target_annual_rate/i.test(investmentAccountsError.message)) {
+    // older schema fallback
+    const fallback2 = await client
+      .from("investment_accounts")
+      .select("id,name,initial_amount,monthly_contribution,target_monthly_rate,annual_target_amount,color")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("created_at");
+    investmentAccountsData = fallback2.data;
+    investmentAccountsError = fallback2.error;
+  }
+
+  // --- investment_monthly_records fallback ---
   let investmentRecordsData: unknown = investmentRecordsResult.data;
   let investmentRecordsError = investmentRecordsResult.error;
-  if (investmentRecordsError && /sale_amount|does not exist|存在しません/i.test(investmentRecordsError.message)) {
+  if (investmentRecordsError && /sale_amount/i.test(investmentRecordsError.message)) {
     const fallback = await client
       .from("investment_monthly_records")
       .select("id,investment_account_id,record_month,month_end_value,additional_investment,note")
@@ -684,29 +710,11 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     investmentRecordsData = fallback.data;
     investmentRecordsError = fallback.error;
   }
-  let investmentAccountsData: unknown = investmentAccountsResult.data;
-  let investmentAccountsError = investmentAccountsResult.error;
-  if (investmentAccountsError && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(investmentAccountsError.message)) {
-    const fallback = await client
-      .from("investment_accounts")
-      .select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color")
-      .eq("household_id", householdId)
-      .is("deleted_at", null)
-      .order("created_at");
-    if (fallback.error && /start_month|target_annual_rate|does not exist|存在しません/i.test(fallback.error.message)) {
-      const fallback2 = await client
-        .from("investment_accounts")
-        .select("id,name,initial_amount,monthly_contribution,target_monthly_rate,annual_target_amount,color")
-        .eq("household_id", householdId)
-        .is("deleted_at", null)
-        .order("created_at");
-      investmentAccountsData = fallback2.data;
-      investmentAccountsError = fallback2.error;
-    } else {
-      investmentAccountsData = fallback.data;
-      investmentAccountsError = fallback.error;
-    }
-  }
+
+  // investmentTableMissing is computed AFTER fallbacks so column errors don't falsely set it
+  const investmentTableMissing =
+    (!!investmentAccountsError && /investment_accounts.*does not exist|relation.*investment_accounts/i.test(investmentAccountsError.message)) ||
+    (!!investmentRecordsError && /investment_monthly_records.*does not exist|relation.*investment_monthly_records/i.test(investmentRecordsError.message));
   const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
   let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
   let fixedCostOverridesError = fixedCostOverridesResult.error;
