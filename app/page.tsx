@@ -81,7 +81,7 @@ import {
 import type { FixedCostOccurrence } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
 import { analyzeFinance, buildAnnualSavingsPrompt, buildFinancePrompt } from "@/lib/gemini";
-import { LedgerState, TransactionType } from "@/lib/types";
+import { LedgerState, Transaction, TransactionType } from "@/lib/types";
 import type { AdminDashboard } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
@@ -1793,8 +1793,8 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
   const [periodMode, setPeriodMode] = useState<"month" | "all">("month");
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
 
-  const filtered = useMemo(() => {
-    const q = query.trim();
+  const filteredTx = useMemo(() => {
+    const q = query.trim().toLowerCase();
     return state.transactions.filter((tx) => {
       if (periodMode === "month" && !transactionLedgerDate(tx).startsWith(monthKey)) return false;
       if (filterType !== "all" && tx.type !== filterType) return false;
@@ -1804,25 +1804,74 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
         const memo = (tx.memo ?? "").toLowerCase();
         const cat = (state.categories.find((c) => c.id === tx.categoryId)?.name ?? "").toLowerCase();
         const acc = (state.accounts.find((a) => a.id === tx.accountId)?.name ?? "").toLowerCase();
-        if (!memo.includes(q.toLowerCase()) && !cat.includes(q.toLowerCase()) && !acc.includes(q.toLowerCase()) && !String(tx.amount).includes(q)) return false;
+        if (!memo.includes(q) && !cat.includes(q) && !acc.includes(q) && !String(tx.amount).includes(q)) return false;
       }
       return true;
     });
   }, [state.transactions, state.categories, state.accounts, query, filterType, filterAccount, filterCategory, monthKey, periodMode]);
 
+  const filteredFixed = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    let months: string[];
+    if (periodMode === "month") {
+      months = [monthKey];
+    } else {
+      const allDates = state.transactions.map((tx) => transactionLedgerDate(tx).slice(0, 7));
+      const allFixed = state.fixedCosts.flatMap((fc) => {
+        const from = fc.effectiveFrom?.slice(0, 7) ?? "";
+        const to = fc.effectiveTo?.slice(0, 7) ?? "";
+        return [from, to].filter(Boolean);
+      });
+      const allKeys = [...allDates, ...allFixed].filter(Boolean);
+      if (allKeys.length === 0) months = [monthKey];
+      else {
+        const min = allKeys.reduce((a, b) => a < b ? a : b);
+        const max = monthKey;
+        months = [];
+        let cur = min;
+        while (cur <= max) {
+          months.push(cur);
+          const [y, m] = cur.split("-").map(Number);
+          const next = new Date(y, m, 1);
+          cur = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+        }
+      }
+    }
+    return months.flatMap((mk) => fixedCostOccurrencesForMonth(state.fixedCosts, mk, state)).filter((fc) => {
+      if (filterType !== "all" && fc.kind !== filterType) return false;
+      if (filterAccount !== "all" && fc.accountId !== filterAccount && fc.transferToAccountId !== filterAccount) return false;
+      if (filterCategory !== "all" && fc.categoryId !== filterCategory) return false;
+      if (q) {
+        const name = fc.name.toLowerCase();
+        const cat = (state.categories.find((c) => c.id === fc.categoryId)?.name ?? "").toLowerCase();
+        const acc = (state.accounts.find((a) => a.id === fc.accountId)?.name ?? "").toLowerCase();
+        if (!name.includes(q) && !cat.includes(q) && !acc.includes(q) && !String(fc.amount).includes(q)) return false;
+      }
+      return true;
+    });
+  }, [state.fixedCosts, state.fixedCostOverrides, state.transactions, state.categories, state.accounts, query, filterType, filterAccount, filterCategory, monthKey, periodMode]);
+
   const grouped = useMemo(() => {
-    const map = new Map<string, typeof filtered>();
-    filtered.forEach((tx) => {
+    const map = new Map<string, { tx: Transaction[]; fixed: FixedCostOccurrence[] }>();
+    filteredTx.forEach((tx) => {
       const date = transactionLedgerDate(tx);
-      const arr = map.get(date) ?? [];
-      arr.push(tx);
-      map.set(date, arr);
+      const entry = map.get(date) ?? { tx: [], fixed: [] };
+      entry.tx.push(tx);
+      map.set(date, entry);
+    });
+    filteredFixed.forEach((fc) => {
+      const date = fc.date;
+      const entry = map.get(date) ?? { tx: [], fixed: [] };
+      entry.fixed.push(fc);
+      map.set(date, entry);
     });
     return Array.from(map.entries()).sort((a, b) => b[0].localeCompare(a[0]));
-  }, [filtered]);
+  }, [filteredTx, filteredFixed]);
 
-  const totalIncome = filtered.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
-  const totalExpense = filtered.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
+  const totalIncome = filteredTx.filter((tx) => tx.type === "income").reduce((sum, tx) => sum + tx.amount, 0)
+    + filteredFixed.filter((fc) => fc.kind === "income").reduce((sum, fc) => sum + fc.amount, 0);
+  const totalExpense = filteredTx.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + tx.amount, 0)
+    + filteredFixed.filter((fc) => fc.kind === "expense").reduce((sum, fc) => sum + fc.amount, 0);
 
   return (
     <div className="view-stack">
@@ -1853,7 +1902,7 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
           <section className="panel">
             <div className="panel-title">
               <h2>取引一覧</h2>
-              <span className="panel-meta">{filtered.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
+              <span className="panel-meta">{filteredTx.length + filteredFixed.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
             </div>
             <div className="tx-toolbar">
               <div className="tx-search">
@@ -1893,8 +1942,9 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
             </section>
           ) : (
             <section className="panel">
-              {grouped.map(([date, items]) => {
-                const dayTotal = items.reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : tx.type === "expense" ? -tx.amount : 0), 0);
+              {grouped.map(([date, { tx: items, fixed: fixedItems }]) => {
+                const dayTotal = items.reduce((sum, tx) => sum + (tx.type === "income" ? tx.amount : tx.type === "expense" ? -tx.amount : 0), 0)
+                  + fixedItems.reduce((sum, fc) => sum + (fc.kind === "income" ? fc.amount : fc.kind === "expense" ? -fc.amount : 0), 0);
                 return (
                   <div key={date}>
                     <div className="tx-group-head">
@@ -1906,6 +1956,9 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
                     <div className="tx-list">
                       {items.map((transaction) => (
                         <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />
+                      ))}
+                      {fixedItems.map((fc) => (
+                        <FixedCostOccurrenceRow key={`fixed-${fc.id}-${fc.date}`} row={fc} state={state} setNotice={setNotice} reload={reload} />
                       ))}
                     </div>
                   </div>
