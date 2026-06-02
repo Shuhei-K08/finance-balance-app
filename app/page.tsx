@@ -1933,6 +1933,8 @@ function AnalysisView({
   const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
   const [selectedAccountHistoryId, setSelectedAccountHistoryId] = useState<string | null>(null);
+  const [balancePeriod, setBalancePeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
+  const [categoryPeriod, setCategoryPeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
@@ -1941,13 +1943,38 @@ function AnalysisView({
   const trend = monthlyTrend(state, monthKey);
   const liquidAccounts = state.accounts.filter((a) => a.type !== "credit");
 
-  // 口座残高 + 収支の複合グラフデータ（過去6ヶ月）
-  const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
-  const trendMonths = Array.from({ length: 6 }).map((_, i) => {
-    const d = new Date(now.getFullYear(), now.getMonth() - 5 + i, 1);
-    return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${d.getMonth() + 1}月` };
-  });
-  const combinedTrend = trendMonths.map((m) => {
+  const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
+  const expenseCategories = state.categories.filter((c) => !c.parentId && c.kind === "expense");
+
+  function periodToMonths(period: "6m" | "1y" | "3y" | "all"): number {
+    if (period === "6m") return 6;
+    if (period === "1y") return 12;
+    if (period === "3y") return 36;
+    // "all": earliest transaction or record
+    const earliest = state.transactions.reduce((min, t) => t.date < min ? t.date : min, monthKey);
+    const startYear = Number(earliest.slice(0, 4));
+    const startMonth = Number(earliest.slice(5, 7));
+    const endYear = Number(monthKey.slice(0, 4));
+    const endMonth = Number(monthKey.slice(5, 7));
+    return Math.max((endYear - startYear) * 12 + (endMonth - startMonth) + 1, 6);
+  }
+
+  function buildMonths(period: "6m" | "1y" | "3y" | "all") {
+    const count = periodToMonths(period);
+    const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
+    return Array.from({ length: count }).map((_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (count - 1) + i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = period === "6m" || period === "1y"
+        ? `${d.getMonth() + 1}月`
+        : `${String(d.getFullYear()).slice(2)}/${d.getMonth() + 1}`;
+      return { key, label };
+    });
+  }
+
+  // 口座残高 + 収支の複合グラフデータ
+  const balanceMonths = buildMonths(balancePeriod);
+  const combinedTrend = balanceMonths.map((m) => {
     const row: Record<string, string | number> = { label: m.label };
     liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
     row["totalBalance"] = liquidAccounts.reduce((s, acc) => s + (row[acc.name] as number), 0);
@@ -1956,11 +1983,11 @@ function AnalysisView({
     row["saving"] = inc - exp;
     return row;
   });
-  const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
 
-  // カテゴリー別支出 6ヶ月
-  const expenseCategories = state.categories.filter((c) => !c.parentId && c.kind === "expense");
-  const categoryTrend = trendMonths.map((m) => {
+  // カテゴリー別支出
+  const categoryMonths = buildMonths(categoryPeriod);
+  const trendMonths = categoryMonths; // 後方互換
+  const categoryTrend = categoryMonths.map((m) => {
     const row: Record<string, string | number> = { label: m.label };
     const monthTx = monthTransactionsByKey(state.transactions, m.key);
     const fixedOcc = fixedCostOccurrencesForMonth(state.fixedCosts, m.key, state);
@@ -2061,7 +2088,14 @@ function AnalysisView({
       {/* 口座残高推移 + 収支推移 複合グラフ */}
       {liquidAccounts.length > 0 && (
         <section className="panel chart-panel">
-          <div className="panel-title"><h2>残高・収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+          <div className="panel-title">
+            <h2>残高・収支推移</h2>
+            <div style={{ display: "flex", gap: 4 }}>
+              {(["6m","1y","3y","all"] as const).map((p) => (
+                <button key={p} className={balancePeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setBalancePeriod(p)}>{p === "all" ? "全期間" : p}</button>
+              ))}
+            </div>
+          </div>
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={combinedTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
@@ -2105,7 +2139,14 @@ function AnalysisView({
 
       {/* カテゴリー別支出 積み上げ棒グラフ */}
       <section className="panel chart-panel">
-        <div className="panel-title"><h2>カテゴリー別支出</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+        <div className="panel-title">
+          <h2>カテゴリー別支出</h2>
+          <div style={{ display: "flex", gap: 4 }}>
+            {(["6m","1y","3y","all"] as const).map((p) => (
+              <button key={p} className={categoryPeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setCategoryPeriod(p)}>{p === "all" ? "全期間" : p}</button>
+            ))}
+          </div>
+        </div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={categoryTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
