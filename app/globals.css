@@ -545,6 +545,39 @@ a { color: inherit; text-decoration: none; }
   border-top: 1px solid var(--line);
 }
 
+.sidebar-month-control {
+  background: var(--panel-soft);
+  border-radius: 12px;
+  padding: 4px 6px;
+}
+
+.sidebar-month-control .month-control {
+  justify-content: space-between;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.sidebar-month-control .month-control span {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.sidebar-month-control .month-control button {
+  min-width: 28px;
+  padding: 4px 6px;
+  font-size: 11px;
+}
+
+.sidebar-month-control .month-control input[type="month"] {
+  font-size: 12px;
+  padding: 3px 6px;
+  flex: 1;
+  min-width: 0;
+}
+
 .user-chip {
   display: grid;
   grid-template-columns: 36px 1fr auto;

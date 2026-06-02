@@ -382,6 +382,9 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-foot">
+          <div className="sidebar-month-control">
+            <MonthControl monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} label="表示月" compact />
+          </div>
           <div className="theme-toggle">
             <span>テーマ</span>
             <div style={{ display: "flex", gap: 4 }}>
@@ -1035,12 +1038,13 @@ function AccountHistoryModal({ accountId, state, onClose }: { accountId: string;
     const d = new Date(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)) - 1 - i, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
-  const chartData = months.map((month) => ({
+  const currentBalanceNow = calculateAccountBalanceInState(account, state);
+  const chartData = months.map((month, i) => ({
     label: `${Number(month.slice(5, 7))}月`,
     fullLabel: `${month.slice(0, 4)}/${Number(month.slice(5, 7))}月`,
-    value: confirmedAccountBalance(account, state, month)
+    value: i === months.length - 1 ? currentBalanceNow : confirmedAccountBalance(account, state, month)
   }));
-  const latest = chartData[chartData.length - 1].value;
+  const latest = currentBalanceNow;
   const earliest = chartData[0].value;
   const change = latest - earliest;
 
