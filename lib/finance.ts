@@ -156,14 +156,18 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
   if (transaction.type === "expense") {
     const sourceAccount = accounts.find((item) => item.id === transaction.accountId);
     if (sourceAccount?.type === "credit") {
-      // 引落済のときだけ銀行口座から差し引く（未引落のクレジット支出は口座残高に影響させない）
-      return sourceAccount.withdrawalAccountId === account.id && transaction.creditStatus === "withdrawn"
-        ? -transaction.amount
-        : 0;
+      // クレジット支出は引落口座から即時控除（支払い前でも残高に反映）
+      return sourceAccount.withdrawalAccountId === account.id ? -transaction.amount : 0;
     }
     return transaction.accountId === account.id && account.type !== "credit" ? -transaction.amount : 0;
   }
-  if (transaction.type === "transfer" && transaction.accountId === account.id) return -transaction.amount;
+  if (transaction.type === "transfer" && transaction.accountId === account.id) {
+    // クレジットカードへの振替（カード支払い）は二重計上を防ぐため除外
+    // クレジット費用はすでに購入時に即時控除されているため
+    const toAccount = accounts.find((a) => a.id === transaction.transferToAccountId);
+    if (toAccount?.type === "credit") return 0;
+    return -transaction.amount;
+  }
   if (transaction.type === "transfer" && transaction.transferToAccountId === account.id) return transaction.amount;
   return 0;
 }
