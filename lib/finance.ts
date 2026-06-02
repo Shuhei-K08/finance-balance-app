@@ -156,7 +156,10 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
   if (transaction.type === "expense") {
     const sourceAccount = accounts.find((item) => item.id === transaction.accountId);
     if (sourceAccount?.type === "credit") {
-      return sourceAccount.withdrawalAccountId === account.id ? -transaction.amount : 0;
+      // 引落済のときだけ銀行口座から差し引く（未引落のクレジット支出は口座残高に影響させない）
+      return sourceAccount.withdrawalAccountId === account.id && transaction.creditStatus === "withdrawn"
+        ? -transaction.amount
+        : 0;
     }
     return transaction.accountId === account.id && account.type !== "credit" ? -transaction.amount : 0;
   }
