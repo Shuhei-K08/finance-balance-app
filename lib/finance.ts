@@ -175,7 +175,12 @@ function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Accou
   const sourceAccount = accounts.find((item) => item.id === cost.accountId);
   if (cost.kind === "income") return cost.accountId === account.id ? cost.amount : 0;
   if (cost.kind === "transfer") {
-    if (cost.accountId === account.id) return -cost.amount;
+    if (cost.accountId === account.id) {
+      // クレジットカードへの振替（カード支払い）は除外：クレジット費用は即時控除済みのため二重計上を防ぐ
+      const toAccount = accounts.find((a) => a.id === cost.transferToAccountId);
+      if (toAccount?.type === "credit") return 0;
+      return -cost.amount;
+    }
     if (cost.transferToAccountId === account.id) return cost.amount;
     return 0;
   }
