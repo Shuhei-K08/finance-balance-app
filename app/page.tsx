@@ -1948,12 +1948,33 @@ function AnalysisView({
     return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${d.getMonth() + 1}月` };
   });
   const combinedTrend = trendMonths.map((m) => {
-    const totalBalance = liquidAccounts.reduce((s, acc) => s + confirmedAccountBalance(acc, state, m.key), 0);
+    const row: Record<string, string | number> = { label: m.label };
+    liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
+    row["totalBalance"] = liquidAccounts.reduce((s, acc) => s + (row[acc.name] as number), 0);
     const inc = monthlyIncomeWithFixedByKey(state, m.key);
     const exp = monthlyExpenseWithFixedByKey(state, m.key);
-    return { label: m.label, totalBalance, saving: inc - exp };
+    row["saving"] = inc - exp;
+    return row;
   });
   const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
+
+  // カテゴリー別支出 6ヶ月
+  const expenseCategories = state.categories.filter((c) => !c.parentId && c.kind === "expense");
+  const categoryTrend = trendMonths.map((m) => {
+    const row: Record<string, string | number> = { label: m.label };
+    const monthTx = monthTransactionsByKey(state.transactions, m.key);
+    const fixedOcc = fixedCostOccurrencesForMonth(state.fixedCosts, m.key, state);
+    let total = 0;
+    expenseCategories.forEach((cat) => {
+      const childIds = new Set([cat.id, ...state.categories.filter((c) => c.parentId === cat.id).map((c) => c.id)]);
+      const txAmt = monthTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0);
+      const fixedAmt = fixedOcc.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
+      row[cat.name] = txAmt + fixedAmt;
+      total += txAmt + fixedAmt;
+    });
+    row["_total"] = total;
+    return row;
+  });
 
   return (
     <div className="view-stack">
@@ -1967,6 +1988,8 @@ function AnalysisView({
         </div>
       </section>
 
+      {/* 口座残高 + 支払い方法別支出 横並び（PC） */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
       {/* 口座残高一覧 */}
       <section className="panel">
         <div className="panel-title"><h2>口座残高</h2><span className="panel-meta">{monthLabel} 時点</span></div>
@@ -2033,6 +2056,7 @@ function AnalysisView({
           </section>
         );
       })()}
+      </div>{/* end grid */}
 
       {/* 口座残高推移 + 収支推移 複合グラフ */}
       {liquidAccounts.length > 0 && (
@@ -2046,8 +2070,23 @@ function AnalysisView({
               <YAxis yAxisId="saving" orientation="right" hide />
               <ReferenceLine yAxisId="saving" y={0} stroke="rgba(255,255,255,0.2)" />
               <Tooltip
-                formatter={(value, name) => [yen.format(Number(value)), name]}
-                contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null;
+                  const total = payload.find((p) => p.dataKey === "totalBalance")?.value as number | undefined;
+                  const saving = payload.find((p) => p.dataKey === "saving")?.value as number | undefined;
+                  return (
+                    <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
+                      {liquidAccounts.map((acc) => {
+                        const entry = payload.find((p) => p.dataKey === acc.name);
+                        if (!entry) return null;
+                        return <div key={acc.id} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}><span style={{ color: acc.color }}>● {acc.name}</span><span>{yen.format(Number(entry.value))}</span></div>;
+                      })}
+                      {total !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, fontWeight: 700 }}><span>合計残高</span><span>{yen.format(total)}</span></div>}
+                      {saving !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, color: saving >= 0 ? "#34d399" : "#f87171" }}><span>収支</span><span>{saving >= 0 ? "+" : ""}{yen.format(saving)}</span></div>}
+                    </div>
+                  );
+                }}
               />
               <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
               <Bar yAxisId="saving" dataKey="saving" name="収支" barSize={20} radius={[3, 3, 0, 0]}>
@@ -2055,30 +2094,50 @@ function AnalysisView({
                   <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.8} />
                 ))}
               </Bar>
+              {liquidAccounts.map((acc) => (
+                <Line key={acc.id} yAxisId="balance" type="monotone" dataKey={acc.name} name={acc.name} stroke="transparent" strokeWidth={0} dot={false} legendType="none" />
+              ))}
               <Line yAxisId="balance" type="monotone" dataKey="totalBalance" name="口座残高合計" stroke="#7c5cff" strokeWidth={2.5} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </section>
       )}
 
-      {/* カテゴリー別支出 */}
+      {/* カテゴリー別支出 積み上げ棒グラフ */}
       <section className="panel chart-panel">
-        <div className="panel-title">
-          <h2>{drillParent ? `${drillParent.name}のサブカテゴリー` : "カテゴリー別支出"}</h2>
-          {drillParent && <button className="panel-action" type="button" onClick={() => setDrillParentId(null)}><ChevronLeft size={14} /> 戻る</button>}
-        </div>
-        <ResponsiveContainer width="100%" height={210}>
-          <PieChart>
-            <Pie data={drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]} dataKey="value" nameKey="name" innerRadius={58} outerRadius={90} paddingAngle={4} stroke="none" onClick={(entry) => {
-              const parent = state.categories.find((item) => item.name === entry.name && !item.parentId);
-              if (parent) setDrillParentId(parent.id);
-            }}>
-              {(drillData.length ? drillData : [{ name: "支出なし", value: 1, fill: "#3a3f5e" }]).map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
-            </Pie>
-            <Tooltip formatter={(value) => yen.format(Number(value))} />
-          </PieChart>
+        <div className="panel-title"><h2>カテゴリー別支出</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
+        <ResponsiveContainer width="100%" height={260}>
+          <BarChart data={categoryTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+            <YAxis hide />
+            <Tooltip
+              content={({ active, payload, label }) => {
+                if (!active || !payload?.length) return null;
+                const total = payload.reduce((s, p) => s + Number(p.value ?? 0), 0);
+                const sorted = [...payload].reverse().filter((p) => Number(p.value) > 0);
+                return (
+                  <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12, maxWidth: 220 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
+                    {sorted.map((p) => (
+                      <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <span style={{ color: p.fill as string }}>● {p.name}</span>
+                        <span>{yen.format(Number(p.value))} <span style={{ color: "var(--muted)" }}>({total > 0 ? Math.round(Number(p.value) / total * 100) : 0}%)</span></span>
+                      </div>
+                    ))}
+                    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+                      <span>合計</span><span>{yen.format(total)}</span>
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 11 }} />
+            {expenseCategories.map((cat) => (
+              <Bar key={cat.id} dataKey={cat.name} stackId="cat" fill={cat.color} radius={[0, 0, 0, 0]} />
+            ))}
+          </BarChart>
         </ResponsiveContainer>
-        <PieLegend data={drillData} total={drillData.reduce((sum, item) => sum + item.value, 0)} emptyLabel="支出なし" />
       </section>
 
       {selectedAccountHistoryId && (
