@@ -140,11 +140,14 @@ export function totalAssets(state: LedgerState, throughMonthKey?: string) {
 
 export function investmentAssets(state: LedgerState, throughMonthKey = todayIso().slice(0, 7)) {
   return (state.investmentAccounts ?? []).reduce((sum, account) => {
-    if (account.startMonth && throughMonthKey < account.startMonth) return sum;
     const latest = (state.investmentRecords ?? [])
       .filter((record) => record.investmentAccountId === account.id && record.month <= throughMonthKey)
       .sort((a, b) => b.month.localeCompare(a.month))[0];
-    return sum + (latest?.monthEndValue ?? account.initialAmount);
+    // レコードがあればstartMonthより前でも使用する
+    if (latest) return sum + latest.monthEndValue;
+    // レコードがない場合はstartMonth以降のみ初期金額を使用
+    if (account.startMonth && throughMonthKey < account.startMonth) return sum;
+    return sum + (account.initialAmount ?? 0);
   }, 0);
 }
 

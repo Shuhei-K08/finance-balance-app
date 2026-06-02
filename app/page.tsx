@@ -2503,7 +2503,7 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   const months = new Set<string>();
   monthRange(account.startMonth, endMonthKey).forEach((month) => months.add(month));
   records.forEach((record) => {
-    if (record.month >= account.startMonth && record.month <= endMonthKey) months.add(record.month);
+    if (record.month <= endMonthKey) months.add(record.month);
   });
   const sortedMonths = Array.from(months).sort();
   let previousActual = account.initialAmount;
