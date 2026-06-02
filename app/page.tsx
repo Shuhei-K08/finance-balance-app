@@ -2078,16 +2078,24 @@ function AnalysisView({
       <section className="panel chart-panel">
         <div className="panel-title"><h2>収支推移</h2><span className="panel-meta">{monthLabel}までの6ヶ月</span></div>
         <ResponsiveContainer width="100%" height={250}>
-          <LineChart data={trend}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} />
+          <ComposedChart data={trend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
             <YAxis hide />
-            <Tooltip formatter={(value) => yen.format(Number(value))} />
-            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
-            <Line type="monotone" dataKey="income" name="収入" stroke="#34d399" strokeWidth={2.5} dot={false} />
-            <Line type="monotone" dataKey="expense" name="支出" stroke="#f87171" strokeWidth={2.5} dot={false} />
-            <Line type="monotone" dataKey="saving" name="収支" stroke="#7c5cff" strokeWidth={3} dot={{ r: 3, fill: "#7c5cff" }} />
-          </LineChart>
+            <ReferenceLine y={0} stroke="rgba(255,255,255,0.2)" />
+            <Tooltip
+              formatter={(value, name) => [yen.format(Number(value)), name]}
+              contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+            />
+            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
+            <Line type="monotone" dataKey="income" name="収入" stroke="#34d399" strokeWidth={2} dot={false} strokeOpacity={0.6} />
+            <Line type="monotone" dataKey="expense" name="支出" stroke="#f87171" strokeWidth={2} dot={false} strokeOpacity={0.6} />
+            <Bar dataKey="saving" name="収支" barSize={24} radius={[3, 3, 0, 0]}>
+              {trend.map((row, i) => (
+                <Cell key={i} fill={(row.saving ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.85} />
+              ))}
+            </Bar>
+          </ComposedChart>
         </ResponsiveContainer>
       </section>
 
