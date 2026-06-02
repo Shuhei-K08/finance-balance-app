@@ -2330,6 +2330,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
   const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
   const [showRecordForm, setShowRecordForm] = useState(false);
+  const [recordsView, setRecordsView] = useState<"monthly" | "yearly">("monthly");
   const [chartPeriod, setChartPeriod] = useState<"1y" | "3y" | "5y" | "all">("all");
   const [monthlyYear, setMonthlyYear] = useState(new Date().getFullYear());
   const [recordMonth, setRecordMonth] = useState(monthKey);
@@ -2482,57 +2483,67 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
             </div>
           )}
 
-          {/* 年次実績 */}
+          {/* 月次成績 / 年次実績 切り替え */}
           <section className="panel">
-            <div className="section-title"><h2>年ごとの実績</h2><span>{yearlyRows.length}年分</span></div>
-            <div className="inv-year-cards">
-              {yearlyRows.map((row) => (
-                <div key={row.year} className="inv-year-card">
-                  <div className="inv-year-label">{row.year}年</div>
-                  <div className="inv-year-grid">
-                    <div><span>年末評価額</span><strong>{yen.format(row.endValue)}</strong></div>
-                    <div><span>積立</span><strong>{yen.format(row.monthlyContribution)}</strong></div>
-                    <div><span>追加投資</span><strong>{yen.format(row.additionalInvestment)}</strong></div>
-                    <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
-                    <div><span>増減</span><strong className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</strong></div>
-                    <div><span>年利</span><strong className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</strong></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          {/* 月次成績 */}
-          <section className="panel">
-            <div className="section-title"><h2>月次成績</h2>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear - 1)}>前年</button>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{monthlyYear}年</span>
-                <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
+            <div className="section-title">
+              <div style={{ display: "flex", gap: 4 }}>
+                <button className={recordsView === "monthly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("monthly")}>月次成績</button>
+                <button className={recordsView === "yearly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("yearly")}>年ごとの実績</button>
               </div>
+              {recordsView === "monthly" && (
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear - 1)}>前年</button>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>{monthlyYear}年</span>
+                  <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
+                </div>
+              )}
+              {recordsView === "yearly" && <span>{yearlyRows.length}年分</span>}
             </div>
-            <div className="inv-month-list">
-              {monthlyRows.length === 0 ? (
-                <div className="empty-state"><span>行をタップして実績を入力できます。</span></div>
-              ) : monthlyRows.map((row) => {
-                const hasRecord = (state.investmentRecords ?? []).some((r) => r.investmentAccountId === selected?.id && r.month === row.month);
-                return (
-                  <div key={row.month} className="inv-month-row account-row-clickable" role="button" tabIndex={0}
-                    onClick={() => { setRecordMonth(row.month); setShowRecordForm(true); }}>
-                    <div className="inv-month-label">
-                      {row.label}
-                      {!hasRecord && <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 4 }}>未入力</span>}
+
+            {recordsView === "monthly" && (
+              <div className="inv-month-list">
+                {monthlyRows.length === 0 ? (
+                  <div className="empty-state"><span>行をタップして実績を入力できます。</span></div>
+                ) : monthlyRows.map((row) => {
+                  const hasRecord = (state.investmentRecords ?? []).some((r) => r.investmentAccountId === selected?.id && r.month === row.month);
+                  return (
+                    <div key={row.month} className="inv-month-row account-row-clickable" role="button" tabIndex={0}
+                      onClick={() => { setRecordMonth(row.month); setShowRecordForm(true); }}>
+                      <div className="inv-month-label">
+                        {row.label}
+                        {!hasRecord && <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 4 }}>未入力</span>}
+                      </div>
+                      <div className="inv-month-body">
+                        <div><span>評価額</span><strong>{yen.format(row.monthEndValue)}</strong></div>
+                        <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
+                        <div><span>月利</span><strong className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</strong></div>
+                        <div><span>達成率</span><strong>{Math.round(row.achievementRate)}%</strong></div>
+                      </div>
                     </div>
-                    <div className="inv-month-body">
-                      <div><span>評価額</span><strong>{yen.format(row.monthEndValue)}</strong></div>
+                  );
+                })}
+              </div>
+            )}
+
+            {recordsView === "yearly" && (
+              <div className="inv-year-cards">
+                {yearlyRows.length === 0 ? (
+                  <div className="empty-state"><span>年次データがまだありません。</span></div>
+                ) : yearlyRows.map((row) => (
+                  <div key={row.year} className="inv-year-card">
+                    <div className="inv-year-label">{row.year}年</div>
+                    <div className="inv-year-grid">
+                      <div><span>年末評価額</span><strong>{yen.format(row.endValue)}</strong></div>
+                      <div><span>積立</span><strong>{yen.format(row.monthlyContribution)}</strong></div>
+                      <div><span>追加投資</span><strong>{yen.format(row.additionalInvestment)}</strong></div>
                       <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
-                      <div><span>月利</span><strong className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</strong></div>
-                      <div><span>達成率</span><strong>{Math.round(row.achievementRate)}%</strong></div>
+                      <div><span>増減</span><strong className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</strong></div>
+                      <div><span>年利</span><strong className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</strong></div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            )}
           </section>
         </>
       )}
@@ -2859,10 +2870,10 @@ function SettingsView({
         {[
           ["ledger", "家計簿"],
           ["accounts", "口座"],
+          ["investment", "投資"],
           ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
           ["fixed", "定期項目"],
-          ["investment", "投資"]
         ].map(([id, label]) => (
           <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
         ))}
