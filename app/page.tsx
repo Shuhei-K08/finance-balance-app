@@ -800,7 +800,7 @@ function HomeView({
   const savingRate = Math.max(Math.round((savingAmount / Math.max(stats.income, 1)) * 100), 0);
   const investmentTotal = investmentAssets(state, calendarMonth);
   const liquidAccounts = state.accounts.filter((account) => account.type !== "credit");
-  const accountAssets = liquidAccounts.reduce((sum, account) => sum + calculateAccountBalanceInState(account, state), 0);
+  const accountAssets = liquidAccounts.reduce((sum, account) => sum + confirmedAccountBalance(account, state, calendarMonth), 0);
   const displayAssets = accountAssets + investmentTotal;
 
   const trend = useMemo(() => balanceTrend(state, calendarMonth), [state, calendarMonth]);
@@ -905,7 +905,7 @@ function HomeView({
           ) : (
             <div className="account-list">
               {liquidAccounts.map((account) => {
-                const balance = calculateAccountBalanceInState(account, state);
+                const balance = confirmedAccountBalance(account, state, calendarMonth);
                 const ratio = totalLiquid > 0 ? Math.max(Math.min(balance / totalLiquid, 1), 0) : 0;
                 return (
                   <div className="account-row account-row-clickable" key={account.id} onClick={() => setAccountHistoryId(account.id)} role="button" tabIndex={0}>
@@ -998,7 +998,8 @@ function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "inco
 
 function AllAccountsModal({ state, onClose, onSelect }: { state: LedgerState; onClose: () => void; onSelect: (id: string) => void }) {
   const accounts = state.accounts.filter((a) => a.type !== "credit");
-  const total = accounts.reduce((sum, a) => sum + calculateAccountBalanceInState(a, state), 0);
+  const currentMonth = todayIso().slice(0, 7);
+  const total = accounts.reduce((sum, a) => sum + confirmedAccountBalance(a, state, currentMonth), 0);
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
@@ -1008,7 +1009,7 @@ function AllAccountsModal({ state, onClose, onSelect }: { state: LedgerState; on
         </div>
         <div className="account-list" style={{ marginTop: 8 }}>
           {accounts.map((account) => {
-            const balance = calculateAccountBalanceInState(account, state);
+            const balance = confirmedAccountBalance(account, state, currentMonth);
             const ratio = total > 0 ? Math.max(Math.min(balance / total, 1), 0) : 0;
             return (
               <div className="account-row account-row-clickable" key={account.id} onClick={() => onSelect(account.id)} role="button" tabIndex={0}>
