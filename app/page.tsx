@@ -8,11 +8,13 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
   Pie,
   PieChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -2439,16 +2441,26 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                 <button key={p} className={chartPeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod(p)}>{p === "all" ? "全期間" : p}</button>
               ))}
             </div>
-            <ResponsiveContainer width="100%" height={230}>
-              <LineChart data={rows}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} />
-                <YAxis hide />
-                <Tooltip formatter={(value) => yen.format(Number(value))} />
-                <Legend iconType="circle" wrapperStyle={{ paddingTop: 8 }} />
-                <Line type="monotone" dataKey="targetValue" name="目標評価額" stroke="#06b6d4" strokeWidth={2.5} strokeDasharray="4 4" dot={false} />
-                <Line type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
-              </LineChart>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={rows} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+                <YAxis yAxisId="left" hide />
+                <YAxis yAxisId="right" orientation="right" hide />
+                <Tooltip
+                  formatter={(value, name) => [yen.format(Number(value)), name]}
+                  contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                />
+                <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
+                <ReferenceLine yAxisId="right" y={0} stroke="rgba(255,255,255,0.15)" />
+                <Bar yAxisId="right" dataKey="profit" name="月次利益" barSize={18} radius={[3, 3, 0, 0]}>
+                  {rows.map((row, i) => (
+                    <Cell key={i} fill={(row.profit ?? 0) >= 0 ? "rgba(34,197,94,0.7)" : "rgba(239,68,68,0.7)"} />
+                  ))}
+                </Bar>
+                <Line yAxisId="left" type="monotone" dataKey="targetValue" name="目標評価額" stroke="#06b6d4" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
+              </ComposedChart>
             </ResponsiveContainer>
           </section>
 
