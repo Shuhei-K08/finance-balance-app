@@ -80,9 +80,10 @@ export function calculateAccountBalance(account: Account, transactions: Transact
 
 export function calculateAccountBalanceInState(account: Account, state: LedgerState, throughMonthKey?: string) {
   if (!throughMonthKey) {
-    // Use latest snapshot as base (avoids drift when opening balance is old)
+    // 現在月のスナップショットは除外（現在月の取引が無視されるため）
+    const currentMonth = todayIso().slice(0, 7);
     const snapshots = state.assetSnapshots
-      .filter((snapshot) => snapshot.accountId === account.id)
+      .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < currentMonth)
       .sort((a, b) => b.month.localeCompare(a.month));
     const latestSnapshot = snapshots[0];
     const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
