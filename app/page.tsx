@@ -2216,7 +2216,7 @@ function AnalysisView({
               </div>
               {subMap.size > 1 && (
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-                  {[...subMap.entries()].sort((a, b) => b[1] - a[1]).map(([name, amt]) => (
+                  {Array.from(subMap.entries()).sort((a, b) => b[1] - a[1]).map(([name, amt]) => (
                     <span key={name} style={{ fontSize: 11, background: "var(--surface)", borderRadius: 6, padding: "2px 8px" }}>
                       {name} <strong>{yen.format(amt)}</strong>
                     </span>
