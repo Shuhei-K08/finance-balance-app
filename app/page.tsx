@@ -1038,11 +1038,12 @@ function AccountHistoryModal({ accountId, state, onClose }: { accountId: string;
     const d = new Date(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)) - 1 - i, 1);
     months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
-  const currentBalanceNow = calculateAccountBalanceInState(account, state);
-  const chartData = months.map((month, i) => ({
+  // 現在月も confirmedAccountBalance を使うことで固定費（定期収入・定期支出）を含めた計算になる
+  const currentBalanceNow = confirmedAccountBalance(account, state, currentMonth);
+  const chartData = months.map((month) => ({
     label: `${Number(month.slice(5, 7))}月`,
     fullLabel: `${month.slice(0, 4)}/${Number(month.slice(5, 7))}月`,
-    value: i === months.length - 1 ? currentBalanceNow : confirmedAccountBalance(account, state, month)
+    value: confirmedAccountBalance(account, state, month)
   }));
   const latest = currentBalanceNow;
   const earliest = chartData[0].value;
