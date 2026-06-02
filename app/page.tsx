@@ -1970,12 +1970,10 @@ function AnalysisView({
     return { key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${d.getMonth() + 1}月` };
   });
   const combinedTrend = trendMonths.map((m) => {
-    const row: Record<string, string | number> = { label: m.label };
-    liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
+    const totalBalance = liquidAccounts.reduce((s, acc) => s + confirmedAccountBalance(acc, state, m.key), 0);
     const inc = monthlyIncomeWithFixedByKey(state, m.key);
     const exp = monthlyExpenseWithFixedByKey(state, m.key);
-    row["saving"] = inc - exp;
-    return row;
+    return { label: m.label, totalBalance, saving: inc - exp };
   });
   const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
 
@@ -2079,9 +2077,7 @@ function AnalysisView({
                   <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.8} />
                 ))}
               </Bar>
-              {liquidAccounts.map((acc, i) => (
-                <Line key={acc.id} yAxisId="balance" type="monotone" dataKey={acc.name} stroke={acc.color || accountColors[i % accountColors.length]} strokeWidth={2.5} dot={false} />
-              ))}
+              <Line yAxisId="balance" type="monotone" dataKey="totalBalance" name="口座残高合計" stroke="#7c5cff" strokeWidth={2.5} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </section>
