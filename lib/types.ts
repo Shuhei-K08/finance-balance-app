@@ -85,9 +85,12 @@ export type AssetSnapshot = {
   amount: number;
 };
 
+export type InvestmentAccountKind = "securities" | "ideco" | "nisa";
+
 export type InvestmentAccount = {
   id: string;
   name: string;
+  accountKind?: InvestmentAccountKind;
   startMonth: string;
   initialAmount: number;
   monthlyContribution: number;

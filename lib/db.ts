@@ -207,6 +207,7 @@ type DbAssetSnapshot = {
 type DbInvestmentAccount = {
   id: string;
   name: string;
+  account_kind?: string | null;
   start_month?: string | null;
   initial_amount: number | string;
   monthly_contribution: number | string;
@@ -662,7 +663,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
-    client.from("investment_accounts").select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("investment_accounts").select("id,name,account_kind,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,sale_amount,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false }),
     client.from("investment_contribution_changes").select("id,investment_account_id,effective_month,monthly_contribution").eq("household_id", householdId).is("deleted_at", null).order("effective_month", { ascending: false })
   ]);
@@ -685,15 +686,26 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   }
   let investmentAccountsData: unknown = investmentAccountsResult.data;
   let investmentAccountsError = investmentAccountsResult.error;
-  if (investmentAccountsError && /start_month|target_annual_rate|does not exist|存在しません/i.test(investmentAccountsError.message)) {
+  if (investmentAccountsError && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(investmentAccountsError.message)) {
     const fallback = await client
       .from("investment_accounts")
-      .select("id,name,initial_amount,monthly_contribution,target_monthly_rate,annual_target_amount,color")
+      .select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color")
       .eq("household_id", householdId)
       .is("deleted_at", null)
       .order("created_at");
-    investmentAccountsData = fallback.data;
-    investmentAccountsError = fallback.error;
+    if (fallback.error && /start_month|target_annual_rate|does not exist|存在しません/i.test(fallback.error.message)) {
+      const fallback2 = await client
+        .from("investment_accounts")
+        .select("id,name,initial_amount,monthly_contribution,target_monthly_rate,annual_target_amount,color")
+        .eq("household_id", householdId)
+        .is("deleted_at", null)
+        .order("created_at");
+      investmentAccountsData = fallback2.data;
+      investmentAccountsError = fallback2.error;
+    } else {
+      investmentAccountsData = fallback.data;
+      investmentAccountsError = fallback.error;
+    }
   }
   const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
   let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
@@ -845,6 +857,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     investmentAccounts: (investmentTableMissing ? [] : ((investmentAccountsData ?? []) as DbInvestmentAccount[])).map((account): InvestmentAccount => ({
       id: account.id,
       name: account.name,
+      accountKind: (account.account_kind as InvestmentAccount["accountKind"]) ?? "securities",
       startMonth: account.start_month?.slice(0, 7) ?? currentMonthKey(),
       initialAmount: toNumber(account.initial_amount),
       monthlyContribution: toNumber(account.monthly_contribution),
@@ -982,6 +995,7 @@ export async function createInvestmentAccount(householdId: string, input: Omit<I
   const payload = {
     household_id: householdId,
     name: input.name.trim(),
+    account_kind: input.accountKind ?? "securities",
     start_month: `${input.startMonth}-01`,
     initial_amount: input.initialAmount,
     monthly_contribution: input.monthlyContribution,
@@ -989,17 +1003,30 @@ export async function createInvestmentAccount(householdId: string, input: Omit<I
     color: input.color || "#0f766e"
   };
   const { error } = await client.from("investment_accounts").insert(payload);
-  if (error && /start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
+  if (error && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
     const fallback = await client.from("investment_accounts").insert({
       household_id: householdId,
       name: input.name.trim(),
+      start_month: `${input.startMonth}-01`,
       initial_amount: input.initialAmount,
       monthly_contribution: input.monthlyContribution,
-      target_monthly_rate: input.targetAnnualRate / 12,
-      annual_target_amount: 0,
+      target_annual_rate: input.targetAnnualRate,
       color: input.color || "#0f766e"
     });
-    if (fallback.error) throwJapanese(fallback.error, "投資口座の追加に失敗しました。");
+    if (fallback.error && /start_month|target_annual_rate|does not exist|存在しません/i.test(fallback.error.message)) {
+      const fallback2 = await client.from("investment_accounts").insert({
+        household_id: householdId,
+        name: input.name.trim(),
+        initial_amount: input.initialAmount,
+        monthly_contribution: input.monthlyContribution,
+        target_monthly_rate: input.targetAnnualRate / 12,
+        annual_target_amount: 0,
+        color: input.color || "#0f766e"
+      });
+      if (fallback2.error) throwJapanese(fallback2.error, "投資口座の追加に失敗しました。");
+    } else if (fallback.error) {
+      throwJapanese(fallback.error, "投資口座の追加に失敗しました。");
+    }
     return;
   }
   if (error) throwJapanese(error, "投資口座の追加に失敗しました。");
@@ -1010,6 +1037,7 @@ export async function updateInvestmentAccount(accountId: string, input: Omit<Inv
   if (!input.name.trim()) throw new Error("投資口座名を入力してください。");
   const payload = {
     name: input.name.trim(),
+    account_kind: input.accountKind ?? "securities",
     start_month: `${input.startMonth}-01`,
     initial_amount: input.initialAmount,
     monthly_contribution: input.monthlyContribution,
@@ -1017,16 +1045,28 @@ export async function updateInvestmentAccount(accountId: string, input: Omit<Inv
     color: input.color || "#0f766e"
   };
   const { error } = await client.from("investment_accounts").update(payload).eq("id", accountId);
-  if (error && /start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
+  if (error && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
     const fallback = await client.from("investment_accounts").update({
       name: input.name.trim(),
+      start_month: `${input.startMonth}-01`,
       initial_amount: input.initialAmount,
       monthly_contribution: input.monthlyContribution,
-      target_monthly_rate: input.targetAnnualRate / 12,
-      annual_target_amount: 0,
+      target_annual_rate: input.targetAnnualRate,
       color: input.color || "#0f766e"
     }).eq("id", accountId);
-    if (fallback.error) throwJapanese(fallback.error, "投資口座の更新に失敗しました。");
+    if (fallback.error && /start_month|target_annual_rate|does not exist|存在しません/i.test(fallback.error.message)) {
+      const fallback2 = await client.from("investment_accounts").update({
+        name: input.name.trim(),
+        initial_amount: input.initialAmount,
+        monthly_contribution: input.monthlyContribution,
+        target_monthly_rate: input.targetAnnualRate / 12,
+        annual_target_amount: 0,
+        color: input.color || "#0f766e"
+      }).eq("id", accountId);
+      if (fallback2.error) throwJapanese(fallback2.error, "投資口座の更新に失敗しました。");
+    } else if (fallback.error) {
+      throwJapanese(fallback.error, "投資口座の更新に失敗しました。");
+    }
     return;
   }
   if (error) throwJapanese(error, "投資口座の更新に失敗しました。");
