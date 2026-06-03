@@ -1781,6 +1781,10 @@ a { color: inherit; text-decoration: none; }
 .amount-input:focus { border-color: var(--brand); }
 .amount-input::placeholder { color: var(--faint); }
 
+.bottom-sheet .form-grid {
+  grid-template-columns: 1fr;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
