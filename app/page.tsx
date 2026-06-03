@@ -280,6 +280,16 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  // Apply theme color to :root so body background can react to it
+  useEffect(() => {
+    const root = document.documentElement;
+    if (state?.themeColor) {
+      root.style.setProperty("--ledger-color", state.themeColor);
+    } else {
+      root.style.removeProperty("--ledger-color");
+    }
+  }, [state?.themeColor]);
+
   async function refreshRemoteState() {
     const next = await loadRemoteState(selectedHouseholdRef.current);
     rememberHouseholdId(next.householdId);
