@@ -4523,75 +4523,196 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
     await reload();
     setNotice("取引を更新しました。");
   }
-  if (editing) {
-    return (
-      <article className="tx-edit">
-        <div className="tx-edit-head">
-          <strong>取引を編集</strong>
-          <button type="button" onClick={() => setEditing(false)}>閉じる</button>
-        </div>
-        <div className="tx-edit-grid">
-          <label>取引の種類<select value={draft.type} onChange={(event) => setDraft({ ...draft, type: event.target.value as TransactionType, categoryId: "", accountId: "", transferToAccountId: "", reflectedDate: undefined, creditStatus: undefined })}><option value="expense">支出</option><option value="income">収入</option><option value="transfer">振替</option></select></label>
-          <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
-          {draft.type !== "transfer" && <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} /></select></label>}
-          <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => {
-            const nextAccountId = event.target.value;
-            const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
-            setDraft({
-              ...draft,
-              accountId: nextAccountId,
-              transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
-              reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
-              creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
-            });
-          }}><option value="">選択してください</option>{(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          {draft.type === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
-          <label>{isDraftCreditExpense ? "使用日" : "日付"}<input type="date" value={draft.date} onChange={(event) => {
-            const nextDate = event.target.value;
-            const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
-            setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
-          }} /></label>
-        </div>
-        {isDraftCreditExpense && (
-          <div className="credit-date-editor">
-            <div className="date-adjust-actions" aria-label="計上日の選択">
-              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日に計上</button>
-              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>引落日に計上</button>
-            </div>
-            <label>引落日<input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(event) => setDraft({ ...draft, reflectedDate: event.target.value })} /></label>
-            <div className="date-adjust-actions" aria-label="引落日の調整">
-              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, -1) })}>前月へ</button>
-              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>自動計算</button>
-              <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, 1) })}>翌月へ</button>
-            </div>
-          </div>
-        )}
-        <label>メモ<input value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
-        <div className="tx-edit-actions">
-          <button className="full-primary" type="button" onClick={async () => { try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } }}>変更を保存</button>
-          <button type="button" onClick={() => setEditing(false)}>編集をやめる</button>
-        </div>
-      </article>
-    );
-  }
   const Icon = transaction.type === "income" ? ArrowDownLeft : transaction.type === "expense" ? ArrowUpRight : ArrowDownUp;
   return (
-    <article className={`tx-row${expanded ? " expanded" : ""}`}>
-      <button className="tx-main" type="button" onClick={() => setExpanded(!expanded)}>
-        <div className={`tx-ico ${transaction.type}`}><Icon size={16} /></div>
-        <div className="tx-body">
-          <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
-          <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}{transaction.creditStatus ? ` ・ ${creditStatusLabel[transaction.creditStatus]}` : ""}</small>
-        </div>
-        <em className={`tx-amount ${transaction.type}`}>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
-      </button>
-      {expanded && (
-        <div className="tx-actions">
-          <button type="button" onClick={() => setEditing(true)}>編集</button>
-          <button className="danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除</button>
-        </div>
+    <>
+      <article className={`tx-row${expanded ? " expanded" : ""}`}>
+        <button className="tx-main" type="button" onClick={() => setExpanded(!expanded)}>
+          <div className={`tx-ico ${transaction.type}`}><Icon size={16} /></div>
+          <div className="tx-body">
+            <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
+            <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}{transaction.creditStatus ? ` ・ ${creditStatusLabel[transaction.creditStatus]}` : ""}</small>
+          </div>
+          <em className={`tx-amount ${transaction.type}`}>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
+        </button>
+        {expanded && (
+          <div className="tx-actions">
+            <button type="button" onClick={() => setEditing(true)}>編集</button>
+            <button className="danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除</button>
+          </div>
+        )}
+      </article>
+      {editing && (
+        <TransactionEditSheet
+          transaction={transaction}
+          draft={draft}
+          setDraft={setDraft}
+          state={state}
+          setNotice={setNotice}
+          saveDraft={saveDraft}
+          onClose={() => { setEditing(false); setExpanded(false); }}
+          isDraftCreditExpense={isDraftCreditExpense}
+          draftCreditAccount={draftCreditAccount}
+          autoWithdrawalDate={autoWithdrawalDate}
+          normalAccounts={normalAccounts}
+        />
       )}
-    </article>
+    </>
+  );
+}
+
+function TransactionEditSheet({
+  transaction,
+  draft,
+  setDraft,
+  state,
+  setNotice,
+  saveDraft,
+  onClose,
+  isDraftCreditExpense,
+  draftCreditAccount,
+  autoWithdrawalDate,
+  normalAccounts
+}: {
+  transaction: LedgerState["transactions"][number];
+  draft: LedgerState["transactions"][number];
+  setDraft: (d: LedgerState["transactions"][number]) => void;
+  state: LedgerState;
+  setNotice: (message: string) => void;
+  saveDraft: () => Promise<void>;
+  onClose: () => void;
+  isDraftCreditExpense: boolean;
+  draftCreditAccount: LedgerState["accounts"][number] | undefined;
+  autoWithdrawalDate: string | undefined;
+  normalAccounts: LedgerState["accounts"];
+}) {
+  const [saving, setSaving] = useState(false);
+  const typeLabel = draft.type === "income" ? "収入" : draft.type === "transfer" ? "振替" : "支出";
+  return (
+    <div className="sheet-backdrop" onClick={onClose}>
+      <form
+        className="bottom-sheet"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (saving) return;
+          setSaving(true);
+          try { await saveDraft(); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); }
+          finally { setSaving(false); }
+        }}
+      >
+        <div className="sheet-handle" />
+        <div className="section-title">
+          <h2>取引を編集</h2>
+          <span>{typeLabel} · {draft.date}</span>
+        </div>
+
+        <div className="segmented" role="tablist" aria-label="取引種別">
+          {(["expense", "income", "transfer"] as TransactionType[]).map((item) => (
+            <button
+              key={item}
+              type="button"
+              className={draft.type === item ? "selected" : ""}
+              onClick={() => setDraft({ ...draft, type: item, categoryId: "", accountId: "", transferToAccountId: "", reflectedDate: undefined, creditStatus: undefined })}
+            >
+              {transactionTypeLabel[item]}
+            </button>
+          ))}
+        </div>
+
+        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
+          金額
+          <input
+            className="amount-input"
+            style={{ fontSize: 36, padding: "10px 4px 8px" }}
+            inputMode="numeric"
+            type="number"
+            min="1"
+            value={draft.amount === 0 ? "" : draft.amount}
+            onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value || 0) })}
+            required
+          />
+        </label>
+
+        <div className="form-grid">
+          {draft.type !== "transfer" && (
+            <label>カテゴリ
+              <select value={draft.categoryId ?? ""} onChange={(e) => setDraft({ ...draft, categoryId: e.target.value })}>
+                <option value="">選択してください</option>
+                <CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} />
+              </select>
+            </label>
+          )}
+          <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}
+            <select value={draft.accountId} onChange={(e) => {
+              const nextAccountId = e.target.value;
+              const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
+              setDraft({
+                ...draft,
+                accountId: nextAccountId,
+                transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
+                reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
+                creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
+              });
+            }}>
+              <option value="">選択してください</option>
+              {(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => (
+                <option key={item.id} value={item.id}>{item.name}</option>
+              ))}
+            </select>
+          </label>
+          {draft.type === "transfer" && (
+            <label>振替先
+              <select value={draft.transferToAccountId ?? ""} onChange={(e) => setDraft({ ...draft, transferToAccountId: e.target.value })}>
+                <option value="">選択してください</option>
+                {normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => (
+                  <option key={item.id} value={item.id}>{item.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>{isDraftCreditExpense ? "使用日" : "日付"}
+            <input type="date" value={draft.date} onChange={(e) => {
+              const nextDate = e.target.value;
+              const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
+              setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
+            }} />
+          </label>
+        </div>
+
+        {isDraftCreditExpense && (
+          <div className="credit-posting-mode">
+            <span>計上する日付</span>
+            <div className="segmented compact">
+              <button type="button" className={!draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日</button>
+              <button type="button" className={draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>引落日</button>
+            </div>
+            {draft.reflectedDate && (
+              <>
+                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)" }}>
+                  引落日
+                  <input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(e) => setDraft({ ...draft, reflectedDate: e.target.value })} />
+                </label>
+                <div className="date-adjust-actions">
+                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, -1) })}>前月へ</button>
+                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>自動計算</button>
+                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, 1) })}>翌月へ</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        <input
+          placeholder="メモ"
+          value={draft.memo ?? ""}
+          onChange={(e) => setDraft({ ...draft, memo: e.target.value })}
+        />
+
+        <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
+        <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
+      </form>
+    </div>
   );
 }
 

@@ -1247,6 +1247,9 @@ a { color: inherit; text-decoration: none; }
     min-height: 42px;
     font-size: 13px;
   }
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .tx-edit-grid label,
