@@ -2057,6 +2057,30 @@ function AnalysisView({
     return row;
   });
 
+  // 支出インサイト：今月 vs 直近3ヶ月平均
+  const spendingInsights = useMemo(() => {
+    const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
+    const prev3Months = Array.from({ length: 3 }).map((_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 3 + i, 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
+    return expenseCategories.map((cat) => {
+      const childIds = new Set([cat.id, ...state.categories.filter((c) => c.parentId === cat.id).map((c) => c.id)]);
+      const thisMonthTx = monthTransactionsByKey(state.transactions, monthKey);
+      const thisMonthFixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+      const current = thisMonthTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
+        + thisMonthFixed.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
+      const prevAmounts = prev3Months.map((m) => {
+        const mTx = monthTransactionsByKey(state.transactions, m);
+        const mFixed = fixedCostOccurrencesForMonth(state.fixedCosts, m, state);
+        return mTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
+          + mFixed.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
+      });
+      const avg = prevAmounts.reduce((s, v) => s + v, 0) / 3;
+      return { cat, current, avg, ratio: avg > 0 ? current / avg : null };
+    }).filter((item) => item.current > 0 || item.avg > 0).sort((a, b) => b.current - a.current);
+  }, [state, monthKey, expenseCategories]);
+
   return (
     <div className="view-stack">
       {/* 月次収支サマリー */}
@@ -2068,6 +2092,47 @@ function AnalysisView({
           <span>収支 <strong style={{ color: income - expense >= 0 ? "var(--income)" : "var(--expense)" }}>{income - expense >= 0 ? "+" : ""}{yen.format(income - expense)}</strong></span>
         </div>
       </section>
+
+      {/* 支出インサイト */}
+      {spendingInsights.length > 0 && (
+        <section className="panel">
+          <div className="panel-title">
+            <h2>今月の支出インサイト</h2>
+            <span className="panel-meta">3ヶ月平均比</span>
+          </div>
+          <div className="spending-insights">
+            {spendingInsights.map(({ cat, current, avg, ratio }) => {
+              const isOver = ratio !== null && ratio > 1.15;
+              const isUnder = ratio !== null && ratio < 0.85 && avg > 0;
+              const barPct = avg > 0 ? Math.min((current / avg) * 100, 200) : 100;
+              const avgBarPct = 100;
+              return (
+                <div key={cat.id} className="spending-insight-row">
+                  <div className="si-header">
+                    <div className="si-dot" style={{ background: cat.color }} />
+                    <span className="si-name">{cat.name}</span>
+                    {ratio !== null && (
+                      <span className={`si-badge ${isOver ? "over" : isUnder ? "under" : "normal"}`}>
+                        {isOver ? `+${Math.round((ratio - 1) * 100)}%` : isUnder ? `-${Math.round((1 - ratio) * 100)}%` : "平均的"}
+                      </span>
+                    )}
+                    <span className="si-amount">{yen.format(current)}</span>
+                  </div>
+                  <div className="si-bar-wrap">
+                    <div className="si-bar-track">
+                      <div className="si-bar-fill" style={{ width: `${Math.min(barPct, 100)}%`, background: isOver ? "var(--expense)" : isUnder ? "var(--income)" : cat.color }} />
+                      {barPct > 100 && <div className="si-bar-over" style={{ width: `${Math.min(barPct - 100, 100)}%` }} />}
+                    </div>
+                    {avg > 0 && (
+                      <span className="si-avg-label">平均 {yen.format(Math.round(avg))}</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* 口座残高 + 支払い方法別支出 横並び（PC） */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
