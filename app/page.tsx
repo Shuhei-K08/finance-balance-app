@@ -48,6 +48,7 @@ import {
   TrendingUp,
   UserPlus,
   Users,
+  Palette,
   Wallet
 } from "lucide-react";
 import {
@@ -141,6 +142,17 @@ import type { HouseholdMember } from "@/lib/types";
 
 type Tab = "home" | "transactions" | "analysis" | "investments" | "goals" | "settings" | "admin";
 
+const LEDGER_PRESET_COLORS = [
+  { label: "デフォルト（紫）", value: "#7c5cff" },
+  { label: "ティール", value: "#06b6d4" },
+  { label: "グリーン", value: "#10b981" },
+  { label: "オレンジ", value: "#f97316" },
+  { label: "ピンク", value: "#ec4899" },
+  { label: "レッド", value: "#ef4444" },
+  { label: "ゴールド", value: "#f59e0b" },
+  { label: "スレート", value: "#64748b" },
+];
+
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
   { id: "transactions", label: "取引", icon: Receipt },
@@ -178,6 +190,7 @@ export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
   const [tab, setTab] = useState<Tab>("home");
   const [quickOpen, setQuickOpen] = useState(false);
+  const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [quickDate, setQuickDate] = useState(todayIso());
   const [quickType, setQuickType] = useState<TransactionType>("expense");
   const [calendarMonth, setCalendarMonth] = useState(todayIso().slice(0, 7));
@@ -419,7 +432,47 @@ export default function App() {
               </span>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ position: "relative" }}>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setColorPickerOpen((v) => !v)}
+                aria-label="テーマカラー"
+                title="この家計簿のテーマカラーを変更"
+                style={state.themeColor ? { color: state.themeColor } : undefined}
+              >
+                <Palette size={18} />
+              </button>
+              {colorPickerOpen && state.householdId && (
+                <div className="topbar-color-popover" onClick={(e) => e.stopPropagation()}>
+                  <div className="tcp-title">テーマカラー</div>
+                  <div className="lcp-presets">
+                    {LEDGER_PRESET_COLORS.map((preset) => (
+                      <button
+                        key={preset.value}
+                        type="button"
+                        title={preset.label}
+                        className={`lcp-swatch${(state.themeColor ?? "#7c5cff") === preset.value ? " active" : ""}`}
+                        style={{ background: preset.value }}
+                        onClick={() => {
+                          saveHouseholdThemeColor(state.householdId!, preset.value);
+                          setState({ ...state, themeColor: preset.value });
+                          setColorPickerOpen(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                  {state.themeColor && (
+                    <button className="mini-button" type="button" onClick={() => {
+                      saveHouseholdThemeColor(state.householdId!, null);
+                      setState({ ...state, themeColor: undefined });
+                      setColorPickerOpen(false);
+                    }}>リセット</button>
+                  )}
+                </div>
+              )}
+            </div>
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="テーマ切り替え">
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -428,6 +481,7 @@ export default function App() {
             </button>
           </div>
         </section>
+        {colorPickerOpen && <div className="sheet-backdrop" style={{ background: "transparent" }} onClick={() => setColorPickerOpen(false)} />}
 
         {(state.households ?? []).length > 1 && (
           <section className="household-pills" aria-label="家計簿切替">
@@ -3192,17 +3246,6 @@ function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { 
     </div>
   );
 }
-
-const LEDGER_PRESET_COLORS = [
-  { label: "デフォルト（紫）", value: "#7c5cff" },
-  { label: "ティール", value: "#06b6d4" },
-  { label: "グリーン", value: "#10b981" },
-  { label: "オレンジ", value: "#f97316" },
-  { label: "ピンク", value: "#ec4899" },
-  { label: "レッド", value: "#ef4444" },
-  { label: "ゴールド", value: "#f59e0b" },
-  { label: "スレート", value: "#64748b" },
-];
 
 function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId: string; currentColor?: string; onSave: (color: string | null) => void }) {
   const [custom, setCustom] = useState(currentColor ?? "");
