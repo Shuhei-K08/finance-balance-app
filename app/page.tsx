@@ -198,6 +198,7 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
   const [notice, setNotice] = useState("");
+  const [isSwitchingHousehold, setIsSwitchingHousehold] = useState(false);
   const [userDisplayName, setUserDisplayName] = useState<string>("");
   const { theme, setTheme } = useTheme();
   const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | undefined>(() => {
@@ -297,10 +298,17 @@ export default function App() {
   }
 
   async function switchHousehold(householdId: string) {
-    rememberHouseholdId(householdId);
-    const next = await loadRemoteState(householdId);
-    rememberHouseholdId(next.householdId);
-    setState(next);
+    if (isSwitchingHousehold) return;
+    if (householdId === selectedHouseholdRef.current) return;
+    setIsSwitchingHousehold(true);
+    try {
+      rememberHouseholdId(householdId);
+      const next = await loadRemoteState(householdId);
+      rememberHouseholdId(next.householdId);
+      setState(next);
+    } finally {
+      setIsSwitchingHousehold(false);
+    }
   }
 
   if (!authReady) return <main className="boot"><div><strong>Mirai Ledger</strong><span>あなたのお金のデータを読み込んでいます…</span></div></main>;
@@ -497,9 +505,10 @@ export default function App() {
           <section className="household-pills" aria-label="家計簿切替">
             {(state.households ?? []).map((household) => (
               <button
-                className={`household-pill ${household.id === state.householdId ? "active" : ""}`}
+                className={`household-pill ${household.id === state.householdId ? "active" : ""} ${isSwitchingHousehold && household.id !== state.householdId ? "loading" : ""}`}
                 key={household.id}
                 type="button"
+                disabled={isSwitchingHousehold}
                 onClick={() => switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
               >
                 <span className="pill-tag">{household.spaceType === "shared" ? "共有" : "個人"}</span>
