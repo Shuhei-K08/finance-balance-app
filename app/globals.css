@@ -695,6 +695,30 @@ a { color: inherit; text-decoration: none; }
   color: var(--muted);
 }
 
+.space-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  width: fit-content;
+}
+
+.space-type-badge.personal {
+  background: rgba(124, 92, 255, 0.12);
+  color: var(--brand-2);
+  border: 1px solid rgba(124, 92, 255, 0.25);
+}
+
+.space-type-badge.shared {
+  background: rgba(6, 212, 193, 0.12);
+  color: #06d4c1;
+  border: 1px solid rgba(6, 212, 193, 0.3);
+}
+
 .icon-button {
   width: 40px;
   height: 40px;
@@ -3621,6 +3645,90 @@ input[type="color"] {
     width: 100%;
     text-align: center;
   }
+}
+
+/* ============================================================
+   Category Picker
+   ============================================================ */
+.category-picker {
+  display: grid;
+  gap: 10px;
+}
+
+.cat-pick-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cat-selected-text {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--brand-2);
+}
+
+.cat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cat-chips.sub {
+  padding: 10px 12px;
+  background: var(--panel-soft);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  gap: 6px;
+}
+
+.cat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 99px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--panel-soft);
+  color: var(--ink-soft);
+  border: 1.5px solid var(--line);
+  transition: all 0.15s var(--easing);
+  white-space: nowrap;
+}
+
+.cat-chip:hover {
+  border-color: var(--cat-color, var(--brand));
+  color: var(--ink);
+}
+
+.cat-chip.active {
+  background: color-mix(in srgb, var(--cat-color, var(--brand)) 18%, transparent);
+  border-color: var(--cat-color, var(--brand));
+  color: var(--ink);
+}
+
+.cat-chip.sub {
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  background: var(--panel-elev);
+  border-color: var(--line);
+}
+
+.cat-chip.sub.active {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand-2);
+}
+
+.cat-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 /* ============================================================

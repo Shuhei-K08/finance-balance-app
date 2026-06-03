@@ -47,6 +47,7 @@ import {
   TrendingDown,
   TrendingUp,
   UserPlus,
+  Users,
   Wallet
 } from "lucide-react";
 import {
@@ -409,6 +410,9 @@ export default function App() {
             <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "28px", height: "28px" }} /></div>
             <div className="brand-text">
               <strong>Mirai Ledger</strong>
+              <span className={`space-type-badge ${state.activeSpace === "shared" ? "shared" : "personal"}`}>
+                {state.activeSpace === "shared" ? <><Users size={10} />共有</>  : <><UserPlus size={10} />個人</>}
+              </span>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
@@ -606,28 +610,28 @@ function AuthScreen({ notice, setNotice, theme }: { notice: string; setNotice: (
           Mirai Ledger
         </div>
         <div>
-          <h1>未来の残高を、<br />今日の手元で。</h1>
-          <p className="lead">資産・収支・固定費・カード引落・目標貯金まで、ひとつの画面で管理できる新しい家計OS。</p>
+          <h1>収支も資産も、<br />ひとつで管理。</h1>
+          <p className="lead">日々の取引・固定費・クレカ引落・目標貯金・投資まで、個人でも家族でも使えるシンプルな家計簿アプリ。</p>
           <div className="auth-hero-features">
-            <div className="auth-hero-feature">
-              <div className="feat-icon"><LineChartIcon size={20} /></div>
-              <div>
-                <strong>月末残高を自動予測</strong>
-                <span>固定費・カード引落・既存取引から、今月末の純資産を毎日リアルタイムに試算します。</span>
-              </div>
-            </div>
-            <div className="auth-hero-feature">
-              <div className="feat-icon"><PiggyBank size={20} /></div>
-              <div>
-                <strong>目標から逆算した貯金プラン</strong>
-                <span>達成期限から必要な月額を算出し、AIが改善ポイントをやさしく提案します。</span>
-              </div>
-            </div>
             <div className="auth-hero-feature">
               <div className="feat-icon"><CreditCard size={20} /></div>
               <div>
-                <strong>クレカ・現金・口座を横断管理</strong>
-                <span>残高・締め日・引落日まで一元化、口座ごとの収支グラフで支出のクセが見える化。</span>
+                <strong>クレカの引落日を自動計算</strong>
+                <span>締め日・引落日を登録すれば、使用日から引落日を自動算出。カードと現金・口座をまとめて管理できます。</span>
+              </div>
+            </div>
+            <div className="auth-hero-feature">
+              <div className="feat-icon"><Receipt size={20} /></div>
+              <div>
+                <strong>固定費・定期収入を一括登録</strong>
+                <span>家賃・サブスク・給与などの定期的なお金の動きを登録すると、毎月自動で収支に反映されます。</span>
+              </div>
+            </div>
+            <div className="auth-hero-feature">
+              <div className="feat-icon"><Users size={20} /></div>
+              <div>
+                <strong>パートナー・家族と共有</strong>
+                <span>共有家計簿を作成して招待するだけ。個人の家計簿と切り替えながら使い分けることもできます。</span>
               </div>
             </div>
           </div>
@@ -1318,13 +1322,15 @@ function QuickTransactionSheet({
           ))}
         </div>
         <input className="amount-input" inputMode="numeric" value={amount} onChange={(event) => setAmount(event.target.value)} type="number" min="1" placeholder="0" required />
+        {type !== "transfer" && (
+          <CategoryPicker
+            categories={state.categories}
+            kind={type === "income" ? "income" : "expense"}
+            value={categoryId}
+            onChange={setCategoryId}
+          />
+        )}
         <div className="form-grid">
-          {type !== "transfer" && (
-            <label>カテゴリー<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
-              <option value="">選択してください</option>
-              <CategoryOptions categories={state.categories} kind={type === "income" ? "income" : "expense"} />
-            </select></label>
-          )}
           <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); setCreditPostingMode("used"); }}>
             <option value="">選択してください</option>
             {accountChoices.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
@@ -1361,14 +1367,85 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
     <>
       {parents.map((parent) => {
         const children = sortSubcategories(categories.filter((category) => category.parentId === parent.id && category.kind === kind));
+        const hasChildren = children.length > 0;
         return (
           <optgroup key={parent.id} label={parent.name}>
-            <option value={parent.id}>{parent.name}</option>
+            {!hasChildren && <option value={parent.id}>{parent.name}</option>}
             {children.map((child) => <option key={child.id} value={child.id}>{child.name}</option>)}
           </optgroup>
         );
       })}
     </>
+  );
+}
+
+function CategoryPicker({
+  categories,
+  kind,
+  value,
+  onChange
+}: {
+  categories: LedgerState["categories"];
+  kind: "expense" | "income";
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const parents = sortCategories(categories.filter((c) => !c.parentId && c.kind === kind));
+  const selectedCat = categories.find((c) => c.id === value);
+  const initParentId = selectedCat ? (selectedCat.parentId ?? selectedCat.id) : "";
+  const [selectedParentId, setSelectedParentId] = useState(initParentId);
+
+  const children = selectedParentId
+    ? sortSubcategories(categories.filter((c) => c.parentId === selectedParentId && c.kind === kind))
+    : [];
+
+  function handleParentClick(parentId: string) {
+    const hasChildren = categories.some((c) => c.parentId === parentId && c.kind === kind);
+    if (parentId !== selectedParentId) {
+      setSelectedParentId(parentId);
+      if (!hasChildren) {
+        onChange(parentId);
+      } else {
+        onChange("");
+      }
+    }
+  }
+
+  const selectedParent = parents.find((p) => p.id === selectedParentId);
+  const selectedChild = children.find((c) => c.id === value);
+
+  return (
+    <div className="category-picker">
+      <div className="cat-pick-label">カテゴリー{value && <span className="cat-selected-text">{selectedParent?.name}{selectedChild ? ` › ${selectedChild.name}` : ""}</span>}</div>
+      <div className="cat-chips">
+        {parents.map((parent) => (
+          <button
+            key={parent.id}
+            type="button"
+            className={`cat-chip${selectedParentId === parent.id ? " active" : ""}`}
+            style={{ "--cat-color": parent.color } as React.CSSProperties}
+            onClick={() => handleParentClick(parent.id)}
+          >
+            <span className="cat-chip-dot" style={{ background: parent.color }} />
+            {parent.name}
+          </button>
+        ))}
+      </div>
+      {children.length > 0 && (
+        <div className="cat-chips sub">
+          {children.map((child) => (
+            <button
+              key={child.id}
+              type="button"
+              className={`cat-chip sub${value === child.id ? " active" : ""}`}
+              onClick={() => onChange(child.id)}
+            >
+              {child.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4634,15 +4711,15 @@ function TransactionEditSheet({
           />
         </label>
 
+        {draft.type !== "transfer" && (
+          <CategoryPicker
+            categories={state.categories}
+            kind={draft.type === "income" ? "income" : "expense"}
+            value={draft.categoryId ?? ""}
+            onChange={(id) => setDraft({ ...draft, categoryId: id })}
+          />
+        )}
         <div className="form-grid">
-          {draft.type !== "transfer" && (
-            <label>カテゴリ
-              <select value={draft.categoryId ?? ""} onChange={(e) => setDraft({ ...draft, categoryId: e.target.value })}>
-                <option value="">選択してください</option>
-                <CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} />
-              </select>
-            </label>
-          )}
           <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}
             <select value={draft.accountId} onChange={(e) => {
               const nextAccountId = e.target.value;
