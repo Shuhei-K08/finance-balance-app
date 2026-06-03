@@ -622,8 +622,20 @@ async function loadHouseholds(): Promise<HouseholdSummary[]> {
     spaceType: household.space_type,
     mode: household.mode,
     inviteCode: household.invite_code ?? undefined,
-    memberRole: household.household_members?.[0]?.member_role ?? "member"
+    memberRole: household.household_members?.[0]?.member_role ?? "member",
+    themeColor: typeof window !== "undefined" ? window.localStorage.getItem(`mirai-ledger-color-${household.id}`) ?? undefined : undefined
   }));
+}
+
+export function getHouseholdThemeColor(householdId: string): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return window.localStorage.getItem(`mirai-ledger-color-${householdId}`) ?? undefined;
+}
+
+export function saveHouseholdThemeColor(householdId: string, color: string | null) {
+  if (typeof window === "undefined") return;
+  if (color) window.localStorage.setItem(`mirai-ledger-color-${householdId}`, color);
+  else window.localStorage.removeItem(`mirai-ledger-color-${householdId}`);
 }
 
 export async function loadRemoteState(selectedHouseholdId?: string): Promise<LedgerState> {
@@ -781,6 +793,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   return {
     householdId,
     householdName: household.name,
+    themeColor: getHouseholdThemeColor(householdId),
     inviteCode: household.invite_code ?? undefined,
     profileRole: (profileResult.data as DbProfile | null)?.role ?? "user",
     households,

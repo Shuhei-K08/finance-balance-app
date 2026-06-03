@@ -86,6 +86,16 @@
 }
 
 /* ============================================================
+   Ledger theme color override
+   When --ledger-color is set on .app-shell, override brand colors
+   ============================================================ */
+.app-shell[style*="--ledger-color"] {
+  --brand: var(--ledger-color);
+  --brand-soft: var(--ledger-color-soft, rgba(124, 92, 255, 0.18));
+  --brand-strong: var(--ledger-color-mid, rgba(124, 92, 255, 0.45));
+}
+
+/* ============================================================
    Reset / base
    ============================================================ */
 * { box-sizing: border-box; }
@@ -3649,6 +3659,84 @@ input[type="color"] {
     width: 100%;
     text-align: center;
   }
+}
+
+/* ============================================================
+   Ledger Color Picker
+   ============================================================ */
+.ledger-color-picker {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  background: var(--panel-soft);
+  border-radius: 14px;
+  border: 1px solid var(--line);
+}
+
+.lcp-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lcp-label span {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.lcp-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lcp-swatch {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  transition: all 0.15s var(--easing);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+
+.lcp-swatch:hover {
+  transform: scale(1.1);
+  border-color: var(--ink);
+}
+
+.lcp-swatch.active {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.25), 0 2px 8px rgba(0,0,0,0.3);
+  transform: scale(1.1);
+}
+
+.lcp-custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lcp-custom label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lcp-custom input[type="color"] {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: none;
+  cursor: pointer;
+  padding: 2px;
 }
 
 /* ============================================================

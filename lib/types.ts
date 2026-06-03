@@ -122,6 +122,7 @@ export type HouseholdSummary = {
   mode: LedgerMode;
   inviteCode?: string;
   memberRole?: "owner" | "member";
+  themeColor?: string;
 };
 
 export type HouseholdMember = {
@@ -152,6 +153,7 @@ export type AdminDashboard = {
 export type LedgerState = {
   householdId?: string;
   householdName?: string;
+  themeColor?: string;
   inviteCode?: string;
   profileRole?: "user" | "admin";
   households?: HouseholdSummary[];

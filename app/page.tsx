@@ -116,6 +116,7 @@ import {
   loadRemoteState,
   removeSharedLedgerMember,
   renameSharedLedger,
+  saveHouseholdThemeColor,
   signInWithEmail,
   signInWithGoogle,
   signOut,
@@ -362,7 +363,10 @@ export default function App() {
   const greetingText = greetingByHour(new Date());
 
   return (
-    <main className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}>
+    <main
+      className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}
+      style={state.themeColor ? { "--ledger-color": state.themeColor, "--ledger-color-soft": `${state.themeColor}22`, "--ledger-color-mid": `${state.themeColor}44` } as React.CSSProperties : undefined}
+    >
       {/* Desktop sidebar */}
       <aside className="app-sidebar" aria-label="メインメニュー">
         <div>
@@ -3189,6 +3193,45 @@ function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { 
   );
 }
 
+const LEDGER_PRESET_COLORS = [
+  { label: "デフォルト（紫）", value: "#7c5cff" },
+  { label: "ティール", value: "#06b6d4" },
+  { label: "グリーン", value: "#10b981" },
+  { label: "オレンジ", value: "#f97316" },
+  { label: "ピンク", value: "#ec4899" },
+  { label: "レッド", value: "#ef4444" },
+  { label: "ゴールド", value: "#f59e0b" },
+  { label: "スレート", value: "#64748b" },
+];
+
+function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId: string; currentColor?: string; onSave: (color: string | null) => void }) {
+  const [custom, setCustom] = useState(currentColor ?? "");
+  return (
+    <div className="ledger-color-picker">
+      <div className="lcp-label">テーマカラー<span>このデバイスで保存されます</span></div>
+      <div className="lcp-presets">
+        {LEDGER_PRESET_COLORS.map((preset) => (
+          <button
+            key={preset.value}
+            type="button"
+            title={preset.label}
+            className={`lcp-swatch${(currentColor ?? "#7c5cff") === preset.value ? " active" : ""}`}
+            style={{ background: preset.value }}
+            onClick={() => { setCustom(preset.value); onSave(preset.value); }}
+          />
+        ))}
+      </div>
+      <div className="lcp-custom">
+        <label>カスタム
+          <input type="color" value={custom || "#7c5cff"} onChange={(e) => setCustom(e.target.value)} />
+        </label>
+        <button type="button" className="mini-button" onClick={() => onSave(custom || null)}>適用</button>
+        {currentColor && <button type="button" className="mini-button" onClick={() => { setCustom(""); onSave(null); }}>リセット</button>}
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({
   state,
   setNotice,
@@ -3303,6 +3346,15 @@ function SettingsView({
                 <strong>{modalLedger.name}</strong>
                 <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
               </div>
+              <LedgerColorPicker
+                householdId={modalLedger.id}
+                currentColor={modalLedger.themeColor}
+                onSave={(color) => {
+                  saveHouseholdThemeColor(modalLedger.id, color);
+                  setNotice("テーマカラーを変更しました。");
+                  reloadHousehold(state.householdId ?? modalLedger.id).catch(() => undefined);
+                }}
+              />
             <>
                 <div className="ledger-info-grid">
                   <div><span>家計簿ID</span><strong>{modalLedger.id}</strong></div>
