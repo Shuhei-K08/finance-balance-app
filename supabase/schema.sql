@@ -149,6 +149,9 @@ create unique index if not exists households_invite_code_uidx on households(invi
 alter table fixed_costs add column if not exists effective_from date;
 alter table fixed_costs add column if not exists effective_to date;
 
+-- 投資口座: 開始時の投資元金（評価額と別管理。途中から記録開始の場合に設定）
+alter table investment_accounts add column if not exists initial_principal numeric;
+
 create or replace function public.is_admin()
 returns boolean
 language sql

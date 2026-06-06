@@ -3040,7 +3040,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
 }
 
 function defaultInvestmentAccountDraft() {
-  return { name: "", accountKind: "securities" as "securities" | "ideco" | "nisa", startMonth: todayIso().slice(0, 7), initialAmount: 0, monthlyContribution: 100000, targetAnnualRate: 5, color: "#0f766e" };
+  return { name: "", accountKind: "securities" as "securities" | "ideco" | "nisa", startMonth: todayIso().slice(0, 7), initialAmount: 0, initialPrincipal: null as number | null, monthlyContribution: 100000, targetAnnualRate: 5, color: "#0f766e" };
 }
 
 function latestInvestmentValue(state: LedgerState, accountId: string, monthKey: string) {
@@ -3072,7 +3072,8 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   const sortedMonths = Array.from(months).sort();
   let previousActual = account.initialAmount;
   let previousTarget = account.initialAmount;
-  let cumulativePrincipal = account.initialAmount;
+  // initialPrincipal が設定されていればそれを元金の起点に、なければ initialAmount と同じとみなす
+  let cumulativePrincipal = account.initialPrincipal ?? account.initialAmount;
   const monthlyTargetRate = Math.pow(1 + account.targetAnnualRate / 100, 1 / 12) - 1;
   return sortedMonths.map((month) => {
     const record = records.find((item) => item.month === month);
@@ -3838,7 +3839,7 @@ function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; 
   async function saveNew() {
     if (!addDraft.name.trim()) { setNotice("口座名を入力してください。"); return; }
     try {
-      await createInvestmentAccount(state.householdId ?? "", addDraft);
+      await createInvestmentAccount(state.householdId ?? "", { ...addDraft, initialPrincipal: addDraft.initialPrincipal ?? undefined });
       await reload();
       setShowAddForm(false);
       setAddDraft(defaultInvestmentAccountDraft());
@@ -3867,7 +3868,17 @@ function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; 
           </select></label>
           <label>口座名<input value={addDraft.name} placeholder="例: SBI証券・つみたてNISA" onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} /></label>
           <label>開始月<input type="month" value={addDraft.startMonth} onChange={(e) => setAddDraft({ ...addDraft, startMonth: e.target.value || todayIso().slice(0, 7) })} /></label>
-          <label>開始時の評価額（元金）<input type="number" value={numberInputValue(addDraft.initialAmount)} onChange={(e) => setAddDraft({ ...addDraft, initialAmount: Number(e.target.value || 0) })} /><small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>既に運用中の場合は現在の評価額を入力。これが元金の起点になります。</small></label>
+          <label>開始時の評価額<input type="number" value={numberInputValue(addDraft.initialAmount)} onChange={(e) => setAddDraft({ ...addDraft, initialAmount: Number(e.target.value || 0) })} /><small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>今の評価額（グラフ・目標計算の起点）</small></label>
+          <label>
+            開始時の投資元金
+            <input
+              type="number"
+              placeholder={String(addDraft.initialAmount || 0)}
+              value={addDraft.initialPrincipal != null ? numberInputValue(addDraft.initialPrincipal) : ""}
+              onChange={(e) => setAddDraft({ ...addDraft, initialPrincipal: e.target.value === "" ? null : Number(e.target.value) })}
+            />
+            <small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>途中から記録する場合、実際に投入した元金を入力。含み益の計算に使用。空欄なら評価額と同じとみなします。</small>
+          </label>
           <label>毎月積立額<input type="number" value={numberInputValue(addDraft.monthlyContribution)} onChange={(e) => setAddDraft({ ...addDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
           <label>目標年利(%)<input type="number" step="0.01" value={addDraft.targetAnnualRate} onChange={(e) => setAddDraft({ ...addDraft, targetAnnualRate: Number(e.target.value || 0) })} /></label>
           <label>表示色<input type="color" value={addDraft.color} onChange={(e) => setAddDraft({ ...addDraft, color: e.target.value })} /></label>
@@ -3897,7 +3908,7 @@ function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; 
 function InvestmentAccountCard({ account, state, setNotice, reload }: { account: LedgerState["investmentAccounts"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
   const investmentContributionChanges = state.investmentContributionChanges ?? [];
   const [panel, setPanel] = useState<"closed" | "edit" | "contribution">("closed");
-  const [editDraft, setEditDraft] = useState({ name: account.name, accountKind: account.accountKind ?? "securities" as "securities" | "ideco" | "nisa", startMonth: account.startMonth, initialAmount: account.initialAmount, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
+  const [editDraft, setEditDraft] = useState({ name: account.name, accountKind: account.accountKind ?? "securities" as "securities" | "ideco" | "nisa", startMonth: account.startMonth, initialAmount: account.initialAmount, initialPrincipal: account.initialPrincipal ?? null as number | null, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
   const [contributionDraft, setContributionDraft] = useState({ month: todayIso().slice(0, 7), monthlyContribution: account.monthlyContribution });
   const contributionChanges = investmentContributionChanges.filter((c) => c.investmentAccountId === account.id).sort((a, b) => b.month.localeCompare(a.month));
   const kindColor = account.color || investmentKindColor(account.accountKind);
@@ -3905,7 +3916,7 @@ function InvestmentAccountCard({ account, state, setNotice, reload }: { account:
   function toggle(next: "edit" | "contribution") {
     setPanel((prev) => {
       if (prev === next) return "closed";
-      if (next === "edit") setEditDraft({ name: account.name, accountKind: account.accountKind ?? "securities", startMonth: account.startMonth, initialAmount: account.initialAmount, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
+      if (next === "edit") setEditDraft({ name: account.name, accountKind: account.accountKind ?? "securities", startMonth: account.startMonth, initialAmount: account.initialAmount, initialPrincipal: account.initialPrincipal ?? null, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
       return next;
     });
   }
@@ -3913,7 +3924,7 @@ function InvestmentAccountCard({ account, state, setNotice, reload }: { account:
   async function saveEdit() {
     if (!editDraft.name.trim()) { setNotice("口座名を入力してください。"); return; }
     try {
-      await updateInvestmentAccount(account.id, editDraft);
+      await updateInvestmentAccount(account.id, { ...editDraft, initialPrincipal: editDraft.initialPrincipal ?? undefined });
       await reload();
       setPanel("closed");
       setNotice("投資口座を更新しました。");
@@ -3971,7 +3982,17 @@ function InvestmentAccountCard({ account, state, setNotice, reload }: { account:
             </select></label>
             <label>口座名<input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} /></label>
             <label>開始月<input type="month" value={editDraft.startMonth} onChange={(e) => setEditDraft({ ...editDraft, startMonth: e.target.value || todayIso().slice(0, 7) })} /></label>
-            <label>開始時の評価額（元金）<input type="number" value={numberInputValue(editDraft.initialAmount)} onChange={(e) => setEditDraft({ ...editDraft, initialAmount: Number(e.target.value || 0) })} /></label>
+            <label>開始時の評価額<input type="number" value={numberInputValue(editDraft.initialAmount)} onChange={(e) => setEditDraft({ ...editDraft, initialAmount: Number(e.target.value || 0) })} /><small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>今の評価額（グラフ・目標計算の起点）</small></label>
+            <label>
+              開始時の投資元金
+              <input
+                type="number"
+                placeholder={String(editDraft.initialAmount || 0)}
+                value={editDraft.initialPrincipal != null ? numberInputValue(editDraft.initialPrincipal) : ""}
+                onChange={(e) => setEditDraft({ ...editDraft, initialPrincipal: e.target.value === "" ? null : Number(e.target.value) })}
+              />
+              <small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>途中から記録する場合に設定。空欄なら評価額と同じとみなします。</small>
+            </label>
             <label>毎月積立額<input type="number" value={numberInputValue(editDraft.monthlyContribution)} onChange={(e) => setEditDraft({ ...editDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
             <label>目標年利(%)<input type="number" step="0.01" value={editDraft.targetAnnualRate} onChange={(e) => setEditDraft({ ...editDraft, targetAnnualRate: Number(e.target.value || 0) })} /></label>
             <label>表示色<input type="color" value={editDraft.color} onChange={(e) => setEditDraft({ ...editDraft, color: e.target.value })} /></label>

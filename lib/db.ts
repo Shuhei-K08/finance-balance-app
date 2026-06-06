@@ -210,6 +210,7 @@ type DbInvestmentAccount = {
   account_kind?: string | null;
   start_month?: string | null;
   initial_amount: number | string;
+  initial_principal?: number | string | null;
   monthly_contribution: number | string;
   target_annual_rate?: number | string | null;
   target_monthly_rate?: number | string | null;
@@ -675,7 +676,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
-    client.from("investment_accounts").select("id,name,account_kind,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("investment_accounts").select("id,name,account_kind,start_month,initial_amount,initial_principal,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("investment_monthly_records").select("id,investment_account_id,record_month,month_end_value,additional_investment,sale_amount,note").eq("household_id", householdId).is("deleted_at", null).order("record_month", { ascending: false }),
     client.from("investment_contribution_changes").select("id,investment_account_id,effective_month,monthly_contribution").eq("household_id", householdId).is("deleted_at", null).order("effective_month", { ascending: false })
   ]);
@@ -686,8 +687,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   // --- investment_accounts fallback (account_kind column may not exist) ---
   let investmentAccountsData: unknown = investmentAccountsResult.data;
   let investmentAccountsError = investmentAccountsResult.error;
-  if (investmentAccountsError && /account_kind/i.test(investmentAccountsError.message)) {
-    // account_kind column missing — retry without it
+  if (investmentAccountsError && /account_kind|initial_principal/i.test(investmentAccountsError.message)) {
+    // account_kind or initial_principal column missing — retry without them
     const fallback = await client
       .from("investment_accounts")
       .select("id,name,start_month,initial_amount,monthly_contribution,target_annual_rate,target_monthly_rate,color")
@@ -881,6 +882,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       accountKind: (account.account_kind as InvestmentAccount["accountKind"]) ?? "securities",
       startMonth: account.start_month?.slice(0, 7) ?? currentMonthKey(),
       initialAmount: toNumber(account.initial_amount),
+      initialPrincipal: account.initial_principal != null ? toNumber(account.initial_principal) : undefined,
       monthlyContribution: toNumber(account.monthly_contribution),
       targetAnnualRate: Number(account.target_annual_rate ?? (Number(account.target_monthly_rate ?? 0) * 12)),
       color: account.color ?? "#0f766e"
@@ -1019,12 +1021,13 @@ export async function createInvestmentAccount(householdId: string, input: Omit<I
     account_kind: input.accountKind ?? "securities",
     start_month: `${input.startMonth}-01`,
     initial_amount: input.initialAmount,
+    initial_principal: input.initialPrincipal ?? null,
     monthly_contribution: input.monthlyContribution,
     target_annual_rate: input.targetAnnualRate,
     color: input.color || "#0f766e"
   };
   const { error } = await client.from("investment_accounts").insert(payload);
-  if (error && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
+  if (error && /account_kind|initial_principal|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
     const fallback = await client.from("investment_accounts").insert({
       household_id: householdId,
       name: input.name.trim(),
@@ -1061,12 +1064,13 @@ export async function updateInvestmentAccount(accountId: string, input: Omit<Inv
     account_kind: input.accountKind ?? "securities",
     start_month: `${input.startMonth}-01`,
     initial_amount: input.initialAmount,
+    initial_principal: input.initialPrincipal ?? null,
     monthly_contribution: input.monthlyContribution,
     target_annual_rate: input.targetAnnualRate,
     color: input.color || "#0f766e"
   };
   const { error } = await client.from("investment_accounts").update(payload).eq("id", accountId);
-  if (error && /account_kind|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
+  if (error && /account_kind|initial_principal|start_month|target_annual_rate|does not exist|存在しません/i.test(error.message)) {
     const fallback = await client.from("investment_accounts").update({
       name: input.name.trim(),
       start_month: `${input.startMonth}-01`,

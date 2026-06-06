@@ -92,7 +92,8 @@ export type InvestmentAccount = {
   name: string;
   accountKind?: InvestmentAccountKind;
   startMonth: string;
-  initialAmount: number;
+  initialAmount: number;       // 開始時の評価額（グラフ・目標計算の起点）
+  initialPrincipal?: number;   // 開始時の投資元金（含み益計算の起点。省略時は initialAmount と同じとみなす）
   monthlyContribution: number;
   targetAnnualRate: number;
   color: string;
