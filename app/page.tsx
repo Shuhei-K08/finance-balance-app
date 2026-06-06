@@ -2873,6 +2873,9 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
           <div className="inv-account-cards">
             {investmentAccounts.map((account) => {
               const val = latestInvestmentValue(state, account.id, monthKey);
+              const accRows = investmentRows(state, account.id, monthKey);
+              const latestRow = accRows[accRows.length - 1];
+              const gain = latestRow?.unrealizedGain ?? (val - (account.initialAmount ?? 0));
               const isActive = selected?.id === account.id;
               const kindLabel = investmentKindLabel(account.accountKind);
               const kindColor = account.color || investmentKindColor(account.accountKind);
@@ -2887,6 +2890,9 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   <div className="inv-acc-kind">{kindLabel}</div>
                   <div className="inv-acc-name">{account.name}</div>
                   <div className="inv-acc-value">{yen.format(val)}</div>
+                  <div className="inv-acc-gain" style={{ color: gain >= 0 ? "var(--income)" : "var(--expense)" }}>
+                    {gain >= 0 ? "+" : ""}{yen.format(gain)}
+                  </div>
                 </button>
               );
             })}
@@ -2898,29 +2904,41 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
         <>
           {/* 推移グラフ */}
           <section className="panel chart-panel">
-            <div className="section-title"><h2>{selected.name}の推移</h2><span>予想と実績</span></div>
+            <div className="section-title"><h2>{selected.name}の推移</h2><span>元金・含み益・評価額</span></div>
             <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
               {(["1y","3y","5y","all"] as const).map((p) => (
                 <button key={p} className={chartPeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod(p)}>{p === "all" ? "全期間" : p}</button>
               ))}
             </div>
+            {/* 元金・含み益サマリー */}
+            {rows.length > 0 && (() => {
+              const latest = rows[rows.length - 1];
+              const gain = latest.unrealizedGain;
+              return (
+                <div className="inv-principal-summary">
+                  <div><span>累計元金</span><strong>{yen.format(latest.cumulativePrincipal)}</strong></div>
+                  <div><span>含み益</span><strong style={{ color: gain >= 0 ? "var(--income)" : "var(--expense)" }}>{gain >= 0 ? "+" : ""}{yen.format(gain)}</strong></div>
+                  <div><span>現在評価額</span><strong>{yen.format(latest.monthEndValue)}</strong></div>
+                </div>
+              );
+            })()}
             <ResponsiveContainer width="100%" height={260}>
               <ComposedChart data={rows} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="principalGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.05} />
+                  </linearGradient>
+                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                 <YAxis yAxisId="left" hide />
-                <YAxis yAxisId="right" orientation="right" hide />
                 <Tooltip
                   formatter={(value, name) => [yen.format(Number(value)), name]}
                   contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                 />
                 <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-                <ReferenceLine yAxisId="right" y={0} stroke="rgba(255,255,255,0.15)" />
-                <Bar yAxisId="right" dataKey="profit" name="月次利益" barSize={18} radius={[3, 3, 0, 0]}>
-                  {rows.map((row, i) => (
-                    <Cell key={i} fill={(row.profit ?? 0) >= 0 ? "rgba(34,197,94,0.7)" : "rgba(239,68,68,0.7)"} />
-                  ))}
-                </Bar>
+                <Area yAxisId="left" type="monotone" dataKey="cumulativePrincipal" name="累計元金" stroke="#6366f1" strokeWidth={1.5} fill="url(#principalGrad)" dot={false} />
                 <Line yAxisId="left" type="monotone" dataKey="targetValue" name="目標評価額" stroke="#06b6d4" strokeWidth={2} strokeDasharray="4 4" dot={false} />
                 <Line yAxisId="left" type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
               </ComposedChart>
@@ -3054,6 +3072,7 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   const sortedMonths = Array.from(months).sort();
   let previousActual = account.initialAmount;
   let previousTarget = account.initialAmount;
+  let cumulativePrincipal = account.initialAmount;
   const monthlyTargetRate = Math.pow(1 + account.targetAnnualRate / 100, 1 / 12) - 1;
   return sortedMonths.map((month) => {
     const record = records.find((item) => item.month === month);
@@ -3068,6 +3087,8 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
     const capitalBase = previousActual + monthlyContribution + additionalInvestment;
     const monthlyReturnRate = capitalBase > 0 ? (profit / capitalBase) * 100 : 0;
     const achievementRate = targetValue > 0 ? (monthEndValue / targetValue) * 100 : 0;
+    cumulativePrincipal += monthlyContribution + additionalInvestment - saleAmount;
+    const unrealizedGain = monthEndValue - cumulativePrincipal;
     previousActual = monthEndValue;
     previousTarget = targetValue;
     return {
@@ -3082,6 +3103,8 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
       profit,
       monthlyReturnRate,
       achievementRate,
+      cumulativePrincipal,
+      unrealizedGain,
       note: record?.note ?? ""
     };
   });
@@ -3809,47 +3832,97 @@ function SettingsView({
 
 function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
   const investmentAccounts = state.investmentAccounts ?? [];
-  const investmentContributionChanges = state.investmentContributionChanges ?? [];
-  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
-  const [showAccountForm, setShowAccountForm] = useState(false);
-  const [accountDraft, setAccountDraft] = useState(defaultInvestmentAccountDraft());
-  const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
-  const selected = investmentAccounts.find((a) => a.id === selectedId) ?? investmentAccounts[0];
-  const selectedContributionChanges = selected ? investmentContributionChanges.filter((c) => c.investmentAccountId === selected.id).sort((a, b) => b.month.localeCompare(a.month)) : [];
-  const [showContributionForm, setShowContributionForm] = useState(false);
-  const [contributionDraft, setContributionDraft] = useState({ month: todayIso().slice(0, 7), monthlyContribution: 0 });
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [addDraft, setAddDraft] = useState(defaultInvestmentAccountDraft());
 
-  function startAdd() {
-    setEditingAccountId(null);
-    setAccountDraft(defaultInvestmentAccountDraft());
-    setShowAccountForm(true);
-  }
-
-  function startEdit(account: typeof investmentAccounts[number]) {
-    setEditingAccountId(account.id);
-    setAccountDraft({ name: account.name, accountKind: account.accountKind ?? "securities", startMonth: account.startMonth, initialAmount: account.initialAmount, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
-    setShowAccountForm(true);
-  }
-
-  async function saveAccount() {
-    if (!accountDraft.name.trim()) { setNotice("口座名を入力してください。"); return; }
+  async function saveNew() {
+    if (!addDraft.name.trim()) { setNotice("口座名を入力してください。"); return; }
     try {
-      if (editingAccountId) {
-        await updateInvestmentAccount(editingAccountId, accountDraft);
-        setNotice("投資口座を更新しました。");
-      } else {
-        await createInvestmentAccount(state.householdId ?? "", accountDraft);
-        setNotice("投資口座を追加しました。");
-      }
+      await createInvestmentAccount(state.householdId ?? "", addDraft);
       await reload();
-      setShowAccountForm(false);
-      setEditingAccountId(null);
+      setShowAddForm(false);
+      setAddDraft(defaultInvestmentAccountDraft());
+      setNotice("投資口座を追加しました。");
     } catch (error) {
-      setNotice(toJapaneseError(error, editingAccountId ? "投資口座の更新に失敗しました。" : "投資口座の追加に失敗しました。"));
+      setNotice(toJapaneseError(error, "投資口座の追加に失敗しました。"));
     }
   }
 
-  async function removeAccount(account: typeof investmentAccounts[number]) {
+  return (
+    <section className="panel">
+      <div className="section-title">
+        <h2>投資口座の管理</h2>
+        <button className="mini-button" type="button" onClick={() => { setShowAddForm(!showAddForm); setAddDraft(defaultInvestmentAccountDraft()); }}>
+          {showAddForm ? "閉じる" : "口座を追加"}
+        </button>
+      </div>
+
+      {showAddForm && (
+        <div className="crud-form compact-form inv-add-form">
+          <p className="setting-copy" style={{ marginBottom: 8 }}>新しい投資口座を追加します。証券口座・iDeCo・NISAに対応しています。</p>
+          <label>種類<select value={addDraft.accountKind ?? "securities"} onChange={(e) => setAddDraft({ ...addDraft, accountKind: e.target.value as "securities" | "ideco" | "nisa" })}>
+            <option value="securities">証券口座</option>
+            <option value="ideco">iDeCo</option>
+            <option value="nisa">NISA</option>
+          </select></label>
+          <label>口座名<input value={addDraft.name} placeholder="例: SBI証券・つみたてNISA" onChange={(e) => setAddDraft({ ...addDraft, name: e.target.value })} /></label>
+          <label>開始月<input type="month" value={addDraft.startMonth} onChange={(e) => setAddDraft({ ...addDraft, startMonth: e.target.value || todayIso().slice(0, 7) })} /></label>
+          <label>開始時の評価額（元金）<input type="number" value={numberInputValue(addDraft.initialAmount)} onChange={(e) => setAddDraft({ ...addDraft, initialAmount: Number(e.target.value || 0) })} /><small style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>既に運用中の場合は現在の評価額を入力。これが元金の起点になります。</small></label>
+          <label>毎月積立額<input type="number" value={numberInputValue(addDraft.monthlyContribution)} onChange={(e) => setAddDraft({ ...addDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
+          <label>目標年利(%)<input type="number" step="0.01" value={addDraft.targetAnnualRate} onChange={(e) => setAddDraft({ ...addDraft, targetAnnualRate: Number(e.target.value || 0) })} /></label>
+          <label>表示色<input type="color" value={addDraft.color} onChange={(e) => setAddDraft({ ...addDraft, color: e.target.value })} /></label>
+          <button className="full-primary" type="button" onClick={saveNew}>口座を追加</button>
+        </div>
+      )}
+
+      {investmentAccounts.length === 0 && !showAddForm ? (
+        <div className="empty-state"><span>「口座を追加」から投資口座を登録してください。証券口座・iDeCo・NISAに対応しています。</span></div>
+      ) : (
+        <div className="inv-manage-list">
+          {investmentAccounts.map((account) => (
+            <InvestmentAccountCard
+              key={account.id}
+              account={account}
+              state={state}
+              setNotice={setNotice}
+              reload={reload}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InvestmentAccountCard({ account, state, setNotice, reload }: { account: LedgerState["investmentAccounts"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const investmentContributionChanges = state.investmentContributionChanges ?? [];
+  const [panel, setPanel] = useState<"closed" | "edit" | "contribution">("closed");
+  const [editDraft, setEditDraft] = useState({ name: account.name, accountKind: account.accountKind ?? "securities" as "securities" | "ideco" | "nisa", startMonth: account.startMonth, initialAmount: account.initialAmount, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
+  const [contributionDraft, setContributionDraft] = useState({ month: todayIso().slice(0, 7), monthlyContribution: account.monthlyContribution });
+  const contributionChanges = investmentContributionChanges.filter((c) => c.investmentAccountId === account.id).sort((a, b) => b.month.localeCompare(a.month));
+  const kindColor = account.color || investmentKindColor(account.accountKind);
+
+  function toggle(next: "edit" | "contribution") {
+    setPanel((prev) => {
+      if (prev === next) return "closed";
+      if (next === "edit") setEditDraft({ name: account.name, accountKind: account.accountKind ?? "securities", startMonth: account.startMonth, initialAmount: account.initialAmount, monthlyContribution: account.monthlyContribution, targetAnnualRate: account.targetAnnualRate, color: account.color });
+      return next;
+    });
+  }
+
+  async function saveEdit() {
+    if (!editDraft.name.trim()) { setNotice("口座名を入力してください。"); return; }
+    try {
+      await updateInvestmentAccount(account.id, editDraft);
+      await reload();
+      setPanel("closed");
+      setNotice("投資口座を更新しました。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "投資口座の更新に失敗しました。"));
+    }
+  }
+
+  async function removeAccount() {
     if (!window.confirm(`${account.name}を削除します。よろしいですか？`)) return;
     try {
       await deleteInvestmentAccount(account.id);
@@ -3860,10 +3933,10 @@ function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; 
     }
   }
 
-  async function saveContributionChange() {
-    if (!selected || !contributionDraft.month) { setNotice("変更開始月を選択してください。"); return; }
+  async function saveContribution() {
+    if (!contributionDraft.month) { setNotice("変更開始月を選択してください。"); return; }
     try {
-      await upsertInvestmentContributionChange(state.householdId ?? "", { investmentAccountId: selected.id, month: contributionDraft.month, monthlyContribution: contributionDraft.monthlyContribution });
+      await upsertInvestmentContributionChange(state.householdId ?? "", { investmentAccountId: account.id, month: contributionDraft.month, monthlyContribution: contributionDraft.monthlyContribution });
       await reload();
       setNotice(`${formatMonthLabel(contributionDraft.month)}からの積立額を保存しました。`);
     } catch (error) {
@@ -3872,82 +3945,70 @@ function InvestmentSettings({ state, setNotice, reload }: { state: LedgerState; 
   }
 
   return (
-    <>
-      <section className="panel">
-        <div className="section-title"><h2>投資口座の管理</h2><button className="mini-button" type="button" onClick={showAccountForm ? () => { setShowAccountForm(false); setEditingAccountId(null); } : startAdd}>{showAccountForm ? "閉じる" : "口座を追加"}</button></div>
-        {showAccountForm && (
+    <div className="inv-manage-card">
+      {/* ヘッダー行 */}
+      <div className="inv-manage-head">
+        <div className="account-mark" style={{ background: kindColor }}>{account.name.slice(0, 1)}</div>
+        <div className="inv-manage-info">
+          <strong>{account.name}</strong>
+          <small>{investmentKindLabel(account.accountKind)} ／ 積立 {yen.format(account.monthlyContribution)}/月 ／ 目標年利 {account.targetAnnualRate}%</small>
+        </div>
+        <div className="inv-manage-actions">
+          <button className={`mini-button ${panel === "edit" ? "active" : ""}`} type="button" onClick={() => toggle("edit")}>編集</button>
+          <button className={`mini-button ${panel === "contribution" ? "active" : ""}`} type="button" onClick={() => toggle("contribution")}>積立変更</button>
+          <button className="danger-button" type="button" onClick={removeAccount}>削除</button>
+        </div>
+      </div>
+
+      {/* 口座情報編集パネル */}
+      {panel === "edit" && (
+        <div className="inv-manage-body">
           <div className="crud-form compact-form">
-            <label>種類<select value={accountDraft.accountKind ?? "securities"} onChange={(e) => setAccountDraft({ ...accountDraft, accountKind: e.target.value as "securities" | "ideco" | "nisa" })}>
+            <label>種類<select value={editDraft.accountKind ?? "securities"} onChange={(e) => setEditDraft({ ...editDraft, accountKind: e.target.value as "securities" | "ideco" | "nisa" })}>
               <option value="securities">証券口座</option>
               <option value="ideco">iDeCo</option>
               <option value="nisa">NISA</option>
             </select></label>
-            <label>口座名<input value={accountDraft.name} onChange={(e) => setAccountDraft({ ...accountDraft, name: e.target.value })} /></label>
-            <label>開始月<input type="month" value={accountDraft.startMonth} onChange={(e) => setAccountDraft({ ...accountDraft, startMonth: e.target.value || todayIso().slice(0, 7) })} /></label>
-            <label>開始評価額<input type="number" value={numberInputValue(accountDraft.initialAmount)} onChange={(e) => setAccountDraft({ ...accountDraft, initialAmount: Number(e.target.value || 0) })} /></label>
-            <label>毎月積立額<input type="number" value={numberInputValue(accountDraft.monthlyContribution)} onChange={(e) => setAccountDraft({ ...accountDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
-            <label>目標年利(%)<input type="number" step="0.01" value={accountDraft.targetAnnualRate} onChange={(e) => setAccountDraft({ ...accountDraft, targetAnnualRate: Number(e.target.value || 0) })} /></label>
-            <label>色<input type="color" value={accountDraft.color} onChange={(e) => setAccountDraft({ ...accountDraft, color: e.target.value })} /></label>
-            <button className="full-primary" type="button" onClick={saveAccount}>{editingAccountId ? "変更を保存" : "口座を追加"}</button>
+            <label>口座名<input value={editDraft.name} onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })} /></label>
+            <label>開始月<input type="month" value={editDraft.startMonth} onChange={(e) => setEditDraft({ ...editDraft, startMonth: e.target.value || todayIso().slice(0, 7) })} /></label>
+            <label>開始時の評価額（元金）<input type="number" value={numberInputValue(editDraft.initialAmount)} onChange={(e) => setEditDraft({ ...editDraft, initialAmount: Number(e.target.value || 0) })} /></label>
+            <label>毎月積立額<input type="number" value={numberInputValue(editDraft.monthlyContribution)} onChange={(e) => setEditDraft({ ...editDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
+            <label>目標年利(%)<input type="number" step="0.01" value={editDraft.targetAnnualRate} onChange={(e) => setEditDraft({ ...editDraft, targetAnnualRate: Number(e.target.value || 0) })} /></label>
+            <label>表示色<input type="color" value={editDraft.color} onChange={(e) => setEditDraft({ ...editDraft, color: e.target.value })} /></label>
+            <button className="full-primary" type="button" onClick={saveEdit}>変更を保存</button>
           </div>
-        )}
-        {investmentAccounts.length === 0 ? (
-          <div className="empty-state"><span>投資口座を追加してください。証券口座・iDeCo・NISAに対応しています。</span></div>
-        ) : (
-          <div className="account-list">
-            {investmentAccounts.map((account) => (
-              <div className="account-row" key={account.id}>
-                <div className="account-mark" style={{ background: account.color || investmentKindColor(account.accountKind) }}>{account.name.slice(0, 1)}</div>
-                <div className="account-name">
-                  <strong>{account.name}</strong>
-                  <small>{investmentKindLabel(account.accountKind)} / 積立 {yen.format(account.monthlyContribution)}/月 / 目標年利 {account.targetAnnualRate}%</small>
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="mini-button" type="button" onClick={() => { startEdit(account); setSelectedId(account.id); }}>編集</button>
-                  <button className="danger-button" type="button" onClick={() => removeAccount(account)}>削除</button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {investmentAccounts.length > 0 && (
-        <section className="panel">
-          <div className="section-title"><h2>積立額の変更</h2></div>
-          <p className="setting-copy">口座を選んで積立額を変更すると、指定した月から新しい積立額が反映されます。</p>
-          <div className="ledger-switch compact-switch" style={{ marginBottom: 12 }}>
-            {investmentAccounts.map((account) => (
-              <button key={account.id} type="button" className={selected?.id === account.id ? "active" : ""} onClick={() => setSelectedId(account.id)}>{account.name}</button>
-            ))}
-          </div>
-          {selected && (
-            <>
-              <button className="google-button" type="button" style={{ marginBottom: 8 }} onClick={() => setShowContributionForm(!showContributionForm)}>{showContributionForm ? "フォームを閉じる" : "積立額を変更する"}</button>
-              {showContributionForm && (
-                <div className="crud-form compact-form">
-                  <label>変更開始月<input type="month" value={contributionDraft.month} onChange={(e) => setContributionDraft({ ...contributionDraft, month: e.target.value })} /></label>
-                  <label>毎月積立額<input type="number" value={contributionDraft.monthlyContribution} onChange={(e) => setContributionDraft({ ...contributionDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
-                  <button className="google-button" type="button" onClick={() => setContributionDraft({ ...contributionDraft, monthlyContribution: 0 })}>積立停止（0円）</button>
-                  <button className="full-primary" type="button" onClick={saveContributionChange}>積立額を保存</button>
-                </div>
-              )}
-              <div className="investment-change-list">
-                <div><span>開始時</span><strong>{yen.format(selected.monthlyContribution)}</strong></div>
-                {selectedContributionChanges.map((change) => (
-                  <div key={change.id}>
-                    <span>{formatMonthLabel(change.month)}から</span>
-                    <strong>{yen.format(change.monthlyContribution)}</strong>
-                    <button className="mini-button" type="button" onClick={() => { setShowContributionForm(true); setContributionDraft({ month: change.month, monthlyContribution: change.monthlyContribution }); }}>編集</button>
-                    <button className="danger-button" type="button" onClick={async () => { try { await deleteInvestmentContributionChange(change.id); await reload(); setNotice("積立額の変更を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "削除に失敗しました。")); } }}>削除</button>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-        </section>
+        </div>
       )}
-    </>
+
+      {/* 積立額変更パネル */}
+      {panel === "contribution" && (
+        <div className="inv-manage-body">
+          <p className="setting-copy">指定した月から新しい積立額を適用します。</p>
+          <div className="crud-form compact-form">
+            <label>変更開始月<input type="month" value={contributionDraft.month} onChange={(e) => setContributionDraft({ ...contributionDraft, month: e.target.value })} /></label>
+            <label>毎月積立額<input type="number" value={numberInputValue(contributionDraft.monthlyContribution)} onChange={(e) => setContributionDraft({ ...contributionDraft, monthlyContribution: Number(e.target.value || 0) })} /></label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="google-button" type="button" style={{ flex: 1 }} onClick={() => setContributionDraft({ ...contributionDraft, monthlyContribution: 0 })}>積立停止（0円）</button>
+              <button className="full-primary" type="button" style={{ flex: 1 }} onClick={saveContribution}>積立額を保存</button>
+            </div>
+          </div>
+          <div className="investment-change-list">
+            <div><span>開始時の積立額</span><strong>{yen.format(account.monthlyContribution)}/月</strong></div>
+            {contributionChanges.map((change) => (
+              <div key={change.id}>
+                <span>{formatMonthLabel(change.month)}から</span>
+                <strong>{yen.format(change.monthlyContribution)}/月</strong>
+                <button className="mini-button" type="button" onClick={() => setContributionDraft({ month: change.month, monthlyContribution: change.monthlyContribution })}>この内容で編集</button>
+                <button className="danger-button" type="button" onClick={async () => {
+                  try { await deleteInvestmentContributionChange(change.id); await reload(); setNotice("積立額の変更を削除しました。"); }
+                  catch (error) { setNotice(toJapaneseError(error, "削除に失敗しました。")); }
+                }}>削除</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
