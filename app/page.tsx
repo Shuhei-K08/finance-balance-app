@@ -3516,10 +3516,12 @@ function SettingsView({
           <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
         ))}
       </div>
-      <section className="settings-guide">
-        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : settingsTab === "display" ? "カレンダーの表示設定" : "毎月発生する支払い・収入"}</strong>
-        <span>上のメニューから編集したい項目を選んでください。</span>
-      </section>
+      {settingsTab !== "display" && (
+        <section className="settings-guide">
+          <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : "毎月発生する支払い・収入"}</strong>
+          <span>上のメニューから編集したい項目を選んでください。</span>
+        </section>
+      )}
       {settingsTab === "ledger" && (
       <>
       <section className="panel">
@@ -3955,29 +3957,15 @@ function SettingsView({
       {settingsTab === "display" && (
         <section className="panel">
           <div className="section-title"><h2>カレンダー設定</h2></div>
-          <div className="settings-row">
-            <span className="settings-label">週の始まり</span>
-            <div className="settings-toggle-group">
-              <button
-                type="button"
-                className={weekStart === 0 ? "mini-button-active" : "mini-button"}
-                onClick={() => setWeekStart(0)}
-              >
-                日曜始まり
-              </button>
-              <button
-                type="button"
-                className={weekStart === 1 ? "mini-button-active" : "mini-button"}
-                onClick={() => setWeekStart(1)}
-              >
-                月曜始まり
-              </button>
+          <div className="display-setting-row">
+            <div className="display-setting-label">
+              <span>週の始まり</span>
+              <small><span className="day-sat-preview">■ 土曜</span> <span className="day-hol-preview">■ 日曜・祝日</span> で色分け</small>
             </div>
-          </div>
-          <div className="settings-hint">
-            <span className="day-sat-preview">■ 土曜</span>
-            <span className="day-hol-preview">■ 日曜・祝日</span>
-            <span style={{ color: "var(--muted)", fontSize: "12px" }}>で色分けされます</span>
+            <div className="segment-control">
+              <button type="button" className={weekStart === 0 ? "active" : ""} onClick={() => setWeekStart(0)}>日曜始まり</button>
+              <button type="button" className={weekStart === 1 ? "active" : ""} onClick={() => setWeekStart(1)}>月曜始まり</button>
+            </div>
           </div>
         </section>
       )}

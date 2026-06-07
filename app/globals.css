@@ -1726,30 +1726,54 @@ a { color: inherit; text-decoration: none; }
 .calendar-grid button.today strong { color: var(--brand-2); }
 
 /* 設定画面 表示設定 */
-.settings-row {
+.display-setting-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 0;
-  gap: 12px;
+  gap: 16px;
+  padding: 4px 0 8px;
 }
-.settings-label {
+.display-setting-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.display-setting-label span {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--ink);
 }
-.settings-toggle-group {
-  display: flex;
-  gap: 6px;
-}
-.settings-hint {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0 4px;
-  font-size: 12px;
+.display-setting-label small {
+  font-size: 11px;
   font-weight: 600;
 }
+
+/* セグメントコントロール */
+.segment-control {
+  display: flex;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.segment-control button {
+  padding: 5px 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  transition: all 0.15s var(--easing);
+  white-space: nowrap;
+}
+.segment-control button.active {
+  background: var(--grad);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(124, 92, 255, 0.3);
+}
+.segment-control button:not(.active):hover { color: var(--ink); }
+
 .day-sat-preview { color: #2563eb; }
 .day-hol-preview { color: #dc2626; }
 
@@ -2005,21 +2029,22 @@ a { color: inherit; text-decoration: none; }
 .settings-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 6px;
+  gap: 4px;
+  padding: 5px;
   background: var(--panel);
   border-radius: 14px;
   border: 1px solid var(--line);
 }
 
 .settings-tabs button {
-  flex: 1 1 auto;
-  padding: 10px 14px;
-  border-radius: 10px;
+  flex: 0 0 auto;
+  padding: 7px 13px;
+  border-radius: 9px;
   color: var(--muted);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12px;
   transition: all 0.18s var(--easing);
+  white-space: nowrap;
 }
 
 .settings-tabs button:hover { color: var(--ink); }
