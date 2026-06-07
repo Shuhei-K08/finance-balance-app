@@ -2029,8 +2029,8 @@ a { color: inherit; text-decoration: none; }
 .settings-tabs {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  align-content: flex-start;
+  align-items: center;
+  align-self: start;
   gap: 4px;
   padding: 5px;
   background: var(--panel);
