@@ -1,0 +1,18 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#064E3B"/>
+      <stop offset="1" stop-color="#0F766E"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#bg)"/>
+  <circle cx="52" cy="12" r="10" fill="#14B8A6" fill-opacity="0.3"/>
+  <circle cx="10" cy="54" r="10" fill="#EA580C" fill-opacity="0.25"/>
+  <!-- チャートの上昇折れ線 -->
+  <polyline points="12,46 24,30 34,38 52,18" stroke="white" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- 右上の矢印（横・縦バー） -->
+  <line x1="52" y1="18" x2="42" y2="18" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="52" y1="18" x2="52" y2="28" stroke="white" stroke-width="4.5" stroke-linecap="round"/>
+  <!-- オレンジのアクセントドット -->
+  <circle cx="12" cy="46" r="3.5" fill="#F97316"/>
+</svg>

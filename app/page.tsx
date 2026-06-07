@@ -3660,14 +3660,14 @@ function SettingsView({
                 return;
               }
               await createAccount(state.householdId ?? "", { ...newAccount, openingBalance: newAccount.type === "credit" ? 0 : newAccount.openingBalance });
-              await reloadHousehold(state.householdId ?? "");
+              await reload();
               setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
               setShowAccountForm(false);
               setNotice("口座を追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "口座追加に失敗しました。")); }
           }}>口座を追加</button>
         </div>}
-        <EditableAccountList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+        <EditableAccountList state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
       </section>
       <section className="panel">
         <div className="section-title"><h2>初期残高</h2><span>口座残高の基準</span></div>
@@ -3695,7 +3695,7 @@ function SettingsView({
             onClick={async () => {
               try {
                 await updateOpeningBalances(openingBalances);
-                await reloadHousehold(state.householdId ?? "");
+                await reload();
                 setNotice("初期残高を更新しました。");
               } catch (error) {
                 setNotice(toJapaneseError(error, "初期残高の更新に失敗しました。"));
@@ -3709,7 +3709,7 @@ function SettingsView({
       </>
       )}
       {settingsTab === "snapshots" && (
-        <AssetSnapshotSettings state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+        <AssetSnapshotSettings state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
       )}
       {settingsTab === "categories" && (
       <section className="panel">
@@ -3756,7 +3756,7 @@ function SettingsView({
                 kind: categoryDraft.kind,
                 parentId: categoryDraft.level === "sub" ? categoryDraft.parentId : undefined
               });
-              await reloadHousehold(state.householdId ?? "");
+              await reload();
               const resetParent = state.categories.find((category) => !category.parentId && category.kind === categoryDraft.kind)?.id ?? "";
               setCategoryDraft({ ...categoryDraft, name: "", parentId: resetParent });
               setShowCategoryForm(false);
@@ -3777,7 +3777,7 @@ function SettingsView({
             </div>
           ))}
         </div>
-        {modalCategory && <CategoryModal category={modalCategory} state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} onClose={() => setCategoryModalId(null)} />}
+        {modalCategory && <CategoryModal category={modalCategory} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onClose={() => setCategoryModalId(null)} />}
       </section>
       )}
       {settingsTab === "fixed" && (
@@ -3813,14 +3813,14 @@ function SettingsView({
                 return;
               }
               await createFixedCost(state.householdId ?? "", newFixed);
-              await reloadHousehold(state.householdId ?? "");
+              await reload();
               setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
               setShowFixedForm(false);
               setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
           }}>追加する</button>
         </div>}
-        <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={reloadHousehold} />
+        <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
       </section>
       </>
       )}
