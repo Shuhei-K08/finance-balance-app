@@ -3405,7 +3405,7 @@ function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { 
 }
 
 function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId: string; currentColor?: string; onSave: (color: string | null) => void }) {
-  const [custom, setCustom] = useState(currentColor ?? "");
+  const [pending, setPending] = useState(currentColor ?? "#7c5cff");
   return (
     <div className="ledger-color-picker">
       <div className="lcp-label">テーマカラー<span>このデバイスで保存されます</span></div>
@@ -3415,18 +3415,18 @@ function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId:
             key={preset.value}
             type="button"
             title={preset.label}
-            className={`lcp-swatch${(currentColor ?? "#7c5cff") === preset.value ? " active" : ""}`}
+            className={`lcp-swatch${pending === preset.value ? " active" : ""}`}
             style={{ background: preset.value }}
-            onClick={() => { setCustom(preset.value); onSave(preset.value); }}
+            onClick={() => setPending(preset.value)}
           />
         ))}
       </div>
       <div className="lcp-custom">
         <label>カスタム
-          <input type="color" value={custom || "#7c5cff"} onChange={(e) => setCustom(e.target.value)} />
+          <input type="color" value={pending} onChange={(e) => setPending(e.target.value)} />
         </label>
-        <button type="button" className="mini-button" onClick={() => onSave(custom || null)}>適用</button>
-        {currentColor && <button type="button" className="mini-button" onClick={() => { setCustom(""); onSave(null); }}>リセット</button>}
+        <button type="button" className="mini-button" onClick={() => onSave(pending)}>適用</button>
+        {currentColor && <button type="button" className="mini-button" onClick={() => { setPending("#7c5cff"); onSave(null); }}>リセット</button>}
       </div>
     </div>
   );
@@ -3554,7 +3554,16 @@ function SettingsView({
                 onSave={(color) => {
                   saveHouseholdThemeColor(modalLedger.id, color);
                   setNotice("テーマカラーを変更しました。");
-                  reloadHousehold(state.householdId ?? modalLedger.id).catch(() => undefined);
+                  // 現在表示中の家計簿なら CSS 変数を即時反映
+                  if (modalLedger.id === state.householdId) {
+                    if (color) {
+                      document.documentElement.style.setProperty("--ledger-color", color);
+                    } else {
+                      document.documentElement.style.removeProperty("--ledger-color");
+                    }
+                  }
+                  // state を同期（reloadHousehold は同一IDをスキップするため reload を使う）
+                  reload().catch(() => undefined);
                 }}
               />
             <>
