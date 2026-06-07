@@ -900,6 +900,7 @@ a { color: inherit; text-decoration: none; }
 .view-stack {
   display: grid;
   gap: 18px;
+  align-content: start;
 }
 
 /* ============================================================
