@@ -2029,6 +2029,8 @@ a { color: inherit; text-decoration: none; }
 .settings-tabs {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
   gap: 4px;
   padding: 5px;
   background: var(--panel);
@@ -2045,6 +2047,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 12px;
   transition: all 0.18s var(--easing);
   white-space: nowrap;
+  line-height: 1.2;
 }
 
 .settings-tabs button:hover { color: var(--ink); }
