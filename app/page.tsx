@@ -1710,8 +1710,8 @@ function HomeCalendar({
   const month = Number(monthKey.slice(5, 7));
   const days = new Date(year, month, 0).getDate();
   const rawFirstDay = new Date(year, month - 1, 1).getDay(); // 0=Sun
-  // weekStart=0: Sun始まり, weekStart=6: Sat始まり
-  const blankCount = weekStart === 6 ? (rawFirstDay + 1) % 7 : rawFirstDay;
+  // weekStart=0: Sun始まり, weekStart=1: Mon始まり
+  const blankCount = weekStart === 1 ? (rawFirstDay - 1 + 7) % 7 : rawFirstDay;
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
   const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
   const monthIncome = monthlyIncome(monthRows) + fixedRows.filter((row) => row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
@@ -1727,8 +1727,8 @@ function HomeCalendar({
 
   const today = todayIso();
   // 曜日ヘッダー（週始まりに応じて並び替え）
-  const dayHeaders = weekStart === 6
-    ? ["土", "日", "月", "火", "水", "木", "金"]
+  const dayHeaders = weekStart === 1
+    ? ["月", "火", "水", "木", "金", "土", "日"]
     : ["日", "月", "火", "水", "木", "金", "土"];
   // ヘッダーの色クラス（土=青, 日=赤）
   const headerColorClass = (label: string) => label === "土" ? "col-sat" : label === "日" ? "col-sun" : "";
@@ -3967,10 +3967,10 @@ function SettingsView({
               </button>
               <button
                 type="button"
-                className={weekStart === 6 ? "mini-button-active" : "mini-button"}
-                onClick={() => setWeekStart(6)}
+                className={weekStart === 1 ? "mini-button-active" : "mini-button"}
+                onClick={() => setWeekStart(1)}
               >
-                土曜始まり
+                月曜始まり
               </button>
             </div>
           </div>
