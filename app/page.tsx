@@ -2067,7 +2067,11 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
       if (periodMode === "month" && !transactionLedgerDate(tx).startsWith(monthKey)) return false;
       if (filterType !== "all" && tx.type !== filterType) return false;
       if (filterAccount !== "all" && tx.accountId !== filterAccount && tx.transferToAccountId !== filterAccount) return false;
-      if (filterCategory !== "all" && tx.categoryId !== filterCategory) return false;
+      if (filterCategory !== "all") {
+        const txCat = state.categories.find((c) => c.id === tx.categoryId);
+        const txParentId = txCat?.parentId ?? tx.categoryId;
+        if (tx.categoryId !== filterCategory && txParentId !== filterCategory) return false;
+      }
       if (q) {
         const memo = (tx.memo ?? "").toLowerCase();
         const cat = (state.categories.find((c) => c.id === tx.categoryId)?.name ?? "").toLowerCase();
@@ -2108,7 +2112,11 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
     return months.flatMap((mk) => fixedCostOccurrencesForMonth(state.fixedCosts, mk, state)).filter((fc) => {
       if (filterType !== "all" && fc.kind !== filterType) return false;
       if (filterAccount !== "all" && fc.accountId !== filterAccount && fc.transferToAccountId !== filterAccount) return false;
-      if (filterCategory !== "all" && fc.categoryId !== filterCategory) return false;
+      if (filterCategory !== "all") {
+        const fcCat = state.categories.find((c) => c.id === fc.categoryId);
+        const fcParentId = fcCat?.parentId ?? fc.categoryId;
+        if (fc.categoryId !== filterCategory && fcParentId !== filterCategory) return false;
+      }
       if (q) {
         const name = fc.name.toLowerCase();
         const cat = (state.categories.find((c) => c.id === fc.categoryId)?.name ?? "").toLowerCase();
