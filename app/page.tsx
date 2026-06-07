@@ -186,6 +186,105 @@ function useTheme() {
   return { theme, setTheme: toggle };
 }
 
+// ============================================================
+// 日本の祝日
+// ============================================================
+function isoDateStr(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+const HOLIDAY_CACHE = new Map<number, Set<string>>();
+
+function getJapaneseHolidays(year: number): Set<string> {
+  if (HOLIDAY_CACHE.has(year)) return HOLIDAY_CACHE.get(year)!;
+  const h = new Set<string>();
+
+  const addFixed = (m: number, d: number) => h.add(isoDateStr(year, m, d));
+
+  const nthWeekday = (m: number, weekday: number, n: number): string => {
+    let count = 0;
+    for (let d = 1; d <= 31; d++) {
+      const dt = new Date(year, m - 1, d);
+      if (dt.getMonth() !== m - 1) break;
+      if (dt.getDay() === weekday && ++count === n) return isoDateStr(year, m, d);
+    }
+    return "";
+  };
+
+  // 固定祝日
+  addFixed(1, 1);   // 元日
+  addFixed(2, 11);  // 建国記念の日
+  addFixed(2, 23);  // 天皇誕生日
+  addFixed(4, 29);  // 昭和の日
+  addFixed(5, 3);   // 憲法記念日
+  addFixed(5, 4);   // みどりの日
+  addFixed(5, 5);   // こどもの日
+  addFixed(8, 11);  // 山の日
+  addFixed(11, 3);  // 文化の日
+  addFixed(11, 23); // 勤労感謝の日
+
+  // ハッピーマンデー
+  const seijin = nthWeekday(1, 1, 2); if (seijin) h.add(seijin);   // 成人の日
+  const umi = nthWeekday(7, 1, 3); if (umi) h.add(umi);             // 海の日
+  const keiro = nthWeekday(9, 1, 3); if (keiro) h.add(keiro);       // 敬老の日
+  const sports = nthWeekday(10, 1, 2); if (sports) h.add(sports);   // スポーツの日
+
+  // 春分の日・秋分の日（内閣府公表の計算式、1980年以降有効）
+  const vernalDay = Math.floor(20.8431 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+  const autumnalDay = Math.floor(23.2488 + 0.242194 * (year - 1980) - Math.floor((year - 1980) / 4));
+  addFixed(3, vernalDay);
+  addFixed(9, autumnalDay);
+
+  // 国民の休日（祝日に挟まれた平日）
+  for (let m = 1; m <= 12; m++) {
+    const daysInMonth = new Date(year, m, 0).getDate();
+    for (let d = 2; d < daysInMonth; d++) {
+      const date = isoDateStr(year, m, d);
+      if (h.has(date)) continue;
+      const dow = new Date(year, m - 1, d).getDay();
+      if (dow === 0 || dow === 6) continue;
+      if (h.has(isoDateStr(year, m, d - 1)) && h.has(isoDateStr(year, m, d + 1))) h.add(date);
+    }
+  }
+
+  // 振替休日（日曜日に当たった祝日の振替）
+  const snapshot = Array.from(h);
+  for (const hd of snapshot) {
+    const [y, m, d] = hd.split("-").map(Number);
+    if (new Date(y, m - 1, d).getDay() !== 0) continue;
+    let next = new Date(y, m - 1, d + 1);
+    while (true) {
+      const iso = isoDateStr(next.getFullYear(), next.getMonth() + 1, next.getDate());
+      if (next.getDay() !== 0 && !h.has(iso)) { h.add(iso); break; }
+      next = new Date(next.getTime() + 86400000);
+    }
+  }
+
+  HOLIDAY_CACHE.set(year, h);
+  return h;
+}
+
+function isJapaneseHoliday(dateIso: string): boolean {
+  const year = Number(dateIso.slice(0, 4));
+  return getJapaneseHolidays(year).has(dateIso);
+}
+
+// ============================================================
+// カレンダー週始まり設定
+// ============================================================
+function useWeekStart(): [number, (v: number) => void] {
+  const [weekStart, setWeekStartState] = useState<number>(0);
+  useEffect(() => {
+    const stored = window.localStorage.getItem("calendar-week-start");
+    if (stored !== null) setWeekStartState(Number(stored));
+  }, []);
+  const setWeekStart = (v: number) => {
+    setWeekStartState(v);
+    window.localStorage.setItem("calendar-week-start", String(v));
+  };
+  return [weekStart, setWeekStart];
+}
+
 export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
   const [tab, setTab] = useState<Tab>("home");
@@ -1605,9 +1704,14 @@ function HomeCalendar({
   hideMonthNav?: boolean;
 }) {
   const [modalDate, setModalDate] = useState<string | null>(null);
+  const [weekStart, setWeekStart] = useWeekStart();
   const monthKey = selectedMonth;
-  const days = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
-  const firstDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1).getDay();
+  const year = Number(monthKey.slice(0, 4));
+  const month = Number(monthKey.slice(5, 7));
+  const days = new Date(year, month, 0).getDate();
+  const rawFirstDay = new Date(year, month - 1, 1).getDay(); // 0=Sun
+  // weekStart=0: Sun始まり, weekStart=6: Sat始まり
+  const blankCount = weekStart === 6 ? (rawFirstDay + 1) % 7 : rawFirstDay;
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
   const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
   const monthIncome = monthlyIncome(monthRows) + fixedRows.filter((row) => row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
@@ -1615,13 +1719,20 @@ function HomeCalendar({
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
 
   function moveMonth(delta: number) {
-    const next = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + delta, 1);
+    const next = new Date(year, month - 1 + delta, 1);
     const nextKey = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
     setSelectedMonth(nextKey);
     setSelectedDate(`${nextKey}-01`);
   }
 
   const today = todayIso();
+  // 曜日ヘッダー（週始まりに応じて並び替え）
+  const dayHeaders = weekStart === 6
+    ? ["土", "日", "月", "火", "水", "木", "金"]
+    : ["日", "月", "火", "水", "木", "金", "土"];
+  // ヘッダーの色クラス（土=青, 日=赤）
+  const headerColorClass = (label: string) => label === "土" ? "col-sat" : label === "日" ? "col-sun" : "";
+
   return (
     <div className="view-stack">
       <section className="panel calendar-card">
@@ -1636,11 +1747,14 @@ function HomeCalendar({
           <span>収支<strong>{yen.format(monthIncome - monthExpense)}</strong></span>
         </div>
         <div className="calendar-grid">
-          {["日", "月", "火", "水", "木", "金", "土"].map((day) => <b key={day}>{day}</b>)}
-          {Array.from({ length: firstDay }).map((_, index) => <i key={`blank-${index}`} />)}
+          {dayHeaders.map((day) => <b key={day} className={headerColorClass(day)}>{day}</b>)}
+          {Array.from({ length: blankCount }).map((_, index) => <i key={`blank-${index}`} />)}
           {Array.from({ length: days }).map((_, index) => {
             const day = String(index + 1).padStart(2, "0");
             const date = `${monthKey}-${day}`;
+            const dow = new Date(year, month - 1, index + 1).getDay(); // 0=Sun, 6=Sat
+            const isHoliday = isJapaneseHoliday(date);
+            const dayColorClass = dow === 6 ? "day-sat" : (dow === 0 || isHoliday) ? "day-hol" : "";
             const income = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "income").reduce((sum, tx) => sum + tx.amount, 0);
             const expense = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "expense").reduce((sum, tx) => sum + tx.amount, 0);
             const transfer = monthRows.filter((transaction) => transactionLedgerDate(transaction) === date && transaction.type === "transfer").reduce((sum, tx) => sum + tx.amount, 0);
@@ -1648,7 +1762,7 @@ function HomeCalendar({
             const fixed = fixedRows.filter((row) => row.date === date && row.kind === "expense").reduce((sum, row) => sum + row.amount, 0);
             const fixedTransfer = fixedRows.filter((row) => row.date === date && row.kind === "transfer").reduce((sum, row) => sum + row.amount, 0);
             const classes = [date === selectedDate ? "selected-day" : "", date === today ? "today" : ""].filter(Boolean).join(" ");
-            return <button className={classes} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yenShort(income + fixedIncome)}</span>}{expense > 0 && <span>-{yenShort(expense)}</span>}{fixed > 0 && <span className="fixed-mini">{yenShort(fixed)}</span>}{transfer + fixedTransfer > 0 && <span className="transfer-mini">{yenShort(transfer + fixedTransfer)}</span>}</button>;
+            return <button className={classes} key={date} type="button" onClick={() => { setSelectedDate(date); setModalDate(date); }}><strong className={dayColorClass}>{index + 1}</strong>{income + fixedIncome > 0 && <span className="income-mini">+{yenShort(income + fixedIncome)}</span>}{expense > 0 && <span>-{yenShort(expense)}</span>}{fixed > 0 && <span className="fixed-mini">{yenShort(fixed)}</span>}{transfer + fixedTransfer > 0 && <span className="transfer-mini">{yenShort(transfer + fixedTransfer)}</span>}</button>;
           })}
         </div>
       </section>
@@ -3341,7 +3455,8 @@ function SettingsView({
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
-  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "investment">("ledger");
+  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "investment" | "display">("ledger");
+  const [weekStart, setWeekStart] = useWeekStart();
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
   const firstExpenseCategoryId = state.categories.find((category) => category.kind === "expense" && !category.parentId)?.id ?? state.categories.find((category) => category.kind === "expense")?.id ?? "";
@@ -3396,12 +3511,13 @@ function SettingsView({
           ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
           ["fixed", "定期項目"],
+          ["display", "表示設定"],
         ].map(([id, label]) => (
           <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
         ))}
       </div>
       <section className="settings-guide">
-        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : "毎月発生する支払い・収入"}</strong>
+        <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : settingsTab === "display" ? "カレンダーの表示設定" : "毎月発生する支払い・収入"}</strong>
         <span>上のメニューから編集したい項目を選んでください。</span>
       </section>
       {settingsTab === "ledger" && (
@@ -3826,6 +3942,35 @@ function SettingsView({
       )}
       {settingsTab === "investment" && (
         <InvestmentSettings state={state} setNotice={setNotice} reload={reload} />
+      )}
+      {settingsTab === "display" && (
+        <section className="panel">
+          <div className="section-title"><h2>カレンダー設定</h2></div>
+          <div className="settings-row">
+            <span className="settings-label">週の始まり</span>
+            <div className="settings-toggle-group">
+              <button
+                type="button"
+                className={weekStart === 0 ? "mini-button-active" : "mini-button"}
+                onClick={() => setWeekStart(0)}
+              >
+                日曜始まり
+              </button>
+              <button
+                type="button"
+                className={weekStart === 6 ? "mini-button-active" : "mini-button"}
+                onClick={() => setWeekStart(6)}
+              >
+                土曜始まり
+              </button>
+            </div>
+          </div>
+          <div className="settings-hint">
+            <span className="day-sat-preview">■ 土曜</span>
+            <span className="day-hol-preview">■ 日曜・祝日</span>
+            <span style={{ color: "var(--muted)", fontSize: "12px" }}>で色分けされます</span>
+          </div>
+        </section>
       )}
     </div>
   );
