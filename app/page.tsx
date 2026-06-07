@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Area,
   AreaChart,
@@ -5011,7 +5012,7 @@ function TransactionEditSheet({
 }) {
   const [saving, setSaving] = useState(false);
   const typeLabel = draft.type === "income" ? "収入" : draft.type === "transfer" ? "振替" : "支出";
-  return (
+  return createPortal(
     <div className="sheet-backdrop" onClick={onClose}>
       <form
         className="bottom-sheet"
@@ -5135,7 +5136,8 @@ function TransactionEditSheet({
         <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
         <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
       </form>
-    </div>
+    </div>,
+    document.body
   );
 }
 
