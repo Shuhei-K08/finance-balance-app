@@ -2337,8 +2337,8 @@ function AnalysisView({
   // 支出インサイト：今月 vs 直近3ヶ月平均
   const spendingInsights = useMemo(() => {
     const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
-    const prev3Months = Array.from({ length: 3 }).map((_, i) => {
-      const d = new Date(now.getFullYear(), now.getMonth() - 3 + i, 1);
+    const prev6Months = Array.from({ length: 6 }).map((_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - 6 + i, 1);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     });
     return expenseCategories.map((cat) => {
@@ -2347,7 +2347,7 @@ function AnalysisView({
       const thisMonthFixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
       const current = thisMonthTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
         + thisMonthFixed.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
-      const prevAmounts = prev3Months.map((m) => {
+      const prevAmounts = prev6Months.map((m) => {
         const mTx = monthTransactionsByKey(state.transactions, m);
         const mFixed = fixedCostOccurrencesForMonth(state.fixedCosts, m, state);
         return mTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
@@ -2376,7 +2376,7 @@ function AnalysisView({
         <section className="panel">
           <div className="panel-title">
             <h2>今月の支出インサイト</h2>
-            <span className="panel-meta">3ヶ月平均比</span>
+            <span className="panel-meta">半年平均比</span>
           </div>
           <div className="spending-insights">
             {spendingInsights.map(({ cat, current, avg, ratio }) => {
@@ -2660,8 +2660,8 @@ function AnalysisView({
       {/* カテゴリ別サブカテゴリインサイトモーダル */}
       {drillParentId && drillParent && (() => {
         const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
-        const prev3Months = Array.from({ length: 3 }).map((_, i) => {
-          const d = new Date(now.getFullYear(), now.getMonth() - 3 + i, 1);
+        const prev6Months = Array.from({ length: 6 }).map((_, i) => {
+          const d = new Date(now.getFullYear(), now.getMonth() - 6 + i, 1);
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
         });
         const children = state.categories.filter((c) => c.parentId === drillParentId);
@@ -2670,7 +2670,7 @@ function AnalysisView({
           const thisMonthFixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
           const current = thisMonthTx.filter((t) => t.type === "expense" && t.categoryId === child.id).reduce((s, t) => s + t.amount, 0)
             + thisMonthFixed.filter((c) => c.kind === "expense" && c.categoryId === child.id).reduce((s, c) => s + c.amount, 0);
-          const prevAmounts = prev3Months.map((m) => {
+          const prevAmounts = prev6Months.map((m) => {
             const mTx = monthTransactionsByKey(state.transactions, m);
             const mFixed = fixedCostOccurrencesForMonth(state.fixedCosts, m, state);
             return mTx.filter((t) => t.type === "expense" && t.categoryId === child.id).reduce((s, t) => s + t.amount, 0)
