@@ -2353,7 +2353,8 @@ function AnalysisView({
         return mTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
           + mFixed.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
       });
-      const avg = prevAmounts.reduce((s, v) => s + v, 0) / 3;
+      const nonZero = prevAmounts.filter((v) => v > 0);
+      const avg = nonZero.length > 0 ? nonZero.reduce((s, v) => s + v, 0) / nonZero.length : 0;
       return { cat, current, avg, ratio: avg > 0 ? current / avg : null };
     }).filter((item) => item.current > 0 || item.avg > 0).sort((a, b) => b.current - a.current);
   }, [state, monthKey, expenseCategories]);
@@ -2675,7 +2676,8 @@ function AnalysisView({
             return mTx.filter((t) => t.type === "expense" && t.categoryId === child.id).reduce((s, t) => s + t.amount, 0)
               + mFixed.filter((c) => c.kind === "expense" && c.categoryId === child.id).reduce((s, c) => s + c.amount, 0);
           });
-          const avg = prevAmounts.reduce((s, v) => s + v, 0) / 3;
+          const nonZeroSub = prevAmounts.filter((v) => v > 0);
+          const avg = nonZeroSub.length > 0 ? nonZeroSub.reduce((s, v) => s + v, 0) / nonZeroSub.length : 0;
           const ratio = avg > 0 ? current / avg : null;
           return { child, current, avg, ratio };
         }).filter((item) => item.current > 0 || item.avg > 0).sort((a, b) => b.current - a.current);
