@@ -2383,8 +2383,16 @@ function AnalysisView({
               const isUnder = ratio !== null && ratio < 0.85 && avg > 0;
               const barPct = avg > 0 ? Math.min((current / avg) * 100, 200) : 100;
               const avgBarPct = 100;
+              const hasChildren = state.categories.some((c) => c.parentId === cat.id);
               return (
-                <div key={cat.id} className="spending-insight-row">
+                <div
+                  key={cat.id}
+                  className="spending-insight-row"
+                  style={hasChildren ? { cursor: "pointer" } : undefined}
+                  onClick={hasChildren ? () => setDrillParentId(cat.id) : undefined}
+                  role={hasChildren ? "button" : undefined}
+                  tabIndex={hasChildren ? 0 : undefined}
+                >
                   <div className="si-header">
                     <div className="si-dot" style={{ background: cat.color }} />
                     <span className="si-name">{cat.name}</span>
@@ -2394,6 +2402,7 @@ function AnalysisView({
                       </span>
                     )}
                     <span className="si-amount">{yen.format(current)}</span>
+                    {hasChildren && <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>›</span>}
                   </div>
                   <div className="si-bar-wrap">
                     <div className="si-bar-track">
@@ -2642,6 +2651,75 @@ function AnalysisView({
                 {txs.length === 0 && fixedOcc.length === 0 && <div className="empty-state">この月の取引はありません。</div>}
               </div>
               <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setCategoryDrill(null)}>閉じる</button>
+            </section>
+          </div>
+        );
+      })()}
+
+      {/* カテゴリ別サブカテゴリインサイトモーダル */}
+      {drillParentId && drillParent && (() => {
+        const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
+        const prev3Months = Array.from({ length: 3 }).map((_, i) => {
+          const d = new Date(now.getFullYear(), now.getMonth() - 3 + i, 1);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        });
+        const children = state.categories.filter((c) => c.parentId === drillParentId);
+        const subInsights = children.map((child) => {
+          const thisMonthTx = monthTransactionsByKey(state.transactions, monthKey);
+          const thisMonthFixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+          const current = thisMonthTx.filter((t) => t.type === "expense" && t.categoryId === child.id).reduce((s, t) => s + t.amount, 0)
+            + thisMonthFixed.filter((c) => c.kind === "expense" && c.categoryId === child.id).reduce((s, c) => s + c.amount, 0);
+          const prevAmounts = prev3Months.map((m) => {
+            const mTx = monthTransactionsByKey(state.transactions, m);
+            const mFixed = fixedCostOccurrencesForMonth(state.fixedCosts, m, state);
+            return mTx.filter((t) => t.type === "expense" && t.categoryId === child.id).reduce((s, t) => s + t.amount, 0)
+              + mFixed.filter((c) => c.kind === "expense" && c.categoryId === child.id).reduce((s, c) => s + c.amount, 0);
+          });
+          const avg = prevAmounts.reduce((s, v) => s + v, 0) / 3;
+          const ratio = avg > 0 ? current / avg : null;
+          return { child, current, avg, ratio };
+        }).filter((item) => item.current > 0 || item.avg > 0).sort((a, b) => b.current - a.current);
+        const total = subInsights.reduce((s, item) => s + item.current, 0);
+        return (
+          <div className="sheet-backdrop center-backdrop" onClick={() => setDrillParentId(null)}>
+            <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
+              <div className="section-title">
+                <h2><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: drillParent.color, marginRight: 6 }} />{drillParent.name}</h2>
+                <span>{monthLabel} · {yen.format(total)}</span>
+              </div>
+              {subInsights.length === 0 ? (
+                <div className="empty-state">サブカテゴリの支出はありません。</div>
+              ) : (
+                <div className="spending-insights" style={{ maxHeight: 400, overflowY: "auto" }}>
+                  {subInsights.map(({ child, current, avg, ratio }) => {
+                    const isOver = ratio !== null && ratio > 1.15;
+                    const isUnder = ratio !== null && ratio < 0.85 && avg > 0;
+                    const barPct = avg > 0 ? Math.min((current / avg) * 100, 200) : 100;
+                    return (
+                      <div key={child.id} className="spending-insight-row">
+                        <div className="si-header">
+                          <div className="si-dot" style={{ background: child.color }} />
+                          <span className="si-name">{child.name}</span>
+                          {ratio !== null && (
+                            <span className={`si-badge ${isOver ? "over" : isUnder ? "under" : "normal"}`}>
+                              {isOver ? `+${Math.round((ratio - 1) * 100)}%` : isUnder ? `-${Math.round((1 - ratio) * 100)}%` : "平均的"}
+                            </span>
+                          )}
+                          <span className="si-amount">{yen.format(current)}</span>
+                        </div>
+                        <div className="si-bar-wrap">
+                          <div className="si-bar-track">
+                            <div className="si-bar-fill" style={{ width: `${Math.min(barPct, 100)}%`, background: isOver ? "var(--expense)" : isUnder ? "var(--income)" : child.color }} />
+                            {barPct > 100 && <div className="si-bar-over" style={{ width: `${Math.min(barPct - 100, 100)}%` }} />}
+                          </div>
+                          {avg > 0 && <span className="si-avg-label">平均 {yen.format(Math.round(avg))}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setDrillParentId(null)}>閉じる</button>
             </section>
           </div>
         );
@@ -4955,7 +5033,7 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
           <div className={`tx-ico ${transaction.type}`}><Icon size={16} /></div>
           <div className="tx-body">
             <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
-            <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}{transaction.creditStatus ? ` ・ ${creditStatusLabel[transaction.creditStatus]}` : ""}</small>
+            <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}</small>
           </div>
           <em className={`tx-amount ${transaction.type}`}>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
         </button>
