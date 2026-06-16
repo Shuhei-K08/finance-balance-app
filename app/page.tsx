@@ -1103,7 +1103,7 @@ function HomeView({
 
       <section className="panel">
         <div className="panel-title">
-          <h2>最近の取引</h2>
+          <h2>最近登録した取引</h2>
           <button className="panel-action" type="button" onClick={() => onNavigate("transactions")}>すべて見る <ChevronRight size={14} /></button>
         </div>
         {recentTx.length === 0 ? (
