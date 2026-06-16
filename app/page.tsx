@@ -1510,7 +1510,7 @@ function QuickTransactionSheet({
         <div className="form-grid">
           <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); setCreditPostingMode("used"); }}>
             <option value="">選択してください</option>
-            {accountChoices.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            {sortAccountsByType(accountChoices).map((account) => <option key={account.id} value={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}
           </select></label>
           {type === "transfer" && (
             <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>
@@ -1912,7 +1912,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
           <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
           {row.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>}
-          <label>{row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}>{state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit").map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountItem.name}</option>)}</select></label>
+          <label>{row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}>{sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit")).map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountTypeIcon(accountItem.type)}{accountItem.name}</option>)}</select></label>
           {row.kind === "transfer" && <label>振替先<select value={draft.transferToAccountId} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId).map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountItem.name}</option>)}</select></label>}
           <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
           <button type="button" onClick={async () => {
@@ -3026,7 +3026,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     const cutoffMonth = new Date(new Date().getTime() - monthsAgo * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7);
     return row.month >= cutoffMonth;
   });
-  const monthlyRows = allRows.filter((row) => parseInt(row.month.slice(0, 4)) === monthlyYear);
+  const monthlyRows = [...allRows.filter((row) => parseInt(row.month.slice(0, 4)) === monthlyYear)].reverse();
   const rows = filteredRows;
   const yearlyRows = investmentYearRows(allRows);
   const totalInvestments = investmentAssets(state, monthKey);
@@ -4010,7 +4010,7 @@ function SettingsView({
           <label>名称<input placeholder={newFixed.kind === "income" ? "例: 給与 / 家賃収入" : newFixed.kind === "transfer" ? "例: 貯金口座へ移動" : "例: 家賃 / Netflix / 電気代"} value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
           <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
           {newFixed.kind !== "transfer" && <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={newFixed.kind} /></select></label>}
-          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? "振替元" : "支払元"}<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value, transferToAccountId: event.target.value === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId })}>{state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? "振替元" : "支払元"}<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value, transferToAccountId: event.target.value === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId })}>{sortAccountsByType(state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit")).map((account) => <option value={account.id} key={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}</select></label>
           {newFixed.kind === "transfer" && <label>振替先<select value={newFixed.transferToAccountId} onChange={(event) => setNewFixed({ ...newFixed, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => account.type !== "credit" && account.id !== newFixed.accountId).map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>}
           <label>{newFixed.kind === "income" ? "入金予定日" : newFixed.kind === "transfer" ? "振替予定日" : "支払予定日"}<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
           <label>開始月<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01` })} /></label>
@@ -4879,7 +4879,7 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
       <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       {draft.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>}
-      <label>{draft.kind === "income" ? "入金先" : draft.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
+      <label>{draft.kind === "income" ? "入金先" : draft.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{sortAccountsByType(state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit")).map((account) => <option value={account.id} key={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}</select></label>
       {draft.kind === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => account.type !== "credit" && account.id !== draft.accountId).map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>}
       <label>{draft.kind === "income" ? "入金日" : draft.kind === "transfer" ? "振替日" : "支払日"}<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
       <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
@@ -5160,8 +5160,8 @@ function TransactionEditSheet({
               });
             }}>
               <option value="">選択してください</option>
-              {(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => (
-                <option key={item.id} value={item.id}>{item.name}</option>
+              {sortAccountsByType(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => (
+                <option key={item.id} value={item.id}>{accountTypeIcon(item.type)}{item.name}</option>
               ))}
             </select>
           </label>
@@ -5238,4 +5238,15 @@ function shiftMonth(date: string, delta: number) {
   const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
   const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(base.getDate(), lastDay));
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+}
+
+function accountTypeIcon(type: string): string {
+  if (type === "credit") return "💳 ";
+  if (type === "bank" || type === "saving") return "🏦 ";
+  return "👛 ";
+}
+
+function sortAccountsByType<T extends { type: string }>(accounts: T[]): T[] {
+  const order: Record<string, number> = { credit: 0, bank: 1, saving: 2, cash: 3 };
+  return [...accounts].sort((a, b) => (order[a.type] ?? 9) - (order[b.type] ?? 9));
 }
