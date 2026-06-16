@@ -1524,8 +1524,8 @@ function QuickTransactionSheet({
           <div className="credit-posting-mode">
             <span>計上する日付</span>
             <div className="segmented compact">
-              <button className={creditPostingMode === "used" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("used")}>使用日</button>
               <button className={creditPostingMode === "withdrawal" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("withdrawal")}>引落日</button>
+              <button className={creditPostingMode === "used" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("used")}>使用日</button>
             </div>
             <small>{creditPostingMode === "withdrawal" ? `${nextWithdrawalDate(selectedAccount, date)} に収支へ反映します。` : "使用日に収支へ反映します。"}</small>
           </div>
@@ -5188,8 +5188,8 @@ function TransactionEditSheet({
           <div className="credit-posting-mode">
             <span>計上する日付</span>
             <div className="segmented compact">
-              <button type="button" className={!draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日</button>
               <button type="button" className={draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>引落日</button>
+              <button type="button" className={!draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日</button>
             </div>
             {draft.reflectedDate && (
               <>
