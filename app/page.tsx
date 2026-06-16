@@ -968,6 +968,7 @@ function HomeView({
   const [homeEntryModal, setHomeEntryModal] = useState<"expense" | "income" | "credit" | null>(null);
   const [accountHistoryId, setAccountHistoryId] = useState<string | null>(null);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
+  const [showRecentTxModal, setShowRecentTxModal] = useState(false);
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -1104,7 +1105,7 @@ function HomeView({
       <section className="panel">
         <div className="panel-title">
           <h2>最近登録した取引</h2>
-          <button className="panel-action" type="button" onClick={() => onNavigate("transactions")}>すべて見る <ChevronRight size={14} /></button>
+          <button className="panel-action" type="button" onClick={() => setShowRecentTxModal(true)}>すべて見る <ChevronRight size={14} /></button>
         </div>
         {recentTx.length === 0 ? (
           <div className="empty-state"><div className="empty-illustration"><Receipt size={20} /></div>右下の + ボタンから最初の取引を登録してみましょう。</div>
@@ -1138,6 +1139,72 @@ function HomeView({
           onSelect={(id) => { setShowAllAccounts(false); setAccountHistoryId(id); }}
         />
       )}
+      {showRecentTxModal && (
+        <RecentTransactionsModal
+          state={state}
+          setNotice={setNotice}
+          reload={reload}
+          onClose={() => setShowRecentTxModal(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function RecentTransactionsModal({ state, setNotice, reload, onClose }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 20;
+
+  const allByRegistration = [...state.transactions].sort((a, b) => (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date));
+
+  const filtered = query.trim() === "" ? allByRegistration : allByRegistration.filter((t) => {
+    const q = query.trim().toLowerCase();
+    const category = state.categories.find((c) => c.id === t.categoryId);
+    const account = state.accounts.find((a) => a.id === t.accountId);
+    return (
+      t.memo?.toLowerCase().includes(q) ||
+      category?.name.toLowerCase().includes(q) ||
+      account?.name.toLowerCase().includes(q) ||
+      String(t.amount).includes(q) ||
+      t.date.includes(q)
+    );
+  });
+
+  const displayed = filtered.slice(0, page * PAGE_SIZE);
+  const hasMore = displayed.length < filtered.length;
+
+  return (
+    <div className="sheet-backdrop center-backdrop" onClick={onClose}>
+      <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 540px)", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+        <div className="section-title">
+          <h2>最近登録した取引</h2>
+          <span>{filtered.length}件</span>
+        </div>
+        <input
+          type="search"
+          placeholder="メモ・カテゴリ・口座・金額で検索"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setPage(1); }}
+          style={{ margin: "0 0 12px", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--input-bg, var(--panel))", color: "var(--text)", fontSize: 14, width: "100%", boxSizing: "border-box" }}
+          autoFocus
+        />
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          {displayed.length === 0 ? (
+            <div className="empty-state">該当する取引がありません。</div>
+          ) : (
+            <>
+              <TransactionList state={{ ...state, transactions: displayed }} setNotice={setNotice} reload={reload} />
+              {hasMore && (
+                <button className="google-button" type="button" style={{ marginTop: 8, width: "100%" }} onClick={() => setPage((p) => p + 1)}>
+                  さらに表示（残り {filtered.length - displayed.length} 件）
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        <button className="google-button" type="button" style={{ marginTop: 12 }} onClick={onClose}>閉じる</button>
+      </section>
     </div>
   );
 }
