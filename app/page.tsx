@@ -991,7 +991,7 @@ function HomeView({
   const monthChange = lastActual.length === 2 ? (lastActual[1].actual ?? 0) - (lastActual[0].actual ?? 0) : 0;
   const monthChangePct = lastActual.length === 2 && lastActual[0].actual ? (monthChange / Math.max(Math.abs(lastActual[0].actual), 1)) * 100 : 0;
   const sparkData = trend.filter((point) => point.actual != null).map((point) => ({ label: point.label, value: point.actual }));
-  const recentTx = state.transactions.slice(0, 5);
+  const recentTx = [...state.transactions].sort((a, b) => (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date)).slice(0, 5);
   const upcoming = useMemo(() => upcomingBills(state, 14), [state]);
   const totalLiquid = accountAssets;
   const goal = state.goals[0];
@@ -1508,7 +1508,7 @@ function QuickTransactionSheet({
           />
         )}
         <div className="form-grid">
-          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); setCreditPostingMode("used"); }}>
+          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); const nextAccount = state.accounts.find((a) => a.id === event.target.value); setCreditPostingMode(type === "expense" && nextAccount?.type === "credit" ? "withdrawal" : "used"); }}>
             <option value="">選択してください</option>
             {sortAccountsByType(accountChoices).map((account) => <option key={account.id} value={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}
           </select></label>
@@ -2376,7 +2376,7 @@ function AnalysisView({
         <section className="panel">
           <div className="panel-title">
             <h2>今月の支出インサイト</h2>
-            <span className="panel-meta">半年平均比</span>
+            <span className="panel-meta">6ヶ月平均比</span>
           </div>
           <div className="spending-insights">
             {spendingInsights.map(({ cat, current, avg, ratio }) => {

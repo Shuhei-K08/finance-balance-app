@@ -39,6 +39,7 @@ export type Transaction = {
   reflectedDate?: string;
   memo?: string;
   creditStatus?: CreditStatus;
+  createdAt?: string;
 };
 
 export type FixedCost = {

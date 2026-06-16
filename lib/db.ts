@@ -158,6 +158,7 @@ type DbTransaction = {
   credit_status: Transaction["creditStatus"] | null;
   memo: string | null;
   idempotency_key?: string | null;
+  created_at?: string | null;
 };
 
 type DbFixedCost = {
@@ -671,7 +672,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
-    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -758,7 +759,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   if (transactionsError && /idempotency_key|does not exist|存在しません/i.test(transactionsError.message)) {
     const fallback = await client
       .from("transactions")
-      .select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo")
+      .select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,created_at")
       .eq("household_id", householdId)
       .is("deleted_at", null)
       .order("occurred_on", { ascending: false })
@@ -833,7 +834,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
         date: transaction.occurred_on,
         reflectedDate: transaction.reflected_on ?? undefined,
         memo: transaction.memo ?? undefined,
-        creditStatus: transaction.credit_status ?? undefined
+        creditStatus: transaction.credit_status ?? undefined,
+        createdAt: transaction.created_at ?? undefined
       };
     }).sort((a, b) => (b.reflectedDate || b.date).localeCompare(a.reflectedDate || a.date)),
     fixedCosts: ((fixedCostsData ?? []) as DbFixedCost[]).map((cost): FixedCost => ({
