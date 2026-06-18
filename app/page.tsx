@@ -4940,13 +4940,10 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
 
   const handleDelete = async () => {
     try {
-      if (affectedTxCount > 0) {
-        // 選択した移行先（空 = カテゴリなし）に一括更新
-        await reassignCategoryTransactions(category.id, reassignTo || null);
-        // 子カテゴリの取引も一括更新
-        for (const childId of childCategoryIds) {
-          await reassignCategoryTransactions(childId, reassignTo || null);
-        }
+      // 取引を移行先に一括更新（件数に関わらず実行、移行先なしの場合はnull）
+      await reassignCategoryTransactions(category.id, reassignTo || null);
+      for (const childId of childCategoryIds) {
+        await reassignCategoryTransactions(childId, reassignTo || null);
       }
       // 子カテゴリも削除
       for (const childId of childCategoryIds) {
@@ -4967,27 +4964,25 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--expense)", marginBottom: 4 }}>
           カテゴリーを削除しますか？
         </div>
-        {affectedTxCount > 0 && (
-          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            このカテゴリーが設定された取引が <strong style={{ color: "var(--ink)" }}>{affectedTxCount}件</strong> あります。削除前に移行先を指定してください。
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+          {affectedTxCount > 0
+            ? <>このカテゴリーの取引が <strong style={{ color: "var(--ink)" }}>{affectedTxCount}件</strong> あります。移行先を指定してください。</>
+            : "このカテゴリーに関連する取引はありません。"}
+        </div>
         {hasChildren && (
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
             サブカテゴリー {childCategoryIds.length}件 も同時に削除されます。
           </div>
         )}
-        {affectedTxCount > 0 && (
-          <label>
-            取引の移行先カテゴリー
-            <select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
-              <option value="">カテゴリーなし（未分類）にする</option>
-              {reassignOptions.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </label>
-        )}
+        <label>
+          取引の移行先カテゴリー
+          <select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+            <option value="">カテゴリーなし（未分類）にする</option>
+            {reassignOptions.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
         <button onClick={handleDelete} style={{ background: "var(--expense)", color: "#fff" }}>
           {affectedTxCount > 0 ? `${affectedTxCount}件を移動して削除` : "削除する"}
         </button>
