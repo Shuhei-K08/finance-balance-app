@@ -1289,6 +1289,15 @@ export async function deleteCategory(categoryId: string) {
   if (error) throwJapanese(error, "カテゴリ削除に失敗しました。");
 }
 
+export async function reassignCategoryTransactions(fromCategoryId: string, toCategoryId: string | null) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from("transactions")
+    .update({ category_id: toCategoryId || null })
+    .eq("category_id", fromCategoryId);
+  if (error) throwJapanese(error, "カテゴリの移動に失敗しました。");
+}
+
 export async function createFixedCost(householdId: string, input: Omit<FixedCost, "id">) {
   const client = requireSupabase();
   const { error } = await client.from("fixed_costs").insert({

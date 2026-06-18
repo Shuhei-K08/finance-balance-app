@@ -106,6 +106,7 @@ import {
   deleteInvestmentAccount,
   deleteInvestmentContributionChange,
   deleteCategory,
+  reassignCategoryTransactions,
   deleteInvestmentRecord,
   deleteFixedCost,
   deleteGoal,
@@ -973,7 +974,7 @@ function HomeView({
   const [showRecentTxModal, setShowRecentTxModal] = useState(false);
   const [assetsHidden, setAssetsHidden] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("assetsHidden") === "true");
   const toggleAssetsHidden = () => { const next = !assetsHidden; setAssetsHidden(next); window.localStorage.setItem("assetsHidden", String(next)); };
-  const hide = (val: string) => assetsHidden ? "●●●●" : val;
+  // hide() no longer used — blur is applied via CSS .assets-hidden class
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -1005,14 +1006,14 @@ function HomeView({
 
   return (
     <div className="view-stack">
-      <section className="wealth-hero">
+      <section className={`wealth-hero${assetsHidden ? " assets-hidden" : ""}`}>
         <div className="label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <span><span className="dot" />{isCurrentMonth ? "今月末の予定総資産" : `${monthLabel} 時点の総資産`}</span>
           <button type="button" onClick={toggleAssetsHidden} style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", padding: "2px 4px", display: "flex", alignItems: "center" }} aria-label={assetsHidden ? "資産を表示" : "資産を非表示"}>
             {assetsHidden ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
-        <div className="amount">{hide(yen.format(displayAssets))}</div>
+        <div className="amount">{yen.format(displayAssets)}</div>
         <div className="sub-line">
           {!assetsHidden && Math.abs(monthChange) > 0 && (
             <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
@@ -1056,13 +1057,13 @@ function HomeView({
         />
       )}
 
-      <div className="kpi-grid">
-        <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={hide(yen.format(investmentTotal))} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
-        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={hide(yen.format(accountAssets))} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
-        <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={hide(yen.format(stats.income))} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
-        <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={hide(yen.format(stats.expense))} sub={assetsHidden ? "●●●●" : `固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
-        <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={hide(yen.format(savingAmount))} sub={assetsHidden ? "●●●●" : `貯金率 ${savingRate}%`} />
-        <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={hide(yen.format(stats.credit))} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
+      <div className={`kpi-grid${assetsHidden ? " assets-hidden" : ""}`}>
+        <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={yen.format(investmentTotal)} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
+        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
+        <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub="予定含む" onClick={() => setHomeEntryModal("income")} />
+        <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} subPrivate={`固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
+        <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={yen.format(savingAmount)} subPrivate={`貯金率 ${savingRate}%`} />
+        <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
 
 
@@ -1219,7 +1220,7 @@ function RecentTransactionsModal({ state, setNotice, reload, onClose }: { state:
   );
 }
 
-function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "income" | "expense" | "saving" | "credit"; icon: React.ElementType; label: string; value: string; sub?: string; onClick?: () => void }) {
+function KpiCard({ tone, icon: Icon, label, value, sub, subPrivate, onClick }: { tone: "income" | "expense" | "saving" | "credit"; icon: React.ElementType; label: string; value: string; sub?: string; subPrivate?: string; onClick?: () => void }) {
   const content = (
     <>
       <div className="kpi-head">
@@ -1228,6 +1229,7 @@ function KpiCard({ tone, icon: Icon, label, value, sub, onClick }: { tone: "inco
       </div>
       <div className="kpi-value">{value}</div>
       {sub && <div className="kpi-sub">{sub}</div>}
+      {subPrivate && <div className="kpi-sub kpi-sub-private">{subPrivate}</div>}
     </>
   );
   return (
@@ -4919,7 +4921,92 @@ function EditableCategoryRow({ category, state, setNotice, reloadHousehold, onDo
   const [parentId, setParentId] = useState(category.parentId ?? "");
   const [kind, setKind] = useState(category.kind);
   const [color, setColor] = useState(category.color);
-  return <div className="edit-row balanced-edit"><label>{category.parentId ? "サブカテゴリー名" : "カテゴリー名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>用途<select value={kind} onChange={(event) => setKind(event.target.value as "expense" | "income")}><option value="expense">支出</option><option value="income">収入</option></select></label><label>分類<select value={parentId} onChange={(event) => { const nextParentId = event.target.value; setParentId(nextParentId); const parent = state.categories.find((item) => item.id === nextParentId); if (parent) { setKind(parent.kind); setColor(nextSubcategoryColor(state.categories.filter((item) => item.id !== category.id), nextParentId)); } }}><option value="">カテゴリーにする</option>{sortCategories(state.categories.filter((item) => !item.parentId && item.id !== category.id && item.kind === kind)).map((item) => <option value={item.id} key={item.id}>{item.name} のサブカテゴリーにする</option>)}</select></label><label>{parentId ? "色（自動グラデーション）" : "色"}<input type="color" value={color} disabled={Boolean(parentId)} onChange={(event) => setColor(event.target.value)} /></label><button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリー名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color, kind }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(parentId ? "サブカテゴリーを更新しました。" : "カテゴリーを更新しました。サブカテゴリーをグラデーションに揃えました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー更新に失敗しました。")); } }}>変更を保存</button><button onClick={async () => { try { await deleteCategory(category.id); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice("カテゴリーを削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー削除に失敗しました。")); } }}>カテゴリーを削除</button><button type="button" onClick={onDone}>編集をやめる</button></div>;
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [reassignTo, setReassignTo] = useState("");
+
+  // 削除時に影響する取引と子カテゴリを算出
+  const childCategoryIds = state.categories
+    .filter((c) => c.parentId === category.id)
+    .map((c) => c.id);
+  const affectedTxCount = state.transactions.filter(
+    (t) => t.categoryId === category.id || childCategoryIds.includes(t.categoryId ?? "")
+  ).length;
+  const hasChildren = childCategoryIds.length > 0;
+
+  // 移行先として選べるカテゴリ（自身と子を除く・同じkind）
+  const reassignOptions = sortCategories(
+    state.categories.filter((c) => c.id !== category.id && !childCategoryIds.includes(c.id) && c.kind === kind)
+  );
+
+  const handleDelete = async () => {
+    try {
+      if (affectedTxCount > 0) {
+        // 選択した移行先（空 = カテゴリなし）に一括更新
+        await reassignCategoryTransactions(category.id, reassignTo || null);
+        // 子カテゴリの取引も一括更新
+        for (const childId of childCategoryIds) {
+          await reassignCategoryTransactions(childId, reassignTo || null);
+        }
+      }
+      // 子カテゴリも削除
+      for (const childId of childCategoryIds) {
+        await deleteCategory(childId);
+      }
+      await deleteCategory(category.id);
+      await reloadHousehold(state.householdId ?? "");
+      onDone();
+      setNotice("カテゴリーを削除しました。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "カテゴリー削除に失敗しました。"));
+    }
+  };
+
+  if (confirmDelete) {
+    return (
+      <div className="edit-row balanced-edit">
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--expense)", marginBottom: 4 }}>
+          カテゴリーを削除しますか？
+        </div>
+        {affectedTxCount > 0 && (
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+            このカテゴリーが設定された取引が <strong style={{ color: "var(--ink)" }}>{affectedTxCount}件</strong> あります。削除前に移行先を指定してください。
+          </div>
+        )}
+        {hasChildren && (
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+            サブカテゴリー {childCategoryIds.length}件 も同時に削除されます。
+          </div>
+        )}
+        {affectedTxCount > 0 && (
+          <label>
+            取引の移行先カテゴリー
+            <select value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+              <option value="">カテゴリーなし（未分類）にする</option>
+              {reassignOptions.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        <button onClick={handleDelete} style={{ background: "var(--expense)", color: "#fff" }}>
+          {affectedTxCount > 0 ? `${affectedTxCount}件を移動して削除` : "削除する"}
+        </button>
+        <button type="button" onClick={() => setConfirmDelete(false)}>キャンセル</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="edit-row balanced-edit">
+      <label>{category.parentId ? "サブカテゴリー名" : "カテゴリー名"}<input value={name} onChange={(event) => setName(event.target.value)} /></label>
+      <label>用途<select value={kind} onChange={(event) => setKind(event.target.value as "expense" | "income")}><option value="expense">支出</option><option value="income">収入</option></select></label>
+      <label>分類<select value={parentId} onChange={(event) => { const nextParentId = event.target.value; setParentId(nextParentId); const parent = state.categories.find((item) => item.id === nextParentId); if (parent) { setKind(parent.kind); setColor(nextSubcategoryColor(state.categories.filter((item) => item.id !== category.id), nextParentId)); } }}><option value="">カテゴリーにする</option>{sortCategories(state.categories.filter((item) => !item.parentId && item.id !== category.id && item.kind === kind)).map((item) => <option value={item.id} key={item.id}>{item.name} のサブカテゴリーにする</option>)}</select></label>
+      <label>{parentId ? "色（自動グラデーション）" : "色"}<input type="color" value={color} disabled={Boolean(parentId)} onChange={(event) => setColor(event.target.value)} /></label>
+      <button onClick={async () => { try { if (!name.trim()) { setNotice("カテゴリー名を入力してください。"); return; } await updateCategory(category.id, { name, parentId, color, kind }); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(parentId ? "サブカテゴリーを更新しました。" : "カテゴリーを更新しました。サブカテゴリーをグラデーションに揃えました。"); } catch (error) { setNotice(toJapaneseError(error, "カテゴリー更新に失敗しました。")); } }}>変更を保存</button>
+      <button type="button" onClick={() => setConfirmDelete(true)}>カテゴリーを削除</button>
+      <button type="button" onClick={onDone}>編集をやめる</button>
+    </div>
+  );
 }
 
 function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
