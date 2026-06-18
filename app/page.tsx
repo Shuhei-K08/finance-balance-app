@@ -50,7 +50,9 @@ import {
   UserPlus,
   Users,
   Palette,
-  Wallet
+  Wallet,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import {
   balanceTrend,
@@ -969,6 +971,9 @@ function HomeView({
   const [accountHistoryId, setAccountHistoryId] = useState<string | null>(null);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [showRecentTxModal, setShowRecentTxModal] = useState(false);
+  const [assetsHidden, setAssetsHidden] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("assetsHidden") === "true");
+  const toggleAssetsHidden = () => { const next = !assetsHidden; setAssetsHidden(next); window.localStorage.setItem("assetsHidden", String(next)); };
+  const hide = (val: string) => assetsHidden ? "●●●●" : val;
   useEffect(() => {
     if (!suggestedPromptMonth) return;
     const key = `asset-snapshot-prompt-${state.householdId}-${suggestedPromptMonth}`;
@@ -1001,10 +1006,15 @@ function HomeView({
   return (
     <div className="view-stack">
       <section className="wealth-hero">
-        <div className="label"><span className="dot" />{isCurrentMonth ? "今月末の予定総資産" : `${monthLabel} 時点の総資産`}</div>
-        <div className="amount">{yen.format(displayAssets)}</div>
+        <div className="label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span><span className="dot" />{isCurrentMonth ? "今月末の予定総資産" : `${monthLabel} 時点の総資産`}</span>
+          <button type="button" onClick={toggleAssetsHidden} style={{ background: "none", border: "none", color: "var(--muted)", cursor: "pointer", padding: "2px 4px", display: "flex", alignItems: "center" }} aria-label={assetsHidden ? "資産を表示" : "資産を非表示"}>
+            {assetsHidden ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
+        </div>
+        <div className="amount">{hide(yen.format(displayAssets))}</div>
         <div className="sub-line">
-          {Math.abs(monthChange) > 0 && (
+          {!assetsHidden && Math.abs(monthChange) > 0 && (
             <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
               {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
               {monthChange > 0 ? "+" : ""}{yen.format(monthChange)}（{monthChangePct.toFixed(1)}%）
@@ -1047,12 +1057,12 @@ function HomeView({
       )}
 
       <div className="kpi-grid">
-        <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={yen.format(investmentTotal)} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
-        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={yen.format(accountAssets)} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
-        <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={yen.format(stats.income)} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
-        <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={yen.format(stats.expense)} sub={`固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
-        <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={`${yen.format(savingAmount)}`} sub={`貯金率 ${savingRate}%`} />
-        <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={yen.format(stats.credit)} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
+        <KpiCard tone="saving" icon={LineChartIcon} label="投資資産" value={hide(yen.format(investmentTotal))} sub={`${monthLabel} 時点`} onClick={() => onNavigate("investments")} />
+        <KpiCard tone="saving" icon={Landmark} label="口座資産" value={hide(yen.format(accountAssets))} sub="口座残高の合計" onClick={() => setShowAllAccounts(true)} />
+        <KpiCard tone="income" icon={ArrowDownLeft} label={`${monthLabel} 収入`} value={hide(yen.format(stats.income))} sub={`予定含む`} onClick={() => setHomeEntryModal("income")} />
+        <KpiCard tone="expense" icon={ArrowUpRight} label={`${monthLabel} 支出`} value={hide(yen.format(stats.expense))} sub={assetsHidden ? "●●●●" : `固定費 ${yen.format(stats.fixed)}`} onClick={() => setHomeEntryModal("expense")} />
+        <KpiCard tone="saving" icon={PiggyBank} label="貯金額 / 貯金率" value={hide(yen.format(savingAmount))} sub={assetsHidden ? "●●●●" : `貯金率 ${savingRate}%`} />
+        <KpiCard tone="credit" icon={CreditCard} label="カード引落" value={hide(yen.format(stats.credit))} sub="今月確定見込" onClick={() => setHomeEntryModal("credit")} />
       </div>
 
 
@@ -3070,7 +3080,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
   const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
   const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
   const [showRecordForm, setShowRecordForm] = useState(false);
-  const [recordsView, setRecordsView] = useState<"monthly" | "yearly">("monthly");
+  const [recordsView, setRecordsView] = useState<"monthly" | "yearly" | "returnRate">("monthly");
   const [chartPeriod, setChartPeriod] = useState<"1y" | "3y" | "5y" | "all">("all");
   const [monthlyYear, setMonthlyYear] = useState(new Date().getFullYear());
   const [recordMonth, setRecordMonth] = useState(monthKey);
@@ -3247,6 +3257,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               <div style={{ display: "flex", gap: 4 }}>
                 <button className={recordsView === "monthly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("monthly")}>月次成績</button>
                 <button className={recordsView === "yearly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("yearly")}>年ごとの実績</button>
+                <button className={recordsView === "returnRate" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("returnRate")}>年利推移</button>
               </div>
               {recordsView === "monthly" && (
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
@@ -3255,7 +3266,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
                 </div>
               )}
-              {recordsView === "yearly" && <span>{yearlyRows.length}年分</span>}
+              {(recordsView === "yearly" || recordsView === "returnRate") && <span>{yearlyRows.length}年分</span>}
             </div>
 
             {recordsView === "monthly" && (
@@ -3302,6 +3313,40 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                 ))}
               </div>
             )}
+
+            {recordsView === "returnRate" && (() => {
+              const chartData = [...yearlyRows].reverse().map((row) => ({
+                year: `${row.year}年`,
+                年利: parseFloat(row.returnRate.toFixed(2)),
+                目標年利: selected?.targetAnnualRate ?? 0,
+              }));
+              const target = selected?.targetAnnualRate ?? 0;
+              if (chartData.length === 0) return <div className="empty-state"><span>年次データがまだありません。</span></div>;
+              return (
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>目標年利 {target}% を基準に色分け表示</div>
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                      <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
+                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${v}%`} />
+                      <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
+                      <ReferenceLine y={target} stroke="#06b6d4" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#06b6d4" }} />
+                      <Bar dataKey="年利" radius={[4, 4, 0, 0]}>
+                        {chartData.map((entry, i) => (
+                          <Cell key={i} fill={entry.年利 >= target ? "#34d399" : entry.年利 >= 0 ? "#fbbf24" : "#f87171"} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--muted)", marginTop: 8, flexWrap: "wrap" }}>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#34d399", marginRight: 4 }} />目標達成</span>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#fbbf24", marginRight: 4 }} />プラスだが目標未達</span>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#f87171", marginRight: 4 }} />マイナス</span>
+                  </div>
+                </div>
+              );
+            })()}
           </section>
         </>
       )}
