@@ -32,6 +32,7 @@ import {
   CreditCard,
   Copy,
   Goal,
+  HelpCircle,
   Home,
   Landmark,
   LineChart as LineChartIcon,
@@ -292,6 +293,7 @@ function useWeekStart(): [number, (v: number) => void] {
 export default function App() {
   const [state, setState] = useState<LedgerState | null>(null);
   const [tab, setTab] = useState<Tab>("home");
+  const [showTour, setShowTour] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [quickDate, setQuickDate] = useState(todayIso());
@@ -314,6 +316,23 @@ export default function App() {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
     navigator.serviceWorker.register("/sw.js").catch(() => undefined);
   }, []);
+
+  // 初回ログイン時にチュートリアルを自動表示
+  useEffect(() => {
+    if (typeof window === "undefined" || !isAuthed || !state) return;
+    if (!window.localStorage.getItem("mirai-ledger-tour-done")) {
+      setShowTour(true);
+    }
+  }, [isAuthed, state]);
+
+  const closeTour = () => {
+    setShowTour(false);
+    if (typeof window !== "undefined") window.localStorage.setItem("mirai-ledger-tour-done", "1");
+  };
+  const openTour = () => {
+    setTab("home");
+    setShowTour(true);
+  };
 
   useEffect(() => {
     if (!supabase) {
@@ -521,6 +540,9 @@ export default function App() {
               </button>
             );
           })}
+          <button type="button" onClick={openTour}>
+            <HelpCircle size={18} /> 使い方ガイド
+          </button>
         </nav>
         <div className="sidebar-foot">
           <div className="sidebar-month-control">
@@ -594,6 +616,9 @@ export default function App() {
                 </div>
               )}
             </div>
+            <button className="icon-button" type="button" onClick={openTour} aria-label="使い方ガイド" title="使い方ガイドを見る">
+              <HelpCircle size={18} />
+            </button>
             <button className="icon-button" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="テーマ切り替え">
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
@@ -689,7 +714,156 @@ export default function App() {
       </nav>
 
       {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} initialType={quickType} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
+      {showTour && <GuidedTour isAdmin={state.profileRole === "admin"} setTab={setTab} onClose={closeTour} />}
     </main>
+  );
+}
+
+type TourStep = {
+  tab?: Tab;
+  adminOnly?: boolean;
+  icon: React.ElementType;
+  title: string;
+  body: string;
+  tip?: string;
+};
+
+const TOUR_STEPS: TourStep[] = [
+  {
+    icon: Sparkles,
+    title: "Mirai Ledger へようこそ",
+    body: "日々の収支から口座残高・投資・目標貯金まで、ひとつの画面で管理できる家計簿アプリです。これから主な使い方をひと通り案内します。所要1〜2分です。",
+    tip: "この案内はいつでも右上の「?」ボタンから見直せます。",
+  },
+  {
+    tab: "home",
+    icon: Home,
+    title: "ホーム：今の状態をひと目で",
+    body: "上部のカードに「総資産」「今月の収支」「月末予測」などが表示されます。まずはここで全体像を把握しましょう。各カードをタップすると、関連する画面に移動できます。",
+  },
+  {
+    tab: "transactions",
+    icon: Plus,
+    title: "取引を登録する",
+    body: "右下の「＋」ボタンから、支出・収入・振替を登録できます。日付・金額・カテゴリ・口座を選ぶだけ。クレジットカード払いは、後で引落日に自動で反映されます。",
+    tip: "まずは1件、今日の支出を登録してみると流れがつかめます。",
+  },
+  {
+    tab: "transactions",
+    icon: Receipt,
+    title: "取引：履歴の確認と検索",
+    body: "登録した取引はこの「取引」タブに一覧表示されます。メモ・カテゴリ・口座・金額で検索でき、タップすれば編集・削除も可能です。",
+  },
+  {
+    tab: "analysis",
+    icon: Wallet,
+    title: "口座：残高と内訳",
+    body: "銀行・現金・クレジットカードなど、口座ごとの残高や収支の内訳を確認できます。カードの締め日・引落日を登録しておくと、いつ・いくら引き落とされるかが自動で計算されます。",
+  },
+  {
+    tab: "investments",
+    icon: Landmark,
+    title: "投資：資産の成長を管理",
+    body: "投資口座を追加し、毎月の積立額や評価額を記録できます。年利の推移グラフで、資産がどう増えているかを振り返れます。",
+  },
+  {
+    tab: "settings",
+    icon: Settings,
+    title: "設定：すべての登録はここから",
+    body: "「設定」タブの上部メニュー（家計簿・口座・投資・月末資産・カテゴリ・定期項目・表示設定）から各種登録・編集を行います。次の画面から主な項目を順に説明します。",
+  },
+  {
+    tab: "settings",
+    icon: Wallet,
+    title: "設定 ▶ 口座",
+    body: "最初に「口座」メニューから、銀行・現金・カードなどを登録しましょう。初期残高を入れておくと、以降の資産計算が正確になります。カードは締め日・引落日も設定できます。",
+    tip: "ここを設定しておくことが、正確な家計管理の第一歩です。",
+  },
+  {
+    tab: "settings",
+    icon: Goal,
+    title: "設定 ▶ カテゴリ",
+    body: "「カテゴリ」メニューで、支出・収入の分類を自分好みに追加・編集できます。大分類の下にサブカテゴリも作れるので、食費→外食/食料品 のように細かく管理できます。",
+  },
+  {
+    tab: "settings",
+    icon: CalendarDays,
+    title: "設定 ▶ 定期項目",
+    body: "家賃・サブスク・給料など、毎月決まって発生する収入・支出を「定期項目」に登録しておくと、毎回入力しなくても自動で見込みに反映されます。",
+  },
+  {
+    tab: "settings",
+    icon: PiggyBank,
+    title: "設定 ▶ 月末資産",
+    body: "月末・月初は実残高とアプリの残高がズレやすい時期です。「月末資産」で口座残高を確定すると、翌月以降の資産推移が正確になります。通帳と違う場合はここで調整します。",
+  },
+  {
+    tab: "settings",
+    icon: Users,
+    title: "設定 ▶ 共有家計簿",
+    body: "家族やパートナーと家計を共有したいときは「家計簿」メニューの『共有家計簿を作成』から作成します。発行される共有IDを相手に伝えれば、招待コードで参加してもらえます。",
+    tip: "上部のタブ（個人／共有）で家計簿を切り替えられます。",
+  },
+  {
+    tab: "settings",
+    icon: Eye,
+    title: "設定 ▶ 表示設定",
+    body: "週の開始曜日やテーマ（昼/夜）、資産額の表示/非表示など、見た目や使い勝手を「表示設定」で調整できます。人前で開くときは資産を隠すこともできます。",
+  },
+  {
+    adminOnly: true,
+    tab: "admin",
+    icon: UserPlus,
+    title: "管理：全体の状況を把握",
+    body: "管理者には「管理」タブが表示され、利用状況や共有家計簿の統計などを確認できます。",
+  },
+  {
+    icon: Sparkles,
+    title: "準備完了です！",
+    body: "まずは『設定 ▶ 口座』で口座を登録し、右下の「＋」から取引を入れてみましょう。困ったら右上の「?」ボタンでいつでもこの案内を見直せます。",
+  },
+];
+
+function GuidedTour({ isAdmin, setTab, onClose }: { isAdmin: boolean; setTab: (tab: Tab) => void; onClose: () => void }) {
+  const steps = useMemo(() => TOUR_STEPS.filter((step) => !step.adminOnly || isAdmin), [isAdmin]);
+  const [index, setIndex] = useState(0);
+  const step = steps[index];
+  const isLast = index === steps.length - 1;
+  const Icon = step.icon;
+
+  useEffect(() => {
+    if (step.tab) setTab(step.tab);
+  }, [index, step.tab, setTab]);
+
+  return createPortal(
+    <div className="tour-overlay" onClick={onClose}>
+      <div className="tour-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+        <button className="tour-skip" type="button" onClick={onClose}>スキップ</button>
+        <div className="tour-icon"><Icon size={26} /></div>
+        <div className="tour-step-count">{index + 1} / {steps.length}</div>
+        <h3 className="tour-title">{step.title}</h3>
+        <p className="tour-body">{step.body}</p>
+        {step.tip && <div className="tour-tip"><Sparkles size={14} /><span>{step.tip}</span></div>}
+        <div className="tour-dots">
+          {steps.map((_, i) => (
+            <span key={i} className={i === index ? "active" : ""} />
+          ))}
+        </div>
+        <div className="tour-actions">
+          <button className="tour-back" type="button" disabled={index === 0} onClick={() => setIndex((i) => Math.max(0, i - 1))}>
+            <ChevronLeft size={16} />戻る
+          </button>
+          {isLast ? (
+            <button className="tour-next" type="button" onClick={onClose}>はじめる</button>
+          ) : (
+            <button className="tour-next" type="button" onClick={() => setIndex((i) => Math.min(steps.length - 1, i + 1))}>
+              次へ<ChevronRight size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
   );
 }
 
