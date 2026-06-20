@@ -3790,7 +3790,8 @@ function SettingsView({
                             return;
                           }
                           await renameSharedLedger(modalLedger.id, ledgerNameDraft);
-                          await reloadHousehold(state.householdId ?? modalLedger.id);
+                          await reload();
+                          setLedgerModalId(null);
                           setNotice("家計簿名を変更しました。");
                         } catch (error) {
                           setNotice(toJapaneseError(error, "家計簿名の変更に失敗しました。"));
