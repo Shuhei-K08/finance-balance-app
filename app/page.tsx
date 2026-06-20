@@ -3747,8 +3747,8 @@ function SettingsView({
           ))}
         </div>
         {modalLedger && (
-          <div className="sheet-backdrop center-backdrop" onClick={() => setLedgerModalId(null)}>
-            <div className="ledger-detail" onClick={(event) => event.stopPropagation()}>
+          <div className="sheet-backdrop page-backdrop" onClick={() => setLedgerModalId(null)}>
+            <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
               <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
               <div>
                 <span>家計簿名</span>
@@ -3947,8 +3947,8 @@ function SettingsView({
         </div>
       </section>
       {showCreateShared && (
-        <div className="sheet-backdrop center-backdrop" onClick={() => { if (!creatingShared) setShowCreateShared(false); }}>
-          <div className="ledger-detail" onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-backdrop page-backdrop" onClick={() => { if (!creatingShared) setShowCreateShared(false); }}>
+          <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
             <button className="modal-close" type="button" onClick={() => setShowCreateShared(false)} disabled={creatingShared}>閉じる</button>
             <div>
               <span>共有家計簿の作成</span>

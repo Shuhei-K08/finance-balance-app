@@ -2157,6 +2157,21 @@ a { color: inherit; text-decoration: none; }
   overflow: auto;
 }
 
+/* Top-anchored scrollable overlay ("separate page" style) */
+.sheet-backdrop.page-backdrop {
+  align-items: start;
+  justify-items: center;
+  padding: max(20px, env(safe-area-inset-top, 0px)) 16px max(40px, env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ledger-detail.page-sheet {
+  max-height: none;
+  overflow: visible;
+  margin: auto;
+}
+
 .ledger-detail .modal-close {
   background: var(--panel-soft);
   border-radius: 10px;
