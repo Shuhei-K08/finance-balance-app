@@ -3746,7 +3746,7 @@ function SettingsView({
             </button>
           ))}
         </div>
-        {modalLedger && (
+        {modalLedger && createPortal(
           <div className="sheet-backdrop page-backdrop" onClick={() => setLedgerModalId(null)}>
             <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
               <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
@@ -3897,7 +3897,8 @@ function SettingsView({
                 )}
               </>
             </div>
-          </div>
+          </div>,
+          document.body
         )}
       </section>
 
@@ -3946,7 +3947,7 @@ function SettingsView({
           </button>
         </div>
       </section>
-      {showCreateShared && (
+      {showCreateShared && createPortal(
         <div className="sheet-backdrop page-backdrop" onClick={() => { if (!creatingShared) setShowCreateShared(false); }}>
           <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
             <button className="modal-close" type="button" onClick={() => setShowCreateShared(false)} disabled={creatingShared}>閉じる</button>
@@ -3988,7 +3989,8 @@ function SettingsView({
               {creatingShared ? "登録中…" : "登録する"}
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       </>
       )}
