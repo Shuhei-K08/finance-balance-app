@@ -3647,6 +3647,8 @@ function SettingsView({
   reload: () => Promise<void>;
 }) {
   const [sharedName, setSharedName] = useState("共有家計簿");
+  const [showCreateShared, setShowCreateShared] = useState(false);
+  const [creatingShared, setCreatingShared] = useState(false);
   const [inviteCode, setInviteCode] = useState("");
   const [joinDebug, setJoinDebug] = useState<string | null>(null);
   const [selectedLedgerId, setSelectedLedgerId] = useState(state.householdId ?? "");
@@ -3902,18 +3904,12 @@ function SettingsView({
       <section className="panel">
         <div className="section-title"><h2>共有家計簿</h2><span>作成・参加</span></div>
         <div className="share-actions">
-          <label>共有家計簿名<input value={sharedName} onChange={(event) => setSharedName(event.target.value)} /></label>
           <button
             className="full-primary"
             type="button"
-            onClick={async () => {
-              try {
-                const householdId = await createSharedLedger(sharedName);
-                await reloadHousehold(householdId);
-                setNotice("共有家計簿を作成しました。");
-              } catch (error) {
-                setNotice(toJapaneseError(error, "共有家計簿の作成に失敗しました。"));
-              }
+            onClick={() => {
+              setSharedName("共有家計簿");
+              setShowCreateShared(true);
             }}
           >
             共有家計簿を作成
@@ -3950,6 +3946,50 @@ function SettingsView({
           </button>
         </div>
       </section>
+      {showCreateShared && (
+        <div className="sheet-backdrop center-backdrop" onClick={() => { if (!creatingShared) setShowCreateShared(false); }}>
+          <div className="ledger-detail" onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close" type="button" onClick={() => setShowCreateShared(false)} disabled={creatingShared}>閉じる</button>
+            <div>
+              <span>共有家計簿の作成</span>
+              <strong>新しい共有家計簿</strong>
+              <em>家族やパートナーと共有できる家計簿を作成します。</em>
+            </div>
+            <div className="rename-box">
+              <label>家計簿名<input value={sharedName} onChange={(event) => setSharedName(event.target.value)} placeholder="例: 共有家計簿" /></label>
+            </div>
+            <section className="settings-guide">
+              <strong>登録内容</strong>
+              <span>作成後に共有IDが発行され、招待コードでメンバーを招待できます。名前は後から変更できます。</span>
+            </section>
+            <button
+              className="full-primary"
+              type="button"
+              disabled={creatingShared}
+              onClick={async () => {
+                if (creatingShared) return;
+                if (!sharedName.trim()) {
+                  setNotice("家計簿名を入力してください。");
+                  return;
+                }
+                setCreatingShared(true);
+                try {
+                  const householdId = await createSharedLedger(sharedName.trim());
+                  await reloadHousehold(householdId);
+                  setShowCreateShared(false);
+                  setNotice("共有家計簿を作成しました。");
+                } catch (error) {
+                  setNotice(toJapaneseError(error, "共有家計簿の作成に失敗しました。"));
+                } finally {
+                  setCreatingShared(false);
+                }
+              }}
+            >
+              {creatingShared ? "登録中…" : "登録する"}
+            </button>
+          </div>
+        </div>
+      )}
       </>
       )}
       {settingsTab === "accounts" && (

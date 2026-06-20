@@ -1808,7 +1808,8 @@ a { color: inherit; text-decoration: none; }
 .sheet-backdrop.center-backdrop {
   align-items: center;
   justify-items: center;
-  padding: 24px;
+  padding: max(24px, env(safe-area-inset-top, 0px)) 16px max(24px, env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
 }
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -2152,7 +2153,7 @@ a { color: inherit; text-decoration: none; }
   display: grid;
   gap: 14px;
   border: 1px solid var(--line);
-  max-height: 84vh;
+  max-height: calc(100dvh - max(48px, env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px) + 32px));
   overflow: auto;
 }
 
