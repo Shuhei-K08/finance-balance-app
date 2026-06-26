@@ -1582,7 +1582,7 @@ function AssetSnapshotPanel({
 }
 
 function AssetSnapshotPrompt({ state, monthKey, setNotice, reload, onClose }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
-  return (
+  return createPortal(
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel asset-confirm-modal" onClick={(event) => event.stopPropagation()}>
         <div className="section-title"><h2>{formatMonthLabel(monthKey)}の月末資産確認</h2><span>残高確定</span></div>
@@ -1590,12 +1590,13 @@ function AssetSnapshotPrompt({ state, monthKey, setNotice, reload, onClose }: { 
         <button className="full-primary" type="button" onClick={onClose}>あとで確認</button>
         <AssetSnapshotEditor state={state} monthKey={monthKey} setNotice={setNotice} reload={reload} onDone={onClose} />
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
 
 function AssetSnapshotModal({ state, monthKey, setNotice, reload, onClose }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
-  return (
+  return createPortal(
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
       <section className="modal-panel" onClick={(event) => event.stopPropagation()}>
         <div className="section-title"><h2>{formatMonthLabel(monthKey)}の資産確定</h2><span>翌月以降の基準</span></div>
@@ -1603,7 +1604,8 @@ function AssetSnapshotModal({ state, monthKey, setNotice, reload, onClose }: { s
         <AssetSnapshotEditor state={state} monthKey={monthKey} setNotice={setNotice} reload={reload} onDone={onClose} />
         <button className="google-button" type="button" onClick={onClose}>閉じる</button>
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
 
