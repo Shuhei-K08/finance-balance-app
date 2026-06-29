@@ -114,19 +114,11 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
 export function confirmedAccountBalance(account: Account, state: LedgerState, monthKey: string) {
   const currentMonth = todayIso().slice(0, 7);
   if (monthKey >= currentMonth) {
-    const calculated = calculateAccountBalanceInState(account, state, monthKey);
-    const hasEarlierSnapshot = state.assetSnapshots.some((item) => item.accountId === account.id && item.month < monthKey);
-    const hasRows = state.transactions.some((transaction) => {
-      const ledgerDate = transactionLedgerDate(transaction);
-      return ledgerDate <= monthEndKey(monthKey) && (
-        transaction.accountId === account.id ||
-        transaction.transferToAccountId === account.id ||
-        state.accounts.find((item) => item.id === transaction.accountId)?.withdrawalAccountId === account.id
-      );
-    });
+    // ユーザーが当月（以降）の月末資産を確定している場合は、その確定額を最優先する。
+    // 確定後にその月へ取引を追加しても確定額は固定され、翌月以降の基準となる。
     const currentSnapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
-    if (currentSnapshot && calculated === 0 && !hasEarlierSnapshot && !hasRows && account.openingBalance === 0) return currentSnapshot.amount;
-    return calculated;
+    if (currentSnapshot) return currentSnapshot.amount;
+    return calculateAccountBalanceInState(account, state, monthKey);
   }
   const snapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
   return snapshot?.amount ?? calculateAccountBalanceInState(account, state, monthKey);
