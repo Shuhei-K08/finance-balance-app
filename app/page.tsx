@@ -2596,7 +2596,7 @@ function AnalysisView({
       const d = new Date(now.getFullYear(), now.getMonth() - 6 + i, 1);
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     });
-    return expenseCategories.map((cat) => {
+    return sortCategories(expenseCategories).map((cat) => {
       const childIds = new Set([cat.id, ...state.categories.filter((c) => c.parentId === cat.id).map((c) => c.id)]);
       const thisMonthTx = monthTransactionsByKey(state.transactions, monthKey);
       const thisMonthFixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
@@ -2611,7 +2611,7 @@ function AnalysisView({
       const nonZero = prevAmounts.filter((v) => v > 0);
       const avg = nonZero.length > 0 ? nonZero.reduce((s, v) => s + v, 0) / nonZero.length : 0;
       return { cat, current, avg, ratio: avg > 0 ? current / avg : null };
-    }).filter((item) => item.current > 0 || item.avg > 0).sort((a, b) => b.current - a.current);
+    }).filter((item) => item.current > 0 || item.avg > 0);
   }, [state, monthKey, expenseCategories]);
 
   return (
@@ -2867,7 +2867,7 @@ function AnalysisView({
           subMap.set(label, (subMap.get(label) ?? 0) + amt);
         });
         return (
-          <div className="sheet-backdrop center-backdrop" onClick={() => setCategoryDrill(null)}>
+          <div className="sheet-backdrop center-backdrop" style={{ zIndex: 50 }} onClick={() => setCategoryDrill(null)}>
             <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
               <div className="section-title">
                 <h2><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: cat?.color, marginRight: 6 }} />{cat?.name}</h2>
@@ -2953,7 +2953,14 @@ function AnalysisView({
                     const isUnder = ratio !== null && ratio < 0.85 && avg > 0;
                     const barPct = avg > 0 ? Math.min((current / avg) * 100, 200) : 100;
                     return (
-                      <div key={child.id} className="spending-insight-row">
+                      <div
+                        key={child.id}
+                        className="spending-insight-row"
+                        style={{ cursor: "pointer" }}
+                        onClick={() => setCategoryDrill({ monthKey, categoryId: child.id })}
+                        role="button"
+                        tabIndex={0}
+                      >
                         <div className="si-header">
                           <div className="si-dot" style={{ background: child.color }} />
                           <span className="si-name">{child.name}</span>
@@ -2963,6 +2970,7 @@ function AnalysisView({
                             </span>
                           )}
                           <span className="si-amount">{yen.format(current)}</span>
+                          <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>›</span>
                         </div>
                         <div className="si-bar-wrap">
                           <div className="si-bar-track">
