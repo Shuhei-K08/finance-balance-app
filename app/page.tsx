@@ -3577,8 +3577,9 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
   const sortedMonths = Array.from(months).sort();
   let previousActual = account.initialAmount;
   let previousTarget = account.initialAmount;
-  // その年の達成率を出すための、年初(前年末の実績)を起点にした目標値
-  let previousYearTarget = account.initialAmount;
+  // その年の達成率を出すための年内トラッキング（年初の実績・年内の投入額累計）
+  let yearStartActual = account.initialAmount;
+  let yearContribCumulative = 0;
   let currentYear: string | null = null;
   // initialPrincipal が設定されていればそれを元金の起点に、なければ initialAmount と同じとみなす
   let cumulativePrincipal = account.initialPrincipal ?? account.initialAmount;
@@ -3590,24 +3591,26 @@ function investmentRows(state: LedgerState, accountId: string, endMonthKey: stri
     const monthlyContribution = investmentContributionForMonth(state, account, month);
     const contribution = monthlyContribution + additionalInvestment - saleAmount;
     const targetValue = Math.round(previousTarget * (1 + monthlyTargetRate) + contribution);
-    // 年が変わったら年目標の起点を前月末の実績評価額にリセット（その年単位の達成率）
-    const year = month.slice(0, 4);
-    if (currentYear !== year) {
-      currentYear = year;
-      previousYearTarget = previousActual;
-    }
-    const yearTargetValue = Math.round(previousYearTarget * (1 + monthlyTargetRate) + contribution);
     const monthEndValue = record?.monthEndValue ?? targetValue;
     const assetDelta = monthEndValue - previousActual;
     const profit = monthEndValue - previousActual - monthlyContribution - additionalInvestment + saleAmount;
     const capitalBase = previousActual + monthlyContribution + additionalInvestment;
     const monthlyReturnRate = capitalBase > 0 ? (profit / capitalBase) * 100 : 0;
-    const achievementRate = yearTargetValue > 0 ? (monthEndValue / yearTargetValue) * 100 : 0;
+    // 達成率 = その年の累計損益 ÷ その年の年間目標損益(年初評価額×目標年利)
+    const year = month.slice(0, 4);
+    if (currentYear !== year) {
+      currentYear = year;
+      yearStartActual = previousActual;
+      yearContribCumulative = 0;
+    }
+    yearContribCumulative += contribution;
+    const yearTargetGain = yearStartActual * (account.targetAnnualRate / 100);
+    const yearActualGain = monthEndValue - yearStartActual - yearContribCumulative;
+    const achievementRate = yearTargetGain !== 0 ? (yearActualGain / yearTargetGain) * 100 : 0;
     cumulativePrincipal += monthlyContribution + additionalInvestment - saleAmount;
     const unrealizedGain = monthEndValue - cumulativePrincipal;
     previousActual = monthEndValue;
     previousTarget = targetValue;
-    previousYearTarget = yearTargetValue;
     return {
       month,
       label: `${Number(month.slice(5, 7))}月`,
