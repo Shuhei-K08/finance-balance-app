@@ -3154,6 +3154,42 @@ a { color: inherit; text-decoration: none; }
 }
 
 /* ── 投資設定: 元金・含み益サマリー ── */
+.export-list {
+  display: grid;
+  gap: 10px;
+}
+
+.export-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--panel-soft);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.export-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.export-info strong {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.export-info small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.export-row .mini-button {
+  flex-shrink: 0;
+}
+
 .inv-principal-summary {
   display: flex;
   gap: 12px;
