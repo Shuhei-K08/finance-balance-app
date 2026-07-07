@@ -3504,31 +3504,35 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               const chartData = [...yearlyRows].reverse().map((row) => ({
                 year: `${row.year}年`,
                 年利: parseFloat(row.returnRate.toFixed(2)),
+                利益額: Math.round(row.profit),
                 目標年利: selected?.targetAnnualRate ?? 0,
               }));
               const target = selected?.targetAnnualRate ?? 0;
               if (chartData.length === 0) return <div className="empty-state"><span>年次データがまだありません。</span></div>;
               return (
                 <div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>目標年利 {target}% を基準に色分け表示</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>棒＝年利（目標 {target}% 基準で色分け）／ 折れ線＝年間利益額</div>
                   <ResponsiveContainer width="100%" height={260}>
-                    <BarChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
+                    <ComposedChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
                       <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                      <YAxis tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${v}%`} />
-                      <Tooltip formatter={(v: number) => [`${v.toFixed(2)}%`]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                      <ReferenceLine y={target} stroke="#06b6d4" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#06b6d4" }} />
-                      <Bar dataKey="年利" radius={[4, 4, 0, 0]}>
+                      <YAxis yAxisId="rate" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${v}%`} />
+                      <YAxis yAxisId="profit" orientation="right" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${Math.round(v / 10000)}万`} />
+                      <Tooltip formatter={(v: number, name: string) => name === "年利" ? [`${v.toFixed(2)}%`, name] : [yen.format(v), name]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
+                      <ReferenceLine yAxisId="rate" y={target} stroke="#06b6d4" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#06b6d4" }} />
+                      <Bar yAxisId="rate" dataKey="年利" radius={[4, 4, 0, 0]}>
                         {chartData.map((entry, i) => (
                           <Cell key={i} fill={entry.年利 >= target ? "#34d399" : entry.年利 >= 0 ? "#fbbf24" : "#f87171"} />
                         ))}
                       </Bar>
-                    </BarChart>
+                      <Line yAxisId="profit" type="monotone" dataKey="利益額" stroke="#818cf8" strokeWidth={2} dot={{ r: 3, fill: "#818cf8" }} />
+                    </ComposedChart>
                   </ResponsiveContainer>
                   <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--muted)", marginTop: 8, flexWrap: "wrap" }}>
                     <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#34d399", marginRight: 4 }} />目標達成</span>
                     <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#fbbf24", marginRight: 4 }} />プラスだが目標未達</span>
                     <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#f87171", marginRight: 4 }} />マイナス</span>
+                    <span><span style={{ display: "inline-block", width: 12, height: 2, background: "#818cf8", marginRight: 4, verticalAlign: "middle" }} />年間利益額</span>
                   </div>
                 </div>
               );
