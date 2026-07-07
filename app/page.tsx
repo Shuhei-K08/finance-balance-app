@@ -3857,9 +3857,10 @@ function downloadCsv(filename: string, header: string[], rows: (string | number)
   URL.revokeObjectURL(url);
 }
 
-function exportTransactionsCsv(state: LedgerState) {
+function exportTransactionsCsv(state: LedgerState, from: string, to: string) {
   const header = ["日付", "種類", "金額", "カテゴリ", "サブカテゴリ", "口座", "振替先", "カード状態", "メモ"];
   const rows = [...state.transactions]
+    .filter((t) => (!from || t.date >= from) && (!to || t.date <= to))
     .sort((a, b) => (a.date === b.date ? (a.createdAt ?? "").localeCompare(b.createdAt ?? "") : a.date.localeCompare(b.date)))
     .map((t) => {
       const category = state.categories.find((c) => c.id === t.categoryId);
@@ -3882,29 +3883,36 @@ function exportTransactionsCsv(state: LedgerState) {
   downloadCsv(`取引明細_${stamp}.csv`, header, rows);
 }
 
-function exportInvestmentYearlyCsv(state: LedgerState) {
-  const header = ["投資口座", "年", "年始評価額", "年末評価額", "積立", "追加投資", "売却", "純利益", "増減", "年利(%)"];
+function exportInvestmentMonthlyCsv(state: LedgerState, from: string, to: string) {
+  const header = ["投資口座", "種類", "月", "評価額", "積立", "追加投資", "売却", "純利益", "月利(%)", "達成率(%)", "累計元金", "含み益", "メモ"];
   const currentMonthKey = new Date().toISOString().slice(0, 7);
+  const fromMonth = from ? from.slice(0, 7) : "";
+  const toMonth = to ? to.slice(0, 7) : "";
   const rows: (string | number)[][] = [];
   (state.investmentAccounts ?? []).forEach((account) => {
-    const yearRows = investmentYearRows(investmentRows(state, account.id, currentMonthKey));
-    [...yearRows].reverse().forEach((row) => {
-      rows.push([
-        account.name,
-        `${row.year}年`,
-        row.startValue,
-        row.endValue,
-        row.monthlyContribution,
-        row.additionalInvestment,
-        row.saleAmount,
-        row.profit,
-        row.assetDelta,
-        row.returnRate.toFixed(2)
-      ]);
-    });
+    const kindLabel = investmentKindLabel(account.accountKind);
+    investmentRows(state, account.id, currentMonthKey)
+      .filter((row) => (!fromMonth || row.month >= fromMonth) && (!toMonth || row.month <= toMonth))
+      .forEach((row) => {
+        rows.push([
+          account.name,
+          kindLabel,
+          row.month,
+          row.monthEndValue,
+          row.monthlyContribution,
+          row.additionalInvestment,
+          row.saleAmount,
+          row.profit,
+          row.monthlyReturnRate.toFixed(2),
+          Math.round(row.achievementRate),
+          row.cumulativePrincipal,
+          row.unrealizedGain,
+          row.note ?? ""
+        ]);
+      });
   });
   const stamp = todayIso();
-  downloadCsv(`投資年次実績_${stamp}.csv`, header, rows);
+  downloadCsv(`投資月別実績_${stamp}.csv`, header, rows);
 }
 
 function SettingsView({
@@ -3933,6 +3941,8 @@ function SettingsView({
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
   const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "investment" | "display" | "export">("ledger");
+  const [exportFrom, setExportFrom] = useState("");
+  const [exportTo, setExportTo] = useState("");
   const [weekStart, setWeekStart] = useWeekStart();
   const firstBankAccountId = state.accounts.find((account) => account.type === "bank")?.id ?? state.accounts.find((account) => account.type !== "credit")?.id ?? "";
   const firstParentCategoryId = state.categories.find((category) => !category.parentId)?.id ?? "";
@@ -4492,6 +4502,15 @@ function SettingsView({
         <section className="panel">
           <div className="section-title"><h2>データ出力（CSV）</h2></div>
           <p className="setting-copy" style={{ marginBottom: 12 }}>記録したデータをCSVファイルとして書き出します。Excelやスプレッドシートで開けます（文字コードはUTF-8）。</p>
+          <div className="export-period">
+            <span className="export-period-title">出力期間（空欄なら全期間）</span>
+            <div className="export-period-inputs">
+              <label>開始<input type="date" value={exportFrom} max={exportTo || undefined} onChange={(e) => setExportFrom(e.target.value)} /></label>
+              <label>終了<input type="date" value={exportTo} min={exportFrom || undefined} onChange={(e) => setExportTo(e.target.value)} /></label>
+              {(exportFrom || exportTo) && <button type="button" className="mini-button" onClick={() => { setExportFrom(""); setExportTo(""); }}>クリア</button>}
+            </div>
+            <small style={{ color: "var(--muted)", fontSize: 11 }}>投資の月別実績は月単位で期間を判定します。</small>
+          </div>
           <div className="export-list">
             <div className="export-row">
               <div className="export-info">
@@ -4502,21 +4521,21 @@ function SettingsView({
                 type="button"
                 className="mini-button"
                 disabled={state.transactions.length === 0}
-                onClick={() => { exportTransactionsCsv(state); setNotice("取引明細をCSVで書き出しました。"); }}
+                onClick={() => { exportTransactionsCsv(state, exportFrom, exportTo); setNotice("取引明細をCSVで書き出しました。"); }}
               >
                 CSV出力
               </button>
             </div>
             <div className="export-row">
               <div className="export-info">
-                <strong>投資の年次実績</strong>
-                <small>投資口座ごとの年始・年末評価額・積立・純利益・年利（{(state.investmentAccounts ?? []).length}口座）</small>
+                <strong>投資の月別実績</strong>
+                <small>投資口座・種類ごとの評価額・積立・純利益・月利・達成率など（{(state.investmentAccounts ?? []).length}口座）</small>
               </div>
               <button
                 type="button"
                 className="mini-button"
                 disabled={(state.investmentAccounts ?? []).length === 0}
-                onClick={() => { exportInvestmentYearlyCsv(state); setNotice("投資年次実績をCSVで書き出しました。"); }}
+                onClick={() => { exportInvestmentMonthlyCsv(state, exportFrom, exportTo); setNotice("投資月別実績をCSVで書き出しました。"); }}
               >
                 CSV出力
               </button>
