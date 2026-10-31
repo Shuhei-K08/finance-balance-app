@@ -50,6 +50,8 @@ import {
   UserPlus,
   Users,
   Palette,
+  SlidersHorizontal,
+  BookText,
   Star,
   X,
   ChevronDown,
@@ -145,20 +147,39 @@ import type { HouseholdMember } from "@/lib/types";
 
 type Tab = "home" | "transactions" | "analysis" | "investments" | "settings" | "admin";
 
+// 通帳の表紙の色
+const DEFAULT_COVER_COLOR = "#1C2A4A";
 const LEDGER_PRESET_COLORS = [
-  { label: "デフォルト（紫）", value: "#7c5cff" },
-  { label: "ティール", value: "#06b6d4" },
-  { label: "グリーン", value: "#10b981" },
-  { label: "オレンジ", value: "#f97316" },
-  { label: "ピンク", value: "#ec4899" },
-  { label: "レッド", value: "#ef4444" },
-  { label: "ゴールド", value: "#f59e0b" },
-  { label: "スレート", value: "#64748b" },
+  { label: "紺", value: "#1C2A4A" },
+  { label: "藍", value: "#2C4F8F" },
+  { label: "青緑", value: "#0F6B62" },
+  { label: "若竹", value: "#3C7A3A" },
+  { label: "からし", value: "#9A6F12" },
+  { label: "小豆", value: "#7A3A48" },
+  { label: "江戸紫", value: "#5A4386" },
+  { label: "墨", value: "#3B3F45" },
 ];
+
+// 旧デザインの明るいテーマカラーを、近い表紙の色に置き換える
+const LEGACY_COVER_COLORS: Record<string, string> = {
+  "#7c5cff": "#1C2A4A",
+  "#06b6d4": "#0F6B62",
+  "#10b981": "#3C7A3A",
+  "#f97316": "#9A6F12",
+  "#ec4899": "#7A3A48",
+  "#ef4444": "#7A3A48",
+  "#f59e0b": "#9A6F12",
+  "#64748b": "#3B3F45",
+};
+
+function coverColor(themeColor?: string | null) {
+  if (!themeColor) return DEFAULT_COVER_COLOR;
+  return LEGACY_COVER_COLORS[themeColor.toLowerCase()] ?? themeColor;
+}
 
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
-  { id: "transactions", label: "取引", icon: Receipt },
+  { id: "transactions", label: "取引", icon: BookText },
   { id: "analysis", label: "口座", icon: Wallet },
   { id: "investments", label: "投資", icon: Landmark },
   { id: "settings", label: "設定", icon: Settings }
@@ -185,10 +206,10 @@ const accountColorForType = (type: AccountType) => {
 type ThemeMode = "dark" | "light";
 
 function useTheme() {
-  const [theme, setTheme] = useState<ThemeMode>("dark");
+  const [theme, setTheme] = useState<ThemeMode>("light");
   useEffect(() => {
     const stored = window.localStorage.getItem("mirai-ledger-theme");
-    const value: ThemeMode = stored === "light" ? "light" : "dark";
+    const value: ThemeMode = stored === "dark" ? "dark" : "light";
     setTheme(value);
     document.documentElement.setAttribute("data-theme", value);
   }, []);
@@ -321,6 +342,12 @@ export default function App() {
     return window.localStorage.getItem("mirai-ledger-household-id") || undefined;
   });
   const selectedHouseholdRef = useRef<string | undefined>(selectedHouseholdId);
+  const ledgerCover = coverColor(state?.themeColor);
+
+  // 表紙の色はページ全体（ポータルのモーダル含む）に効かせる
+  useEffect(() => {
+    document.documentElement.style.setProperty("--ledger-color", ledgerCover);
+  }, [ledgerCover]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
@@ -412,16 +439,6 @@ export default function App() {
     const timer = window.setTimeout(() => setNotice(""), 4200);
     return () => window.clearTimeout(timer);
   }, [notice]);
-
-  // Apply theme color to :root so body background can react to it
-  useEffect(() => {
-    const root = document.documentElement;
-    if (state?.themeColor) {
-      root.style.setProperty("--ledger-color", state.themeColor);
-    } else {
-      root.style.removeProperty("--ledger-color");
-    }
-  }, [state?.themeColor]);
 
   async function refreshRemoteState() {
     const next = await loadRemoteState(selectedHouseholdRef.current);
@@ -528,7 +545,6 @@ export default function App() {
   return (
     <main
       className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}
-      style={state.themeColor ? { "--ledger-color": state.themeColor, "--ledger-color-soft": `${state.themeColor}22`, "--ledger-color-mid": `${state.themeColor}44` } as React.CSSProperties : undefined}
     >
       {/* Desktop sidebar */}
       <aside className="app-sidebar" aria-label="メインメニュー">
@@ -537,7 +553,7 @@ export default function App() {
             <div className="brand-mark"><img src="/mirai-ledger-logo.svg" alt="Mirai Ledger" style={{ width: "32px", height: "32px" }} /></div>
             <div className="brand-text">
               <strong>Mirai Ledger</strong>
-              <small>Personal Wealth OS</small>
+              <small>未来の残高がわかる家計簿</small>
             </div>
           </div>
         </div>
@@ -579,7 +595,7 @@ export default function App() {
             onClick={() => { setLedgerMenuOpen((v) => !v); setMenuOpen(false); }}
             aria-label="家計簿を切り替え"
           >
-            <span className="ledger-dot" />
+            <span className="ledger-mark" aria-hidden="true">{(state.householdName ?? "家").slice(0, 1)}</span>
             <span className="ledger-switch-name">{state.householdName ?? "家計簿"}</span>
             <span className={`space-type-badge ${state.activeSpace === "shared" ? "shared" : "personal"}`}>
               {state.activeSpace === "shared" ? "共有" : "個人"}
@@ -619,14 +635,14 @@ export default function App() {
               </button>
               {state.householdId && (
                 <div className="popover-block">
-                  <div className="popover-item static"><Palette size={16} /><span className="popover-item-label">テーマカラー</span></div>
+                  <div className="popover-item static"><Palette size={16} /><span className="popover-item-label">通帳の表紙の色</span></div>
                   <div className="lcp-presets">
                     {LEDGER_PRESET_COLORS.map((preset) => (
                       <button
                         key={preset.value}
                         type="button"
                         title={preset.label}
-                        className={`lcp-swatch${(state.themeColor ?? "#7c5cff") === preset.value ? " active" : ""}`}
+                        className={`lcp-swatch${ledgerCover === preset.value ? " active" : ""}`}
                         style={{ background: preset.value }}
                         onClick={() => {
                           saveHouseholdThemeColor(state.householdId!, preset.value);
@@ -732,7 +748,7 @@ export default function App() {
         <div className="bottom-nav">
           {([
             { id: "home" as Tab, label: "ホーム", icon: Home },
-            { id: "transactions" as Tab, label: "取引", icon: Receipt },
+            { id: "transactions" as Tab, label: "取引", icon: BookText },
             null,
             { id: "analysis" as Tab, label: "資産", icon: Wallet },
             { id: "settings" as Tab, label: "設定", icon: Settings }
@@ -1039,12 +1055,12 @@ function AuthScreen({ notice, setNotice, theme }: { notice: string; setNotice: (
             </div>
           </div>
         </div>
-        <div className="auth-foot">© Mirai Ledger — Personal Wealth Operating System</div>
+        <div className="auth-foot">© Mirai Ledger　未来の残高がわかる家計簿</div>
       </section>
 
       <section className="auth-form-wrap">
         <div className="auth-card">
-          <p className="eyebrow">Welcome back</p>
+          <p className="eyebrow">おかえりなさい</p>
           <h2>{mode === "login" ? "ログイン" : "アカウントを作成"}</h2>
           <p className="sub">{mode === "login" ? "メールアドレスまたはGoogleアカウントで続行できます。" : "数十秒で開始できます。すでにご利用中ならログインへ。"}</p>
           {notice && <div className="notice" role="status">{notice}</div>}
@@ -1232,21 +1248,21 @@ function HomeView({
           </button>
         </div>
         <button type="button" className="amount home-summary-amount" onClick={() => setHomeEntryModal("expense")}>
-          {yen.format(stats.expense)}
+          <span className="yen">¥</span>{plainAmount(stats.expense)}
         </button>
         <div className="home-summary-sub">固定費 {yen.format(stats.fixed)} を含む</div>
         <div className="home-summary-stats">
           <button type="button" onClick={() => setHomeEntryModal("income")}>
             <span>収入</span>
-            <strong className="kpi-value income">{yen.format(stats.income)}</strong>
+            <strong className="kpi-value income">{plainAmount(stats.income)}</strong>
           </button>
           <div>
             <span>収支</span>
-            <strong className={`kpi-value ${savingAmount >= 0 ? "income" : "expense"}`}>{savingAmount > 0 ? "+" : ""}{yen.format(savingAmount)}</strong>
+            <strong className={`kpi-value ${savingAmount >= 0 ? "income" : "expense"}`}>{savingAmount > 0 ? "+" : savingAmount < 0 ? "−" : ""}{plainAmount(savingAmount)}</strong>
           </div>
           <button type="button" onClick={() => setHomeEntryModal("credit")}>
             <span>カード引落</span>
-            <strong className="kpi-value">{yen.format(stats.credit)}</strong>
+            <strong className="kpi-value">{plainAmount(stats.credit)}</strong>
           </button>
         </div>
       </section>
@@ -1285,14 +1301,12 @@ function HomeView({
       {upcoming.length > 0 && (
         <section className="panel">
           <div className="panel-title"><h2>これからの引落・予定</h2><span className="panel-meta">2週間以内</span></div>
-          <div className="account-list">
+          <div className="ledger-lines">
             {upcoming.slice(0, 3).map((item) => (
-              <div className="account-row" key={`${item.id}-${item.date}`}>
-                <div className="account-mark" style={{ background: item.kind === "income" ? "#10b981" : item.kind === "transfer" ? "#3b82f6" : "#f97316" }}>
-                  {item.kind === "income" ? <ArrowDownLeft size={14} /> : item.kind === "transfer" ? <ArrowDownUp size={14} /> : <ArrowUpRight size={14} />}
-                </div>
-                <div className="account-name"><strong>{item.name}</strong><small>{formatDayLabel(item.date)}</small></div>
-                <div className="balance">{item.kind === "income" ? "+" : item.kind === "expense" ? "-" : ""}{yen.format(item.amount)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
+              <div className="ledger-line" key={`${item.id}-${item.date}`}>
+                <div className="tx-lead">{shortDate(item.date)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
+                <div className="ledger-line-body"><strong>{item.name}</strong></div>
+                <div className={`ledger-line-amount ${item.kind}`}>{item.kind === "income" ? "+" : ""}{plainAmount(item.amount)}</div>
               </div>
             ))}
           </div>
@@ -1300,8 +1314,14 @@ function HomeView({
       )}
 
       <section className={`panel asset-link${assetsHidden ? " assets-hidden" : ""}`}>
+        {isSnapshotConfirmed && (
+          <div className="hanko" aria-label={`${monthLabel}の月末資産は確定済み`}>
+            <b>確定</b>
+            <i>{Number(calendarMonth.slice(5, 7))}.{new Date(Number(calendarMonth.slice(0, 4)), Number(calendarMonth.slice(5, 7)), 0).getDate()}</i>
+          </div>
+        )}
         <div className="panel-title">
-          <h2>{isCurrentMonth ? "月末の予定総資産" : `${monthLabel}の総資産`}</h2>
+          <h2>{isSnapshotConfirmed ? `${monthLabel}末の総資産` : isCurrentMonth ? "月末の予定総資産" : `${monthLabel}の総資産`}</h2>
           {!assetsHidden && Math.abs(monthChange) > 0 && (
             <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
               {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
@@ -1309,13 +1329,13 @@ function HomeView({
             </span>
           )}
         </div>
-        <div className="amount asset-link-amount">{yen.format(displayAssets)}</div>
+        <div className="amount asset-link-amount"><span className="yen">¥</span>{plainAmount(displayAssets)}</div>
         <div className="asset-link-rows">
           <button type="button" onClick={() => setShowAllAccounts(true)}>
-            <Wallet size={16} /><span>口座</span><strong className="kpi-value">{yen.format(accountAssets)}</strong><ChevronRight size={16} />
+            <Wallet size={16} /><span>口座</span><strong className="kpi-value">{plainAmount(accountAssets)}</strong><ChevronRight size={16} />
           </button>
           <button type="button" onClick={() => onNavigate("investments")}>
-            <LineChartIcon size={16} /><span>投資</span><strong className="kpi-value">{yen.format(investmentTotal)}</strong><ChevronRight size={16} />
+            <LineChartIcon size={16} /><span>投資</span><strong className="kpi-value">{plainAmount(investmentTotal)}</strong><ChevronRight size={16} />
           </button>
         </div>
       </section>
@@ -1508,7 +1528,7 @@ function AccountHistoryModal({ accountId, state, onClose }: { accountId: string;
                   <stop offset="100%" stopColor={account.color} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
               <YAxis hide />
               <Tooltip formatter={(v) => yen.format(Number(v))} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullLabel ?? ""} />
@@ -1540,6 +1560,38 @@ function accountTypeLabel(type: AccountType) {
   if (type === "saving") return "貯金口座";
   if (type === "cash") return "現金";
   return "クレジットカード";
+}
+
+const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+// 通帳の印字風：¥ を付けない桁区切りの数字
+function plainAmount(value: number) {
+  return Math.abs(Math.round(value)).toLocaleString("ja-JP");
+}
+
+function shortDate(date: string) {
+  const d = new Date(`${date}T00:00:00`);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function weekdayOf(date: string) {
+  return WEEKDAYS[new Date(`${date}T00:00:00`).getDay()];
+}
+
+function categoryPathLabel(state: LedgerState, categoryId?: string) {
+  const category = state.categories.find((item) => item.id === categoryId);
+  if (!category) return "";
+  const parent = category.parentId ? state.categories.find((item) => item.id === category.parentId) : undefined;
+  return parent ? `${parent.name} › ${category.name}` : category.name;
+}
+
+function txKindLabel(transaction: Transaction, state: LedgerState) {
+  if (transaction.type === "income") return "収入";
+  if (transaction.type === "transfer") return "振替";
+  const account = state.accounts.find((item) => item.id === transaction.accountId);
+  if (account?.type === "credit") return "カード";
+  if (account?.type === "cash") return "現金";
+  return "支出";
 }
 
 function formatDayLabel(date: string) {
@@ -1818,7 +1870,7 @@ function QuickTransactionSheet({
     <div className="sheet-backdrop" onClick={onClose}>
       <form className="bottom-sheet" onSubmit={(event) => { event.preventDefault(); submit(); }} onClick={(event) => event.stopPropagation()}>
         <div className="sheet-handle" />
-        <div className="section-title"><h2>クイック入力</h2><span>{date}</span></div>
+        <div className="section-title"><h2>記録する</h2><span className="num">{date.replace(/-/g, ".")}</span></div>
         <div className="segmented" role="tablist" aria-label="取引種別">
           {(["expense", "income", "transfer"] as TransactionType[]).map((item) => (
             <button className={type === item ? "selected" : ""} key={item} type="button" onClick={() => changeType(item)}>
@@ -1876,7 +1928,7 @@ function QuickTransactionSheet({
         )}
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
-        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中" : "登録"}</button>
+        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中…" : "登録する"}</button>
         {templateMessage && <p className="form-success" role="status"><Check size={14} /> {templateMessage}</p>}
         <button className="template-save" type="button" onClick={saveCurrentAsTemplate}><Star size={14} /> この内容をテンプレートに保存</button>
       </form>
@@ -2399,15 +2451,17 @@ function HomeCalendar({
   return (
     <div className="view-stack">
       <section className="panel calendar-card">
-        <div className="calendar-head">
-          {!hideMonthNav && <button type="button" onClick={() => moveMonth(-1)} aria-label="前月"><ChevronLeft size={16} /></button>}
-          <strong>{formatMonthLabel(monthKey)}のカレンダー</strong>
-          {!hideMonthNav && <button type="button" onClick={() => moveMonth(1)} aria-label="翌月"><ChevronRight size={16} /></button>}
-        </div>
+        {!hideMonthNav && (
+          <div className="calendar-head">
+            <button type="button" onClick={() => moveMonth(-1)} aria-label="前月"><ChevronLeft size={16} /></button>
+            <strong>{formatMonthLabel(monthKey)}のカレンダー</strong>
+            <button type="button" onClick={() => moveMonth(1)} aria-label="翌月"><ChevronRight size={16} /></button>
+          </div>
+        )}
         <div className="month-summary">
-          <span>収入<strong>{yen.format(monthIncome)}</strong></span>
-          <span>支出<strong>{yen.format(monthExpense)}</strong></span>
-          <span>収支<strong>{yen.format(monthIncome - monthExpense)}</strong></span>
+          <span>収入<strong>{plainAmount(monthIncome)}</strong></span>
+          <span>支出<strong>{plainAmount(monthExpense)}</strong></span>
+          <span>収支<strong className={monthIncome - monthExpense >= 0 ? "pos" : "neg"}>{monthIncome - monthExpense > 0 ? "+" : monthIncome - monthExpense < 0 ? "−" : ""}{plainAmount(monthIncome - monthExpense)}</strong></span>
         </div>
         <div className="calendar-grid">
           {dayHeaders.map((day) => <b key={day} className={headerColorClass(day)}>{day}</b>)}
@@ -2565,9 +2619,9 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   const meta = fixedKindMeta(row.kind);
   return (
     <article className="fixed-occurrence-row">
-      <div className="tx-icon fixed"><Landmark size={16} /></div>
-      <div><strong>{row.name}</strong><span><b className={`kind-badge ${meta.className}`}>{meta.label}</b>{row.date} / {row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${category?.name ?? "未設定"} / ${account?.name ?? "未設定"}`}</span></div>
-      <em>{meta.sign}{yen.format(row.amount)}</em>
+      <div className="tx-lead kind fixed">定期</div>
+      <div><strong>{row.name}</strong><span>{row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
+      <em className={meta.className}>{row.kind === "income" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
         <div className="fixed-override-form">
@@ -2604,6 +2658,7 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
   const [filterCategory, setFilterCategory] = useState("all");
   const [periodMode, setPeriodMode] = useState<"month" | "all">("month");
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
+  const [showMoreFilters, setShowMoreFilters] = useState(false);
 
   const filteredTx = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -2714,36 +2769,39 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
         />
       ) : (
         <>
-          <section className="panel">
-            <div className="panel-title">
-              <h2>取引一覧</h2>
-              <span className="panel-meta">{filteredTx.length + filteredFixed.length}件 / 収入 {yen.format(totalIncome)} / 支出 {yen.format(totalExpense)}</span>
+          <section className="tx-filter-bar">
+            <div className="tx-search">
+              <Search className="search-icon" size={18} />
+              <input type="text" placeholder="メモ・カテゴリ・口座・金額で検索" value={query} onChange={(event) => setQuery(event.target.value)} />
             </div>
-            <div className="tx-toolbar">
-              <div className="tx-search">
-                <Search className="search-icon" size={18} />
-                <input type="text" placeholder="メモ・カテゴリ・口座・金額で検索…" value={query} onChange={(event) => setQuery(event.target.value)} />
-              </div>
+            <div className="filter-chips">
+              {([["all", "すべて"], ["expense", "支出"], ["income", "収入"], ["transfer", "振替"]] as const).map(([id, label]) => (
+                <button key={id} type="button" className={`chip${filterType === id ? " on" : ""}`} onClick={() => setFilterType(id)}>{label}</button>
+              ))}
+              <button type="button" className={`chip${showMoreFilters || filterAccount !== "all" || filterCategory !== "all" || periodMode !== "month" ? " outline-on" : ""}`} onClick={() => setShowMoreFilters((v) => !v)}>
+                <SlidersHorizontal size={13} /> 絞り込み
+              </button>
+            </div>
+            {showMoreFilters && (
               <div className="tx-filters">
-                <select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as "month" | "all")}>
+                <label>期間<select value={periodMode} onChange={(event) => setPeriodMode(event.target.value as "month" | "all")}>
                   <option value="month">{formatMonthLabel(monthKey)}のみ</option>
                   <option value="all">全期間</option>
-                </select>
-                <select value={filterType} onChange={(event) => setFilterType(event.target.value as "all" | TransactionType)}>
-                  <option value="all">すべての種類</option>
-                  <option value="expense">支出</option>
-                  <option value="income">収入</option>
-                  <option value="transfer">振替</option>
-                </select>
-                <select value={filterAccount} onChange={(event) => setFilterAccount(event.target.value)}>
-                  <option value="all">すべての口座</option>
+                </select></label>
+                <label>口座<select value={filterAccount} onChange={(event) => setFilterAccount(event.target.value)}>
+                  <option value="all">すべて</option>
                   {state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-                </select>
-                <select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
-                  <option value="all">すべてのカテゴリ</option>
+                </select></label>
+                <label>カテゴリ<select value={filterCategory} onChange={(event) => setFilterCategory(event.target.value)}>
+                  <option value="all">すべて</option>
                   {state.categories.filter((c) => !c.parentId).map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
-                </select>
+                </select></label>
               </div>
+            )}
+            <div className="tx-totals">
+              <span>{filteredTx.length + filteredFixed.length}件</span>
+              <span>収入 <b className="income">{plainAmount(totalIncome)}</b></span>
+              <span>支出 <b>{plainAmount(totalExpense)}</b></span>
             </div>
           </section>
 
@@ -2764,13 +2822,13 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
                   <div key={date}>
                     <div className="tx-group-head">
                       <span className="day">{formatDayLabel(date)}</span>
-                      <span className="total" style={{ color: dayTotal > 0 ? "var(--income)" : dayTotal < 0 ? "var(--expense)" : "var(--muted)" }}>
-                        {dayTotal > 0 ? "+" : ""}{yen.format(dayTotal)}
+                      <span className="total" style={{ color: dayTotal > 0 ? "var(--income)" : "var(--ink-soft)" }}>
+                        {dayTotal > 0 ? "+" : dayTotal < 0 ? "−" : ""}{plainAmount(dayTotal)}
                       </span>
                     </div>
                     <div className="tx-list">
                       {items.map((transaction) => (
-                        <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />
+                        <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} leading="kind" />
                       ))}
                       {fixedItems.map((fc) => (
                         <FixedCostOccurrenceRow key={`fixed-${fc.id}-${fc.date}`} row={fc} state={state} setNotice={setNotice} reload={reload} />
@@ -2816,7 +2874,7 @@ function AnalysisView({
   const trend = monthlyTrend(state, monthKey);
   const liquidAccounts = state.accounts.filter((a) => a.type !== "credit");
 
-  const accountColors = ["#7c5cff", "#06b6d4", "#f97316", "#ec4899", "#fbbf24", "#34d399"];
+  const accountColors = ["#1C2A4A", "#0F7A68", "#9A6F12", "#7A3A48", "#3E6FB0", "#5A4386"];
   const expenseCategories = state.categories.filter((c) => !c.parentId && c.kind === "expense");
 
   function periodToMonths(period: "6m" | "1y" | "3y" | "all"): number {
@@ -3046,11 +3104,11 @@ function AnalysisView({
           </div>
           <ResponsiveContainer width="100%" height={280}>
             <ComposedChart data={combinedTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
               <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
               <YAxis yAxisId="balance" hide />
               <YAxis yAxisId="saving" orientation="right" hide />
-              <ReferenceLine yAxisId="saving" y={0} stroke="rgba(255,255,255,0.2)" />
+              <ReferenceLine yAxisId="saving" y={0} stroke="var(--line-strong)" />
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
@@ -3065,7 +3123,7 @@ function AnalysisView({
                         return <div key={acc.id} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}><span style={{ color: acc.color }}>● {acc.name}</span><span>{yen.format(Number(entry.value))}</span></div>;
                       })}
                       {total !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, fontWeight: 700 }}><span>合計残高</span><span>{yen.format(total)}</span></div>}
-                      {saving !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, color: saving >= 0 ? "#34d399" : "#f87171" }}><span>収支</span><span>{saving >= 0 ? "+" : ""}{yen.format(saving)}</span></div>}
+                      {saving !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, color: saving >= 0 ? "#1E9A84" : "#C8553F" }}><span>収支</span><span>{saving >= 0 ? "+" : ""}{yen.format(saving)}</span></div>}
                     </div>
                   );
                 }}
@@ -3073,13 +3131,13 @@ function AnalysisView({
               <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
               <Bar yAxisId="saving" dataKey="saving" name="収支" barSize={20} radius={[3, 3, 0, 0]}>
                 {combinedTrend.map((row, i) => (
-                  <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#34d399" : "#f87171"} fillOpacity={0.8} />
+                  <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#1E9A84" : "#C8553F"} fillOpacity={0.8} />
                 ))}
               </Bar>
               {liquidAccounts.map((acc) => (
                 <Line key={acc.id} yAxisId="balance" type="monotone" dataKey={acc.name} name={acc.name} stroke="transparent" strokeWidth={0} dot={false} legendType="none" />
               ))}
-              <Line yAxisId="balance" type="monotone" dataKey="totalBalance" name="口座残高合計" stroke="#7c5cff" strokeWidth={2.5} dot={false} />
+              <Line yAxisId="balance" type="monotone" dataKey="totalBalance" name="口座残高合計" stroke="currentColor" strokeWidth={2.5} dot={false} />
             </ComposedChart>
           </ResponsiveContainer>
         </section>
@@ -3097,7 +3155,7 @@ function AnalysisView({
         </div>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={categoryTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
             <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
             <YAxis hide />
             <Tooltip
@@ -3639,11 +3697,11 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               <ComposedChart data={rows} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
                 <defs>
                   <linearGradient id="principalGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0.05} />
+                    <stop offset="5%" stopColor="#6F7B93" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#6F7B93" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
                 <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                 <YAxis yAxisId="left" hide />
                 <Tooltip
@@ -3651,9 +3709,9 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
                 />
                 <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-                <Area yAxisId="left" type="monotone" dataKey="cumulativePrincipal" name="累計元金" stroke="#6366f1" strokeWidth={1.5} fill="url(#principalGrad)" dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="targetValue" name="目標評価額" stroke="#06b6d4" strokeWidth={2} strokeDasharray="4 4" dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "#7c5cff"} strokeWidth={3} dot={{ r: 3 }} />
+                <Area yAxisId="left" type="monotone" dataKey="cumulativePrincipal" name="累計元金" stroke="#6F7B93" strokeWidth={1.5} fill="url(#principalGrad)" dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="targetValue" name="目標評価額" stroke="#1E9A84" strokeWidth={2} strokeDasharray="4 4" dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "currentColor"} strokeWidth={3} dot={{ r: 3 }} />
               </ComposedChart>
             </ResponsiveContainer>
           </section>
@@ -3761,25 +3819,25 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                   <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>棒＝年間利益額（目標 {target}% 基準で色分け）／ 折れ線＝年利</div>
                   <ResponsiveContainer width="100%" height={260}>
                     <ComposedChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
                       <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
                       <YAxis yAxisId="profit" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${Math.round(v / 10000)}万`} />
                       <YAxis yAxisId="rate" orientation="right" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${v}%`} />
                       <Tooltip formatter={(v: number, name: string) => name === "年利" ? [`${v.toFixed(2)}%`, name] : [yen.format(v), name]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                      <ReferenceLine yAxisId="rate" y={target} stroke="#06b6d4" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#06b6d4" }} />
+                      <ReferenceLine yAxisId="rate" y={target} stroke="#1E9A84" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#1E9A84" }} />
                       <Bar yAxisId="profit" dataKey="利益額" radius={[4, 4, 0, 0]}>
                         {chartData.map((entry, i) => (
-                          <Cell key={i} fill={entry.年利 >= target ? "#34d399" : entry.年利 >= 0 ? "#fbbf24" : "#f87171"} />
+                          <Cell key={i} fill={entry.年利 >= target ? "#1E9A84" : entry.年利 >= 0 ? "#C9952A" : "#C8553F"} />
                         ))}
                       </Bar>
-                      <Line yAxisId="rate" type="monotone" dataKey="年利" stroke="#818cf8" strokeWidth={2} dot={{ r: 3, fill: "#818cf8" }} />
+                      <Line yAxisId="rate" type="monotone" dataKey="年利" stroke="#3E6FB0" strokeWidth={2} dot={{ r: 3, fill: "#3E6FB0" }} />
                     </ComposedChart>
                   </ResponsiveContainer>
                   <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--muted)", marginTop: 8, flexWrap: "wrap" }}>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#34d399", marginRight: 4 }} />目標達成</span>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#fbbf24", marginRight: 4 }} />プラスだが目標未達</span>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#f87171", marginRight: 4 }} />マイナス</span>
-                    <span><span style={{ display: "inline-block", width: 12, height: 2, background: "#818cf8", marginRight: 4, verticalAlign: "middle" }} />年利</span>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#1E9A84", marginRight: 4 }} />目標達成</span>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#C9952A", marginRight: 4 }} />プラスだが目標未達</span>
+                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#C8553F", marginRight: 4 }} />マイナス</span>
+                    <span><span style={{ display: "inline-block", width: 12, height: 2, background: "#3E6FB0", marginRight: 4, verticalAlign: "middle" }} />年利</span>
                   </div>
                 </div>
               );
@@ -3941,10 +3999,10 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
 }
 
 function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId: string; currentColor?: string; onSave: (color: string | null) => void }) {
-  const [pending, setPending] = useState(currentColor ?? "#7c5cff");
+  const [pending, setPending] = useState(coverColor(currentColor));
   return (
     <div className="ledger-color-picker">
-      <div className="lcp-label">テーマカラー<span>このデバイスで保存されます</span></div>
+      <div className="lcp-label">通帳の表紙の色<span>ボタンや目印の色が変わります</span></div>
       <div className="lcp-presets">
         {LEDGER_PRESET_COLORS.map((preset) => (
           <button
@@ -3954,7 +4012,7 @@ function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId:
             className={`lcp-swatch${pending === preset.value ? " active" : ""}`}
             style={{ background: preset.value }}
             onClick={() => setPending(preset.value)}
-          />
+          ><span>{preset.label}</span></button>
         ))}
       </div>
       <div className="lcp-custom">
@@ -3962,7 +4020,7 @@ function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId:
           <input type="color" value={pending} onChange={(e) => setPending(e.target.value)} />
         </label>
         <button type="button" className="mini-button" onClick={() => onSave(pending)}>適用</button>
-        {currentColor && <button type="button" className="mini-button" onClick={() => { setPending("#7c5cff"); onSave(null); }}>リセット</button>}
+        {currentColor && <button type="button" className="mini-button" onClick={() => { setPending(DEFAULT_COVER_COLOR); onSave(null); }}>リセット</button>}
       </div>
     </div>
   );
@@ -5658,7 +5716,7 @@ function MonthSwitcher({ monthKey, setMonthKey, setSelectedDate }: { monthKey: s
     <div className="month-switcher" aria-label="表示月">
       <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, -1))} aria-label="前月"><ChevronLeft size={18} /></button>
       <label className="month-switcher-label">
-        {formatMonthLabel(monthKey)}
+        {monthKey.replace("-", ".")}
         <input type="month" value={monthKey} onChange={(event) => updateMonth(event.target.value)} aria-label="月を選択" />
       </label>
       <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, 1))} aria-label="翌月"><ChevronRight size={18} /></button>
@@ -5688,18 +5746,18 @@ function numberInputValue(value: number) {
   return value === 0 ? "" : value;
 }
 
-function TransactionList({ state, limit, setNotice, reload }: { state: LedgerState; limit?: number; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+function TransactionList({ state, limit, setNotice, reload, leading = "date" }: { state: LedgerState; limit?: number; setNotice: (message: string) => void; reload: () => Promise<void>; leading?: "date" | "kind" }) {
   const rows = state.transactions.slice(0, limit);
   return (
     <div className="transaction-list">
       {rows.map((transaction) => {
-        return <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} />;
+        return <TransactionRow key={transaction.id} transaction={transaction} state={state} setNotice={setNotice} reload={reload} leading={leading} />;
       })}
     </div>
   );
 }
 
-function TransactionRow({ transaction, state, setNotice, reload }: { transaction: LedgerState["transactions"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+function TransactionRow({ transaction, state, setNotice, reload, leading = "date" }: { transaction: LedgerState["transactions"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; leading?: "date" | "kind" }) {
   const [editing, setEditing] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState(transaction);
@@ -5745,17 +5803,26 @@ function TransactionRow({ transaction, state, setNotice, reload }: { transaction
     await reload();
     setNotice("取引を更新しました。");
   }
-  const Icon = transaction.type === "income" ? ArrowDownLeft : transaction.type === "expense" ? ArrowUpRight : ArrowDownUp;
+  const categoryLabel = categoryPathLabel(state, transaction.categoryId);
+  const transferTo = transaction.type === "transfer" ? state.accounts.find((item) => item.id === transaction.transferToAccountId) : undefined;
+  const subLine = transaction.type === "transfer"
+    ? `${account?.name ?? "口座未設定"} → ${transferTo?.name ?? "未設定"}`
+    : `${categoryLabel || "カテゴリなし"}／${account?.name ?? "口座未設定"}`;
   return (
     <>
       <article className={`tx-row${expanded ? " expanded" : ""}`}>
         <button className="tx-main" type="button" onClick={() => setExpanded(!expanded)}>
-          <div className={`tx-ico ${transaction.type}`}><Icon size={16} /></div>
+          {leading === "kind"
+            ? <div className={`tx-lead kind ${transaction.type}`}>{txKindLabel(transaction, state)}</div>
+            : <div className="tx-lead">{shortDate(transaction.date)}<small>{weekdayOf(transaction.date)}</small></div>}
           <div className="tx-body">
             <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
-            <small>{account?.name ?? "口座未設定"}{category?.name ? ` ・ ${category.name}` : ""}{transaction.reflectedDate ? ` ・ 使用 ${transaction.date}` : ""}</small>
+            <small>{subLine}</small>
           </div>
-          <em className={`tx-amount ${transaction.type}`}>{transaction.type === "income" ? "+" : transaction.type === "expense" ? "-" : ""}{yen.format(transaction.amount)}</em>
+          <em className={`tx-amount ${transaction.type}`}>
+            {transaction.type === "income" ? "+" : ""}{plainAmount(transaction.amount)}
+            {transaction.reflectedDate && <small>{shortDate(transaction.reflectedDate)} 引落</small>}
+          </em>
         </button>
         {expanded && (
           <div className="tx-actions">
