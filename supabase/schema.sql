@@ -148,6 +148,8 @@ create unique index if not exists households_invite_code_uidx on households(invi
 
 alter table fixed_costs add column if not exists effective_from date;
 alter table fixed_costs add column if not exists effective_to date;
+alter table fixed_costs add column if not exists fixed_type transaction_type not null default 'expense';
+alter table fixed_costs add column if not exists transfer_to_account_id uuid references accounts(id);
 
 -- 投資口座: 開始時の投資元金（評価額と別管理。途中から記録開始の場合に設定）
 alter table investment_accounts add column if not exists initial_principal numeric;
@@ -582,7 +584,11 @@ begin
     if new.account_id is not null and not exists (select 1 from accounts where id = new.account_id and household_id = new.household_id and deleted_at is null) then
       raise exception 'account must belong to the same household';
     end if;
-    if not exists (select 1 from categories where id = new.category_id and household_id = new.household_id and deleted_at is null) then
+    if new.transfer_to_account_id is not null and not exists (select 1 from accounts where id = new.transfer_to_account_id and household_id = new.household_id and deleted_at is null) then
+      raise exception 'transfer target must belong to the same household';
+    end if;
+    -- 振替の定期項目はカテゴリを持たない（category_id = null）ため、カテゴリ指定時のみ検証する
+    if new.category_id is not null and not exists (select 1 from categories where id = new.category_id and household_id = new.household_id and deleted_at is null) then
       raise exception 'category must belong to the same household';
     end if;
     return new;
