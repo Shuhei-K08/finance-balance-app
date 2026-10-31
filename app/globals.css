@@ -459,13 +459,13 @@ a { color: inherit; text-decoration: none; }
   min-height: 100vh;
   padding: 12px clamp(14px, 3vw, 28px) calc(var(--tab-h) + 36px + env(safe-area-inset-bottom));
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 22px;
 }
 
 @media (min-width: 1100px) {
   .app-shell {
-    grid-template-columns: 264px 1fr;
+    grid-template-columns: 264px minmax(0, 1fr);
     padding-bottom: 60px;
   }
 }
@@ -754,6 +754,7 @@ a { color: inherit; text-decoration: none; }
 /* Main content column */
 .app-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 22px;
   min-width: 0;
 }
@@ -899,6 +900,7 @@ a { color: inherit; text-decoration: none; }
 
 .view-stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 18px;
   align-content: start;
 }
@@ -3574,11 +3576,13 @@ a { color: inherit; text-decoration: none; }
    ============================================================ */
 .tx-toolbar {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
 }
 
 .tx-search {
   position: relative;
+  min-width: 0;
 }
 
 .tx-search input {
@@ -3605,15 +3609,18 @@ a { color: inherit; text-decoration: none; }
 
 .tx-filters {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 @media (min-width: 720px) {
-  .tx-filters { grid-template-columns: repeat(4, 1fr); }
+  .tx-filters { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 .tx-filters select, .tx-filters input {
+  width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
   padding: 11px 12px;
   border-radius: 10px;
   border: 1px solid var(--line);
@@ -4777,3 +4784,7 @@ input[type="color"] {
 .template-form .segmented { margin-top: 4px; }
 .template-history .template-row { grid-template-columns: 1fr auto auto; }
 .template-history .template-row > button { grid-column: auto; }
+
+/* 一覧ヘッダーの件数・合計が長いときは折り返す */
+.panel-title { flex-wrap: wrap; }
+.panel-title .panel-meta { min-width: 0; overflow-wrap: anywhere; }
