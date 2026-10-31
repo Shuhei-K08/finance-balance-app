@@ -676,6 +676,8 @@ export default function App() {
             state={state}
             monthKey={calendarMonth}
             stats={stats}
+            setNotice={setNotice}
+            reload={() => refreshRemoteState()}
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
@@ -2507,11 +2509,15 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
 function AnalysisView({
   state,
   monthKey,
-  stats
+  stats,
+  setNotice,
+  reload
 }: {
   state: LedgerState;
   monthKey: string;
   stats: Record<string, number>;
+  setNotice: (message: string) => void;
+  reload: () => Promise<void>;
 }) {
   const monthLabel = formatMonthLabel(monthKey);
   const category = categoryExpense(state, monthKey);
@@ -2644,10 +2650,10 @@ function AnalysisView({
                 <div
                   key={cat.id}
                   className="spending-insight-row"
-                  style={hasChildren ? { cursor: "pointer" } : undefined}
-                  onClick={hasChildren ? () => setDrillParentId(cat.id) : undefined}
-                  role={hasChildren ? "button" : undefined}
-                  tabIndex={hasChildren ? 0 : undefined}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => hasChildren ? setDrillParentId(cat.id) : setCategoryDrill({ monthKey, categoryId: cat.id })}
+                  role="button"
+                  tabIndex={0}
                 >
                   <div className="si-header">
                     <div className="si-dot" style={{ background: cat.color }} />
@@ -2658,7 +2664,7 @@ function AnalysisView({
                       </span>
                     )}
                     <span className="si-amount">{yen.format(current)}</span>
-                    {hasChildren && <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>›</span>}
+                    <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>›</span>
                   </div>
                   <div className="si-bar-wrap">
                     <div className="si-bar-track">
@@ -2882,28 +2888,14 @@ function AnalysisView({
                   ))}
                 </div>
               )}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 360, overflowY: "auto" }}>
+              <p style={{ fontSize: 11, color: "var(--muted)", margin: 0 }}>取引をタップすると編集・削除できます（定期項目はこの月だけ変更）</p>
+              <div className="transaction-list" style={{ maxHeight: 400, overflowY: "auto" }}>
                 {fixedOcc.map((c) => (
-                  <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.date} · 定期</div>
-                    </div>
-                    <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(c.amount)}</div>
-                  </div>
+                  <FixedCostOccurrenceRow key={`fixed-${c.id}-${c.date}`} row={c} state={state} setNotice={setNotice} reload={reload} />
                 ))}
-                {txs.map((t) => {
-                  const subCat = state.categories.find((c) => c.id === t.categoryId || c.id === t.subcategoryId);
-                  return (
-                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.memo || subCat?.name || "支出"}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.date}{subCat?.parentId ? ` · ${subCat.name}` : ""}</div>
-                      </div>
-                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(t.amount)}</div>
-                    </div>
-                  );
-                })}
+                {txs.map((t) => (
+                  <TransactionRow key={t.id} transaction={t} state={state} setNotice={setNotice} reload={reload} />
+                ))}
                 {txs.length === 0 && fixedOcc.length === 0 && <div className="empty-state">この月の取引はありません。</div>}
               </div>
               <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setCategoryDrill(null)}>閉じる</button>
@@ -2984,6 +2976,7 @@ function AnalysisView({
                   })}
                 </div>
               )}
+              <button className="mini-button" style={{ marginTop: 8 }} type="button" onClick={() => setCategoryDrill({ monthKey, categoryId: drillParent.id })}>{drillParent.name}の明細をすべて見る・編集</button>
               <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setDrillParentId(null)}>閉じる</button>
             </section>
           </div>
@@ -5658,7 +5651,7 @@ function TransactionEditSheet({
   const [saving, setSaving] = useState(false);
   const typeLabel = draft.type === "income" ? "収入" : draft.type === "transfer" ? "振替" : "支出";
   return createPortal(
-    <div className="sheet-backdrop" onClick={onClose}>
+    <div className="sheet-backdrop" style={{ zIndex: 60 }} onClick={onClose}>
       <form
         className="bottom-sheet"
         onClick={(e) => e.stopPropagation()}
