@@ -45,7 +45,6 @@ import {
   Settings,
   Sparkles,
   Sun,
-  Target,
   TrendingDown,
   TrendingUp,
   UserPlus,
@@ -62,7 +61,6 @@ import {
 } from "lucide-react";
 import {
   balanceTrend,
-  averageMonthlySaving,
   calculateAccountBalance,
   calculateAccountBalanceInState,
   confirmedAccountBalance,
@@ -70,7 +68,6 @@ import {
   creditStatusLabel,
   fixedCostOccurrencesForMonth,
   fixedCostForecast,
-  goalProjection,
   investmentAssets,
   monthTransactions,
   monthTransactionsByKey,
@@ -106,7 +103,6 @@ import {
   createInvestmentAccount,
   createCategory,
   createFixedCost,
-  createGoal,
   deleteAccount,
   deleteInvestmentAccount,
   deleteInvestmentContributionChange,
@@ -114,7 +110,6 @@ import {
   reassignCategoryTransactions,
   deleteInvestmentRecord,
   deleteFixedCost,
-  deleteGoal,
   deleteSharedLedger,
   deleteOwnedLedger,
   deleteTransaction,
@@ -135,7 +130,6 @@ import {
   updateInvestmentAccount,
   updateCategory,
   updateFixedCost,
-  updateGoal,
   updateOpeningBalances,
   updateSubcategoryOrder,
   updateTransaction,
@@ -149,7 +143,7 @@ import {
 import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
-type Tab = "home" | "transactions" | "analysis" | "investments" | "goals" | "settings" | "admin";
+type Tab = "home" | "transactions" | "analysis" | "investments" | "settings" | "admin";
 
 const LEDGER_PRESET_COLORS = [
   { label: "デフォルト（紫）", value: "#7c5cff" },
@@ -167,18 +161,16 @@ const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "transactions", label: "取引", icon: Receipt },
   { id: "analysis", label: "口座", icon: Wallet },
   { id: "investments", label: "投資", icon: Landmark },
-  { id: "goals", label: "目標", icon: Target },
   { id: "settings", label: "設定", icon: Settings }
 ];
 
-const ASSET_TABS: Tab[] = ["analysis", "investments", "goals"];
+const ASSET_TABS: Tab[] = ["analysis", "investments"];
 
 const TAB_TITLES: Record<Tab, string> = {
   home: "ホーム",
   transactions: "取引",
   analysis: "資産",
   investments: "資産",
-  goals: "資産",
   settings: "設定",
   admin: "管理"
 };
@@ -687,7 +679,7 @@ export default function App() {
 
         {ASSET_TABS.includes(tab) && (
           <nav className="segment-tabs mobile-only" aria-label="資産メニュー">
-            {([["analysis", "口座・収支"], ["investments", "投資"], ["goals", "目標"]] as const).map(([id, label]) => (
+            {([["analysis", "口座・収支"], ["investments", "投資"]] as const).map(([id, label]) => (
               <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
@@ -728,7 +720,6 @@ export default function App() {
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
-        {tab === "goals" && <GoalsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
         {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} reload={() => refreshRemoteState()} />}
         {tab === "admin" && state.profileRole === "admin" && <AdminView />}
       </div>
@@ -790,7 +781,7 @@ const TOUR_STEPS: TourStep[] = [
   {
     icon: Sparkles,
     title: "Mirai Ledger へようこそ",
-    body: "日々の収支から口座残高・投資・目標貯金まで、ひとつの画面で管理できる家計簿アプリです。これから主な使い方をひと通り案内します。所要1〜2分です。",
+    body: "日々の収支から口座残高・投資まで、ひとつの画面で管理できる家計簿アプリです。これから主な使い方をひと通り案内します。所要1〜2分です。",
     tip: "この案内はいつでも右上の「…」メニュー →「使い方ガイド」から見直せます。",
   },
   {
@@ -955,7 +946,7 @@ function SetupScreen() {
         </div>
         <div>
           <h1>未来の残高を、<br />今日の手元で。</h1>
-          <p className="lead">資産・収支・固定費・カード引落・目標貯金まで、ひとつの画面で管理できる新しい家計OS。</p>
+          <p className="lead">資産・収支・固定費・カード引落まで、ひとつの画面で管理できる新しい家計OS。</p>
         </div>
         <div className="auth-foot">© Mirai Ledger</div>
       </section>
@@ -1023,7 +1014,7 @@ function AuthScreen({ notice, setNotice, theme }: { notice: string; setNotice: (
         </div>
         <div>
           <h1>収支も資産も、<br />ひとつで管理。</h1>
-          <p className="lead">日々の取引・固定費・クレカ引落・目標貯金・投資まで、個人でも家族でも使えるシンプルな家計簿アプリ。</p>
+          <p className="lead">日々の取引・固定費・クレカ引落・投資まで、個人でも家族でも使えるシンプルな家計簿アプリ。</p>
           <div className="auth-hero-features">
             <div className="auth-hero-feature">
               <div className="feat-icon"><CreditCard size={20} /></div>
@@ -3504,33 +3495,6 @@ function PieLegend({ data, total, emptyLabel }: { data: Array<{ name: string; va
   );
 }
 
-function goalAdvice(goal: LedgerState["goals"][number], state: LedgerState) {
-  const projection = goalProjection(goal, state);
-  const top = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
-  const deadlinePlan = goalDeadlinePlan(goal, state);
-  if (projection.months === 0) return "すでに達成圏内です。次の目標を作ると資産形成を続けやすくなります。";
-  if (deadlinePlan.months <= 0) return "期限が過ぎています。期限を見直すか、目標金額を再設定すると現実的な計画に戻せます。";
-  if (deadlinePlan.gap <= 0) return `期限までに必要な貯金は月${yen.format(deadlinePlan.requiredMonthly)}です。現在の平均ペースなら期限内に届く見込みです。`;
-  if (!top) return `期限までに月${yen.format(deadlinePlan.gap)}ほど上乗せが必要です。支出データが増えると、削減候補を具体的に提案できます。`;
-  const possibleCut = Math.min(top.value, Math.ceil(deadlinePlan.gap / 1000) * 1000);
-  return `期限までに月${yen.format(deadlinePlan.requiredMonthly)}必要です。現在の平均貯金との差は月${yen.format(deadlinePlan.gap)}なので、まず「${top.name}」を月${yen.format(possibleCut)}見直すと達成期限に近づきます。`;
-}
-
-function goalDeadlinePlan(goal: LedgerState["goals"][number], state: LedgerState) {
-  const projection = goalProjection(goal, state);
-  const deadline = new Date(`${goal.deadline}T00:00:00`);
-  const now = new Date();
-  const months = Math.max((deadline.getFullYear() - now.getFullYear()) * 12 + deadline.getMonth() - now.getMonth() + 1, 0);
-  const requiredMonthly = months > 0 ? Math.ceil(projection.remaining / months) : projection.remaining;
-  const averageSaving = averageMonthlySaving(state);
-  return {
-    months,
-    requiredMonthly,
-    averageSaving,
-    gap: Math.max(requiredMonthly - averageSaving, 0)
-  };
-}
-
 function investmentKindLabel(kind?: string) {
   if (kind === "ideco") return "iDeCo";
   if (kind === "nisa") return "NISA";
@@ -3976,114 +3940,6 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
   );
 }
 
-function GoalsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
-  const firstAccountId = state.accounts.find((account) => account.type === "saving")?.id ?? state.accounts[0]?.id ?? "";
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
-  const primaryGoal = state.goals[0];
-  const primaryDeadlinePlan = primaryGoal ? goalDeadlinePlan(primaryGoal, state) : null;
-  const savingAverage = averageMonthlySaving(state);
-  const topCategory = [...categoryExpense(state)].sort((a, b) => b.value - a.value)[0];
-  const suggestedCut = primaryDeadlinePlan && topCategory ? Math.min(topCategory.value, Math.ceil(primaryDeadlinePlan.gap / 1000) * 1000) : 0;
-  async function saveGoal(goalId?: string) {
-    if (!draft.name.trim()) {
-      setNotice("目標名を入力してください。");
-      return;
-    }
-    if (goalId) {
-      await updateGoal(goalId, draft);
-      setNotice("目標を更新しました。");
-    } else {
-      await createGoal(state.householdId ?? "", draft);
-      setNotice("目標を追加しました。");
-    }
-    setShowForm(false);
-    setEditingId(null);
-    setDraft({ name: "", targetAmount: 1000000, accountId: firstAccountId, deadline: `${new Date().getFullYear() + 2}-12-31`, monthlyBoost: 0 });
-    await reload();
-  }
-  return (
-    <div className="view-stack">
-      <section className="panel goal-summary">
-        <div className="goal-summary-row">
-          <div>
-            <span className="label-sm">年間貯金見込み</span>
-            <strong className="num-lg">{yen.format(savingAverage * 12)}</strong>
-            <span className="muted-sm">過去平均 {yen.format(savingAverage)}/月</span>
-          </div>
-          {primaryDeadlinePlan && (
-            <div className="goal-summary-side">
-              <span className="label-sm">{primaryGoal?.name}</span>
-              <strong>{primaryDeadlinePlan.gap ? `月${yen.format(suggestedCut || primaryDeadlinePlan.gap)}不足` : "順調"}</strong>
-            </div>
-          )}
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-title">
-          <h2>目標貯金</h2>
-          <button className="panel-action" type="button" onClick={() => { setShowForm(!showForm); setEditingId(null); }}><Plus size={14} /> {showForm ? "閉じる" : "目標を追加"}</button>
-        </div>
-        {state.goals.length === 0 && !showForm && (
-          <div className="empty-state">
-            <div className="empty-illustration"><Target size={20} /></div>
-            まだ目標がありません。「目標を追加」から最初の目標を設定してみましょう。
-          </div>
-        )}
-        {showForm && (
-          <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal()} onCancel={() => setShowForm(false)} />
-        )}
-      </section>
-      {state.goals.map((goal) => {
-        const projection = goalProjection(goal, state);
-        const deadlinePlan = goalDeadlinePlan(goal, state);
-        const isEditing = editingId === goal.id;
-        return (
-          <section className="panel goal-panel" key={goal.id}>
-            <div className="panel-title">
-              <h2>{goal.name}</h2>
-              <span className="panel-meta">期限 {goal.deadline}</span>
-            </div>
-            {isEditing ? (
-              <GoalEditForm draft={draft} setDraft={setDraft} state={state} onSave={() => saveGoal(goal.id)} onCancel={() => setEditingId(null)} onDelete={async () => { await deleteGoal(goal.id); await reload(); setEditingId(null); setNotice("目標を削除しました。"); }} />
-            ) : (
-              <>
-                <div className="progress"><span style={{ width: `${projection.progress}%` }} /></div>
-                <div className="goal-numbers">
-                  <strong>{Math.round(projection.progress)}%</strong>
-                  <span>不足 {yen.format(projection.remaining)} ／ 必要 {yen.format(deadlinePlan.requiredMonthly)}/月</span>
-                </div>
-                <section className="advice"><Sparkles size={18} /><p>{goalAdvice(goal, state)}</p></section>
-                <div className="goal-auto">
-                  <span>過去平均の月貯金 / 期限まで</span>
-                  <strong>{yen.format(averageMonthlySaving(state))}</strong>
-                  <span>{deadlinePlan.months}ヶ月</span>
-                </div>
-                <button className="ghost-btn" type="button" onClick={() => { setEditingId(goal.id); setShowForm(false); setDraft({ name: goal.name, targetAmount: goal.targetAmount, accountId: goal.accountId, deadline: goal.deadline, monthlyBoost: goal.monthlyBoost }); }}>編集する</button>
-              </>
-            )}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-function GoalEditForm({ draft, setDraft, state, onSave, onCancel, onDelete }: { draft: Omit<LedgerState["goals"][number], "id">; setDraft: (draft: Omit<LedgerState["goals"][number], "id">) => void; state: LedgerState; onSave: () => void; onCancel: () => void; onDelete?: () => void }) {
-  return (
-    <div className="edit-row balanced-edit">
-      <label>目標名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} placeholder="例: 住宅資金" /></label>
-      <label>目標金額<input type="number" value={numberInputValue(draft.targetAmount)} onChange={(event) => setDraft({ ...draft, targetAmount: Number(event.target.value || 0) })} /></label>
-      <label>対象口座<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value })}>{state.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
-      <label>期限<input type="date" value={draft.deadline} onChange={(event) => setDraft({ ...draft, deadline: event.target.value })} /></label>
-      <button type="button" onClick={onSave}>変更を保存</button>
-      {onDelete && <button type="button" onClick={onDelete}>目標を削除</button>}
-      <button type="button" onClick={onCancel}>編集をやめる</button>
-    </div>
-  );
-}
-
 function LedgerColorPicker({ householdId, currentColor, onSave }: { householdId: string; currentColor?: string; onSave: (color: string | null) => void }) {
   const [pending, setPending] = useState(currentColor ?? "#7c5cff");
   return (
@@ -4407,7 +4263,7 @@ function SettingsView({
                       <button className="danger-button" type="button" onClick={() => setConfirmDeleteLedger(true)}>家計簿を削除</button>
                     ) : (
                       <>
-                        <p>この家計簿を削除します。取引・口座・固定費・目標も見えなくなります。</p>
+                        <p>この家計簿を削除します。取引・口座・固定費も見えなくなります。</p>
                         <div>
                           <button
                             className="danger-button"
@@ -5241,7 +5097,7 @@ function AdminView() {
                       <button className="danger-button" type="button" onClick={() => setConfirmAction("deleteHousehold")}>この家計簿を削除</button>
                     ) : (
                       <>
-                        <p>本当に「{selectedHousehold.name}」を削除しますか？ 取引・口座・固定費・目標も見えなくなります。</p>
+                        <p>本当に「{selectedHousehold.name}」を削除しますか？ 取引・口座・固定費も見えなくなります。</p>
                         <div>
                           <button
                             className="danger-button"

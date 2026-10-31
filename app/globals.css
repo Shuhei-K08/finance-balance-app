@@ -4666,13 +4666,6 @@ input[type="color"] {
 .asset-link-rows button span { flex: 1; font-weight: 600; }
 .asset-link-rows button strong { font-variant-numeric: tabular-nums; font-weight: 700; }
 
-/* Goals summary */
-.goal-summary-row { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-.goal-summary-row > div { display: grid; gap: 2px; }
-.goal-summary-side { text-align: right; }
-.label-sm { font-size: 12px; color: var(--muted); font-weight: 600; }
-.num-lg { font-family: var(--font-num); font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.muted-sm { font-size: 12px; color: var(--muted); }
 
 /* Quick entry templates */
 .template-strip {
