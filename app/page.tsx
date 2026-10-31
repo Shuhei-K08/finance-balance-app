@@ -1718,6 +1718,12 @@ function QuickTransactionSheet({
   }, [initialDate, initialType]);
 
   const [savedTemplates, setSavedTemplates] = useState<TxTemplate[]>(() => loadTxTemplates(state.householdId));
+  const [templateMessage, setTemplateMessage] = useState("");
+  useEffect(() => {
+    if (!templateMessage) return;
+    const timer = window.setTimeout(() => setTemplateMessage(""), 3000);
+    return () => window.clearTimeout(timer);
+  }, [templateMessage]);
   const frequentTemplates = useMemo(() => frequentTxTemplates(state, savedTemplates), [state, savedTemplates]);
   const templates = [...savedTemplates, ...frequentTemplates].filter((tpl) => tpl.type === type);
 
@@ -1740,6 +1746,13 @@ function QuickTransactionSheet({
       return;
     }
     const label = memo.trim() || state.categories.find((c) => c.id === categoryId)?.name || transactionTypeLabel[type];
+    const draftKey = txTemplateSignature({ type, categoryId: categoryId || undefined, accountId, transferToAccountId: transferToAccountId || undefined, memo });
+    const duplicate = savedTemplates.find((tpl) => txTemplateSignature(tpl) === draftKey && tpl.amount === (value > 0 ? value : 0));
+    if (duplicate) {
+      setError("");
+      setTemplateMessage(`「${duplicate.label}」はすでにテンプレートに保存されています。`);
+      return;
+    }
     const next: TxTemplate[] = [
       ...savedTemplates,
       { id: `tpl-${Date.now()}`, saved: true, label, type, amount: value > 0 ? value : 0, categoryId: categoryId || undefined, accountId, transferToAccountId: transferToAccountId || undefined, memo: memo || undefined }
@@ -1747,6 +1760,7 @@ function QuickTransactionSheet({
     setSavedTemplates(next);
     storeTxTemplates(state.householdId, next);
     setError("");
+    setTemplateMessage(`「${label}」をテンプレートに保存しました。次回から上のボタンで呼び出せます。`);
   }
 
   function removeTemplate(id: string) {
@@ -1872,6 +1886,7 @@ function QuickTransactionSheet({
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
         <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中" : "登録"}</button>
+        {templateMessage && <p className="form-success" role="status"><Check size={14} /> {templateMessage}</p>}
         <button className="template-save" type="button" onClick={saveCurrentAsTemplate}><Star size={14} /> この内容をテンプレートに保存</button>
       </form>
     </div>
@@ -1913,6 +1928,35 @@ function storeTxTemplates(householdId: string | undefined, templates: TxTemplate
   }
 }
 
+function templateFromTransaction(tx: Transaction, state: LedgerState): TxTemplate {
+  const category = state.categories.find((c) => c.id === tx.categoryId);
+  return {
+    id: `tpl-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    saved: true,
+    label: tx.memo?.trim() || category?.name || transactionTypeLabel[tx.type],
+    type: tx.type,
+    amount: tx.amount,
+    categoryId: tx.type === "transfer" ? undefined : tx.categoryId,
+    accountId: tx.accountId,
+    transferToAccountId: tx.type === "transfer" ? tx.transferToAccountId : undefined,
+    memo: tx.memo?.trim() || undefined
+  };
+}
+
+// 取引をテンプレートとして保存する。同じ内容が既にあれば保存せず既存のものを返す
+function saveTransactionAsTemplate(tx: Transaction, state: LedgerState): { template: TxTemplate; duplicate: boolean } {
+  const current = loadTxTemplates(state.householdId);
+  const template = templateFromTransaction(tx, state);
+  const existing = current.find((tpl) => txTemplateSignature(tpl) === txTemplateSignature(template) && tpl.amount === template.amount);
+  if (existing) return { template: existing, duplicate: true };
+  storeTxTemplates(state.householdId, [...current, template]);
+  return { template, duplicate: false };
+}
+
+function txTemplateSignature(tpl: { type: TransactionType; categoryId?: string; accountId: string; transferToAccountId?: string; memo?: string }) {
+  return [tpl.type, tpl.categoryId ?? "", tpl.accountId, tpl.transferToAccountId ?? "", (tpl.memo ?? "").trim()].join("|");
+}
+
 // 直近300件の取引から「よく使う組み合わせ」を自動で抽出する
 function frequentTxTemplates(state: LedgerState, saved: TxTemplate[], limit = 6): TxTemplate[] {
   const groups = new Map<string, { count: number; latest: Transaction }>();
@@ -1927,7 +1971,7 @@ function frequentTxTemplates(state: LedgerState, saved: TxTemplate[], limit = 6)
       if ((tx.createdAt ?? tx.date) > (current.latest.createdAt ?? current.latest.date)) current.latest = tx;
     }
   }
-  const savedKeys = new Set(saved.map((tpl) => [tpl.type, tpl.categoryId ?? "", tpl.accountId, tpl.transferToAccountId ?? "", (tpl.memo ?? "").trim()].join("|")));
+  const savedKeys = new Set(saved.map((tpl) => txTemplateSignature(tpl)));
   return Array.from(groups.entries())
     .filter(([key, group]) => group.count >= 2 && !savedKeys.has(key))
     .sort((a, b) => b[1].count - a[1].count)
@@ -1945,6 +1989,220 @@ function frequentTxTemplates(state: LedgerState, saved: TxTemplate[], limit = 6)
         memo: latest.memo
       };
     });
+}
+
+function TemplateSettings({ state, setNotice }: { state: LedgerState; setNotice: (message: string) => void }) {
+  const [templates, setTemplates] = useState<TxTemplate[]>(() => loadTxTemplates(state.householdId));
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<TxTemplate | null>(null);
+  const [formError, setFormError] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyLimit, setHistoryLimit] = useState(20);
+
+  // 取引履歴（同じ内容は最新の1件にまとめる）
+  const historyRows = useMemo(() => {
+    const q = historyQuery.trim().toLowerCase();
+    const seen = new Set<string>();
+    const rows: Transaction[] = [];
+    const sorted = [...state.transactions].sort((a, b) => (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date));
+    for (const tx of sorted) {
+      const key = `${txTemplateSignature(tx)}|${tx.amount}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (q) {
+        const cat = state.categories.find((c) => c.id === tx.categoryId)?.name ?? "";
+        const acc = state.accounts.find((a) => a.id === tx.accountId)?.name ?? "";
+        if (![tx.memo ?? "", cat, acc, String(tx.amount)].some((v) => v.toLowerCase().includes(q))) continue;
+      }
+      rows.push(tx);
+    }
+    return rows;
+  }, [state.transactions, state.categories, state.accounts, historyQuery]);
+  const savedSignatures = new Set(templates.map((tpl) => `${txTemplateSignature(tpl)}|${tpl.amount}`));
+
+  function addFromHistory(tx: Transaction) {
+    const { template, duplicate } = saveTransactionAsTemplate(tx, state);
+    setTemplates(loadTxTemplates(state.householdId));
+    setNotice(duplicate ? `「${template.label}」はすでに保存されています。` : `「${template.label}」をテンプレートに追加しました。`);
+  }
+
+  useEffect(() => {
+    setTemplates(loadTxTemplates(state.householdId));
+    setEditingId(null);
+    setDraft(null);
+  }, [state.householdId]);
+
+  function persist(next: TxTemplate[]) {
+    setTemplates(next);
+    storeTxTemplates(state.householdId, next);
+  }
+
+  function emptyDraft(): TxTemplate {
+    const firstAccount = state.accounts.find((a) => a.type !== "credit") ?? state.accounts[0];
+    return { id: `tpl-${Date.now()}`, saved: true, label: "", type: "expense", amount: 0, accountId: firstAccount?.id ?? "", memo: "" };
+  }
+
+  function startNew() {
+    setEditingId("new");
+    setDraft(emptyDraft());
+    setFormError("");
+  }
+
+  function startEdit(tpl: TxTemplate) {
+    setEditingId(tpl.id);
+    setDraft({ ...tpl });
+    setFormError("");
+  }
+
+  function cancel() {
+    setEditingId(null);
+    setDraft(null);
+    setFormError("");
+  }
+
+  function save() {
+    if (!draft) return;
+    if (draft.type !== "transfer" && !draft.categoryId) return setFormError("カテゴリを選んでください。");
+    if (!draft.accountId) return setFormError("口座を選んでください。");
+    if (draft.type === "transfer" && (!draft.transferToAccountId || draft.transferToAccountId === draft.accountId)) return setFormError("振替先は振替元と別の口座を選んでください。");
+    const label = draft.label.trim() || draft.memo?.trim() || state.categories.find((c) => c.id === draft.categoryId)?.name || transactionTypeLabel[draft.type];
+    const cleaned: TxTemplate = {
+      ...draft,
+      label,
+      amount: draft.amount > 0 ? draft.amount : 0,
+      categoryId: draft.type === "transfer" ? undefined : draft.categoryId,
+      transferToAccountId: draft.type === "transfer" ? draft.transferToAccountId : undefined,
+      memo: draft.memo?.trim() || undefined
+    };
+    const next = editingId === "new" ? [...templates, cleaned] : templates.map((tpl) => (tpl.id === editingId ? cleaned : tpl));
+    persist(next);
+    setNotice(editingId === "new" ? `テンプレート「${label}」を追加しました。` : `テンプレート「${label}」を更新しました。`);
+    cancel();
+  }
+
+  function remove(tpl: TxTemplate) {
+    persist(templates.filter((t) => t.id !== tpl.id));
+    setNotice(`テンプレート「${tpl.label}」を削除しました。`);
+    if (editingId === tpl.id) cancel();
+  }
+
+  function move(index: number, delta: number) {
+    const target = index + delta;
+    if (target < 0 || target >= templates.length) return;
+    const next = [...templates];
+    [next[index], next[target]] = [next[target], next[index]];
+    persist(next);
+  }
+
+  function describe(tpl: TxTemplate) {
+    const account = state.accounts.find((a) => a.id === tpl.accountId)?.name ?? "口座未設定";
+    if (tpl.type === "transfer") {
+      const to = state.accounts.find((a) => a.id === tpl.transferToAccountId)?.name ?? "?";
+      return `振替・${account} → ${to}`;
+    }
+    const category = state.categories.find((c) => c.id === tpl.categoryId);
+    const parent = category?.parentId ? state.categories.find((c) => c.id === category.parentId) : undefined;
+    return `${transactionTypeLabel[tpl.type]}・${parent ? `${parent.name} › ` : ""}${category?.name ?? "カテゴリ未設定"}・${account}`;
+  }
+
+  const form = draft && (
+    <div className="crud-form template-form">
+      <label>種類
+        <div className="segmented compact">
+          {(["expense", "income", "transfer"] as TransactionType[]).map((kind) => (
+            <button key={kind} type="button" className={draft.type === kind ? "selected" : ""} onClick={() => setDraft({ ...draft, type: kind, categoryId: undefined, transferToAccountId: undefined, accountId: kind === "expense" ? draft.accountId : (state.accounts.find((a) => a.id === draft.accountId)?.type === "credit" ? state.accounts.find((a) => a.type !== "credit")?.id ?? "" : draft.accountId) })}>
+              {transactionTypeLabel[kind]}
+            </button>
+          ))}
+        </div>
+      </label>
+      <label>ボタンの名前<input placeholder="例: ランチ / コンビニ / 給料" value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })} /></label>
+      <label>金額（空欄なら毎回入力）<input type="number" inputMode="numeric" min="0" value={numberInputValue(draft.amount)} onChange={(e) => setDraft({ ...draft, amount: Number(e.target.value || 0) })} /></label>
+      {draft.type !== "transfer" && (
+        <label>カテゴリ<select value={draft.categoryId ?? ""} onChange={(e) => setDraft({ ...draft, categoryId: e.target.value || undefined })}>
+          <option value="">選択してください</option>
+          <CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} />
+        </select></label>
+      )}
+      <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(e) => setDraft({ ...draft, accountId: e.target.value })}>
+        <option value="">選択してください</option>
+        {sortAccountsByType(draft.type === "expense" ? state.accounts : state.accounts.filter((a) => a.type !== "credit")).map((account) => <option key={account.id} value={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}
+      </select></label>
+      {draft.type === "transfer" && (
+        <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(e) => setDraft({ ...draft, transferToAccountId: e.target.value || undefined })}>
+          <option value="">選択してください</option>
+          {state.accounts.filter((a) => a.type !== "credit" && a.id !== draft.accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+        </select></label>
+      )}
+      <label>メモ（任意）<input placeholder="取引に入るメモ" value={draft.memo ?? ""} onChange={(e) => setDraft({ ...draft, memo: e.target.value })} /></label>
+      {formError && <p className="form-error">{formError}</p>}
+      <div className="template-form-actions">
+        <button className="full-primary" type="button" onClick={save}>{editingId === "new" ? "追加する" : "保存する"}</button>
+        <button className="ghost-btn" type="button" onClick={cancel}>キャンセル</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="panel">
+      <div className="section-title"><h2>テンプレート</h2><span>{templates.length}件</span></div>
+      <p className="setting-copy">よく使う取引を登録しておくと、クイック入力（下の＋）の上部にボタンで表示され、1タップで内容を入力できます。この端末に保存されます。</p>
+      {editingId !== "new" && (
+        <div className="template-add-buttons">
+          <button className="full-primary" type="button" onClick={() => { startNew(); setShowHistory(false); }}><Plus size={16} /> 新しく作る</button>
+          <button className="ghost-btn" type="button" onClick={() => setShowHistory((v) => !v)}><Receipt size={16} /> {showHistory ? "履歴を閉じる" : "取引履歴から追加"}</button>
+        </div>
+      )}
+      {editingId === "new" && form}
+      {showHistory && editingId !== "new" && (
+        <div className="template-history">
+          <input type="search" placeholder="メモ・カテゴリ・口座・金額で検索" value={historyQuery} onChange={(e) => { setHistoryQuery(e.target.value); setHistoryLimit(20); }} />
+          {historyRows.length === 0 && <div className="empty-state">該当する取引がありません。</div>}
+          {historyRows.slice(0, historyLimit).map((tx) => {
+            const added = savedSignatures.has(`${txTemplateSignature(tx)}|${tx.amount}`);
+            const label = tx.memo?.trim() || state.categories.find((c) => c.id === tx.categoryId)?.name || transactionTypeLabel[tx.type];
+            return (
+              <div key={tx.id} className="template-row">
+                <div className="template-row-main">
+                  <strong>{label}</strong>
+                  <small>{tx.date}・{describe({ ...templateFromTransaction(tx, state) })}</small>
+                </div>
+                <span className="template-row-amount">{yen.format(tx.amount)}</span>
+                <button type="button" className={added ? "mini-button" : "mini-button-active"} disabled={added} onClick={() => addFromHistory(tx)}>{added ? "保存済み" : "追加"}</button>
+              </div>
+            );
+          })}
+          {historyRows.length > historyLimit && (
+            <button className="ghost-btn" type="button" onClick={() => setHistoryLimit((n) => n + 20)}>さらに表示（残り {historyRows.length - historyLimit} 件）</button>
+          )}
+        </div>
+      )}
+      {templates.length === 0 && editingId !== "new" && (
+        <div className="empty-state"><div className="empty-illustration"><Star size={20} /></div>まだテンプレートがありません。</div>
+      )}
+      <div className="template-list">
+        {templates.map((tpl, index) => (
+          <div key={tpl.id} className="template-row-wrap">
+            <div className="template-row">
+              <div className="template-row-main">
+                <strong><Star size={13} /> {tpl.label}</strong>
+                <small>{describe(tpl)}</small>
+              </div>
+              <span className="template-row-amount">{tpl.amount > 0 ? yen.format(tpl.amount) : "金額なし"}</span>
+              <div className="template-row-actions">
+                <button type="button" className="icon-button" aria-label="上へ" disabled={index === 0} onClick={() => move(index, -1)}><ChevronLeft size={16} style={{ transform: "rotate(90deg)" }} /></button>
+                <button type="button" className="icon-button" aria-label="下へ" disabled={index === templates.length - 1} onClick={() => move(index, 1)}><ChevronRight size={16} style={{ transform: "rotate(90deg)" }} /></button>
+                <button type="button" className="mini-button" onClick={() => (editingId === tpl.id ? cancel() : startEdit(tpl))}>{editingId === tpl.id ? "閉じる" : "編集"}</button>
+                <button type="button" className="mini-button danger-text" onClick={() => remove(tpl)}>削除</button>
+              </div>
+            </div>
+            {editingId === tpl.id && form}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 }
 
 function CategoryOptions({ categories, kind }: { categories: LedgerState["categories"]; kind: "expense" | "income" }) {
@@ -3957,7 +4215,7 @@ function SettingsView({
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
-  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "investment" | "display" | "export">("ledger");
+  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "templates" | "investment" | "display" | "export">("ledger");
   const [exportFrom, setExportFrom] = useState("");
   const [exportTo, setExportTo] = useState("");
   const [weekStart, setWeekStart] = useWeekStart();
@@ -4015,6 +4273,7 @@ function SettingsView({
           ["snapshots", "月末資産"],
           ["categories", "カテゴリ"],
           ["fixed", "定期項目"],
+          ["templates", "テンプレート"],
           ["display", "表示設定"],
           ["export", "データ出力"],
         ].map(([id, label]) => (
@@ -4023,7 +4282,7 @@ function SettingsView({
       </div>
       {settingsTab !== "display" && settingsTab !== "export" && (
         <section className="settings-guide">
-          <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : "毎月発生する支払い・収入"}</strong>
+          <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : settingsTab === "templates" ? "クイック入力で1タップ呼び出せる取引" : "毎月発生する支払い・収入"}</strong>
           <span>上のメニューから編集したい項目を選んでください。</span>
         </section>
       )}
@@ -4515,6 +4774,7 @@ function SettingsView({
           </div>
         </section>
       )}
+      {settingsTab === "templates" && <TemplateSettings state={state} setNotice={setNotice} />}
       {settingsTab === "export" && (
         <section className="panel">
           <div className="section-title"><h2>データ出力（CSV）</h2></div>
@@ -5817,6 +6077,11 @@ function TransactionEditSheet({
 
         <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
         <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
+        <button className="template-save" type="button" onClick={() => {
+          const { template, duplicate } = saveTransactionAsTemplate(transaction, state);
+          setNotice(duplicate ? `「${template.label}」はすでにテンプレートに保存されています。` : `「${template.label}」をテンプレートに保存しました。クイック入力から呼び出せます。`);
+          onClose();
+        }}><Star size={14} /> この取引をテンプレートに保存</button>
       </form>
     </div>,
     document.body

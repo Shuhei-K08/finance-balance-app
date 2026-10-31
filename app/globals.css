@@ -4730,3 +4730,57 @@ input[type="color"] {
 
 .fab { display: none; }
 @media (min-width: 1100px) { .fab { display: grid; } }
+
+/* Template feedback & settings */
+.form-success {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--income);
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(52, 211, 153, 0.12);
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+.form-success svg { flex: none; margin-top: 2px; }
+.template-add-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.template-add-buttons button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; margin: 0; }
+.template-history, .template-list { display: grid; gap: 8px; margin-top: 12px; }
+.template-history input[type="search"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  color: var(--ink);
+  font-size: 14px;
+}
+.template-row-wrap { display: grid; gap: 8px; }
+.template-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+}
+.template-row-main { display: grid; gap: 2px; min-width: 0; }
+.template-row-main strong { display: flex; align-items: center; gap: 5px; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-row-main strong svg { color: var(--warning); flex: none; }
+.template-row-main small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.template-row-amount { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 14px; white-space: nowrap; }
+.template-row > button { grid-column: 1 / -1; justify-self: end; }
+.template-row-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
+.template-row-actions .icon-button { width: 32px; height: 32px; }
+.template-row-actions .icon-button:disabled { opacity: 0.35; }
+.template-row-actions .danger-text { color: var(--expense); }
+.template-form-actions { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.template-form-actions button { margin: 0 !important; }
+.template-form .segmented { margin-top: 4px; }
+.template-history .template-row { grid-template-columns: 1fr auto auto; }
+.template-history .template-row > button { grid-column: auto; }
