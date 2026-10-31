@@ -50,6 +50,13 @@ import {
   UserPlus,
   Users,
   Palette,
+  Tag,
+  Repeat,
+  Stamp,
+  BookMarked,
+  Download,
+  ShieldCheck,
+  Banknote,
   SlidersHorizontal,
   BookText,
   Star,
@@ -146,6 +153,20 @@ import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
 type Tab = "home" | "transactions" | "analysis" | "investments" | "settings" | "admin";
+type SettingsPage = "top" | "ledger" | "accounts" | "categories" | "fixed" | "templates" | "snapshots" | "investment" | "cover" | "export";
+
+const SETTINGS_PAGE_TITLES: Record<SettingsPage, string> = {
+  top: "設定",
+  ledger: "家計簿を管理",
+  accounts: "口座・カード",
+  categories: "カテゴリ",
+  fixed: "定期項目",
+  templates: "テンプレート",
+  snapshots: "月末資産の確定",
+  investment: "投資口座",
+  cover: "表紙の色",
+  export: "データの書き出し"
+};
 
 // 通帳の表紙の色
 const DEFAULT_COVER_COLOR = "#1C2A4A";
@@ -325,7 +346,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("home");
   const [showTour, setShowTour] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>("top");
   const [ledgerMenuOpen, setLedgerMenuOpen] = useState(false);
   const [quickDate, setQuickDate] = useState(todayIso());
   const [quickType, setQuickType] = useState<TransactionType>("expense");
@@ -561,7 +582,7 @@ export default function App() {
           {visibleTabs.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.id} type="button" className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>
+              <button key={item.id} type="button" className={tab === item.id ? "active" : ""} onClick={() => { if (item.id === "settings") setSettingsPage("top"); setTab(item.id); }}>
                 <Icon size={18} /> {item.label}
               </button>
             );
@@ -592,7 +613,7 @@ export default function App() {
           <button
             type="button"
             className="ledger-switch"
-            onClick={() => { setLedgerMenuOpen((v) => !v); setMenuOpen(false); }}
+            onClick={() => setLedgerMenuOpen((v) => !v)}
             aria-label="家計簿を切り替え"
           >
             <span className="ledger-mark" aria-hidden="true">{(state.householdName ?? "家").slice(0, 1)}</span>
@@ -600,12 +621,9 @@ export default function App() {
             <span className={`space-type-badge ${state.activeSpace === "shared" ? "shared" : "personal"}`}>
               {state.activeSpace === "shared" ? "共有" : "個人"}
             </span>
-            {(state.households ?? []).length > 1 && <ChevronDown size={16} />}
+            <ChevronDown size={16} />
           </button>
-          <button className="icon-button" type="button" onClick={() => { setMenuOpen((v) => !v); setLedgerMenuOpen(false); }} aria-label="メニュー">
-            <MoreHorizontal size={20} />
-          </button>
-          {ledgerMenuOpen && (state.households ?? []).length > 1 && (
+          {ledgerMenuOpen && (
             <div className="topbar-popover left" onClick={(e) => e.stopPropagation()}>
               <div className="tcp-title">家計簿を切り替え</div>
               {(state.households ?? []).map((household) => (
@@ -625,49 +643,13 @@ export default function App() {
                   {household.id === state.householdId && <Check size={16} />}
                 </button>
               ))}
-            </div>
-          )}
-          {menuOpen && (
-            <div className="topbar-popover right" onClick={(e) => e.stopPropagation()}>
-              <button type="button" className="popover-item" onClick={() => { setTheme(theme === "dark" ? "light" : "dark"); }}>
-                {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                <span className="popover-item-label">{theme === "dark" ? "昼テーマにする" : "夜テーマにする"}</span>
-              </button>
-              {state.householdId && (
-                <div className="popover-block">
-                  <div className="popover-item static"><Palette size={16} /><span className="popover-item-label">通帳の表紙の色</span></div>
-                  <div className="lcp-presets">
-                    {LEDGER_PRESET_COLORS.map((preset) => (
-                      <button
-                        key={preset.value}
-                        type="button"
-                        title={preset.label}
-                        className={`lcp-swatch${ledgerCover === preset.value ? " active" : ""}`}
-                        style={{ background: preset.value }}
-                        onClick={() => {
-                          saveHouseholdThemeColor(state.householdId!, preset.value);
-                          setState({ ...state, themeColor: preset.value });
-                        }}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-              <button type="button" className="popover-item" onClick={() => { setMenuOpen(false); openTour(); }}>
-                <HelpCircle size={16} /><span className="popover-item-label">使い方ガイド</span>
-              </button>
-              {state.profileRole === "admin" && (
-                <button type="button" className="popover-item" onClick={() => { setMenuOpen(false); setTab("admin"); }}>
-                  <UserPlus size={16} /><span className="popover-item-label">管理画面</span>
-                </button>
-              )}
-              <button type="button" className="popover-item danger" onClick={() => { setMenuOpen(false); signOut().catch((error) => setNotice(toJapaneseError(error))); }}>
-                <LogOut size={16} /><span className="popover-item-label">ログアウト</span>
+              <button type="button" className="popover-item manage" onClick={() => { setLedgerMenuOpen(false); setSettingsPage("ledger"); setTab("settings"); }}>
+                <Settings size={16} /><span className="popover-item-label">家計簿を管理</span><ChevronRight size={16} />
               </button>
             </div>
           )}
         </section>
-        {(menuOpen || ledgerMenuOpen) && <div className="sheet-backdrop" style={{ background: "transparent" }} onClick={() => { setMenuOpen(false); setLedgerMenuOpen(false); }} />}
+        {ledgerMenuOpen && <div className="sheet-backdrop" style={{ background: "transparent" }} onClick={() => setLedgerMenuOpen(false)} />}
 
         {(state.households ?? []).length > 1 && (
           <section className="household-pills desktop-only" aria-label="家計簿切替">
@@ -686,12 +668,12 @@ export default function App() {
           </section>
         )}
 
-        <header className="page-head">
+        {!(tab === "settings" && settingsPage !== "top") && <header className="page-head">
           <h1>{TAB_TITLES[tab]}</h1>
           {tab !== "settings" && tab !== "admin" && (
             <MonthSwitcher monthKey={calendarMonth} setMonthKey={setCalendarMonth} setSelectedDate={setCalendarDate} />
           )}
-        </header>
+        </header>}
 
         {ASSET_TABS.includes(tab) && (
           <nav className="segment-tabs mobile-only" aria-label="資産メニュー">
@@ -736,7 +718,21 @@ export default function App() {
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
-        {tab === "settings" && <SettingsView state={state} setNotice={setNotice} reloadHousehold={switchHousehold} reload={() => refreshRemoteState()} />}
+        {tab === "settings" && (
+          <SettingsView
+            state={state}
+            setNotice={setNotice}
+            reloadHousehold={switchHousehold}
+            reload={() => refreshRemoteState()}
+            page={settingsPage}
+            setPage={(next) => { setSettingsPage(next); window.scrollTo(0, 0); }}
+            theme={theme}
+            setTheme={setTheme}
+            onOpenTour={openTour}
+            onOpenAdmin={() => setTab("admin")}
+            onSignOut={() => signOut().catch((error) => setNotice(toJapaneseError(error)))}
+          />
+        )}
         {tab === "admin" && state.profileRole === "admin" && <AdminView />}
       </div>
 
@@ -767,7 +763,7 @@ export default function App() {
                 key={item.id}
                 type="button"
                 className={active ? "active" : ""}
-                onClick={() => setTab(item.id)}
+                onClick={() => { if (item.id === "settings") setSettingsPage("top"); setTab(item.id); }}
                 aria-label={item.label}
               >
                 <Icon size={21} />
@@ -2189,12 +2185,11 @@ function TemplateSettings({ state, setNotice }: { state: LedgerState; setNotice:
 
   return (
     <section className="panel">
-      <div className="section-title"><h2>テンプレート</h2><span>{templates.length}件</span></div>
       <p className="setting-copy">よく使う取引を登録しておくと、クイック入力（下の＋）の上部にボタンで表示され、1タップで内容を入力できます。この端末に保存されます。</p>
       {editingId !== "new" && (
         <div className="template-add-buttons">
           <button className="full-primary" type="button" onClick={() => { startNew(); setShowHistory(false); }}><Plus size={16} /> 新しく作る</button>
-          <button className="ghost-btn" type="button" onClick={() => setShowHistory((v) => !v)}><Receipt size={16} /> {showHistory ? "履歴を閉じる" : "取引履歴から追加"}</button>
+          <button className="ghost-btn" type="button" onClick={() => setShowHistory((v) => !v)}><Receipt size={16} /> {showHistory ? "履歴を閉じる" : "履歴から追加"}</button>
         </div>
       )}
       {editingId === "new" && form}
@@ -4108,12 +4103,26 @@ function SettingsView({
   state,
   setNotice,
   reloadHousehold,
-  reload
+  reload,
+  page,
+  setPage,
+  theme,
+  setTheme,
+  onOpenTour,
+  onOpenAdmin,
+  onSignOut
 }: {
   state: LedgerState;
   setNotice: (message: string) => void;
   reloadHousehold: (householdId: string) => Promise<void>;
   reload: () => Promise<void>;
+  page: SettingsPage;
+  setPage: (page: SettingsPage) => void;
+  theme: ThemeMode;
+  setTheme: (theme: ThemeMode) => void;
+  onOpenTour: () => void;
+  onOpenAdmin: () => void;
+  onSignOut: () => void;
 }) {
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [showCreateShared, setShowCreateShared] = useState(false);
@@ -4129,7 +4138,10 @@ function SettingsView({
   const [openingBalances, setOpeningBalances] = useState<Record<string, { amount: number; date: string }>>(
     Object.fromEntries(state.accounts.filter((account) => account.type !== "credit").map((account) => [account.id, { amount: account.openingBalance, date: account.openingBalanceDate ?? todayIso() }]))
   );
-  const [settingsTab, setSettingsTab] = useState<"ledger" | "accounts" | "snapshots" | "categories" | "fixed" | "templates" | "investment" | "display" | "export">("ledger");
+  const settingsTab = page;
+  const [showJoin, setShowJoin] = useState(false);
+  const [categoryKind, setCategoryKind] = useState<"expense" | "income">("expense");
+  const [fixedEditId, setFixedEditId] = useState<string | null>(null);
   const [exportFrom, setExportFrom] = useState("");
   const [exportTo, setExportTo] = useState("");
   const [weekStart, setWeekStart] = useWeekStart();
@@ -4179,50 +4191,77 @@ function SettingsView({
 
   return (
     <div className="view-stack">
-      <div className="settings-tabs">
-        {[
-          ["ledger", "家計簿"],
-          ["accounts", "口座"],
-          ["investment", "投資"],
-          ["snapshots", "月末資産"],
-          ["categories", "カテゴリ"],
-          ["fixed", "定期項目"],
-          ["templates", "テンプレート"],
-          ["display", "表示設定"],
-          ["export", "データ出力"],
-        ].map(([id, label]) => (
-          <button className={settingsTab === id ? "active" : ""} key={id} type="button" onClick={() => setSettingsTab(id as typeof settingsTab)}>{label}</button>
-        ))}
-      </div>
-      {settingsTab !== "display" && settingsTab !== "export" && (
-        <section className="settings-guide">
-          <strong>{settingsTab === "ledger" ? "家計簿の作成・参加・共有メンバー" : settingsTab === "accounts" ? "口座・支払い方法・初期残高" : settingsTab === "snapshots" ? "月末資産の確定と再変更" : settingsTab === "categories" ? "収入・支出カテゴリとサブカテゴリー" : settingsTab === "investment" ? "投資口座の追加・編集・積立額の変更" : settingsTab === "templates" ? "クイック入力で1タップ呼び出せる取引" : "毎月発生する支払い・収入"}</strong>
-          <span>上のメニューから編集したい項目を選んでください。</span>
-        </section>
+      {page === "top" ? (
+        <SettingsTop
+          state={state}
+          setPage={setPage}
+          theme={theme}
+          setTheme={setTheme}
+          weekStart={weekStart}
+          setWeekStart={setWeekStart}
+          onOpenTour={onOpenTour}
+          onOpenAdmin={onOpenAdmin}
+          onSignOut={onSignOut}
+        />
+      ) : (
+        <div className="subpage-head">
+          <button type="button" className="subpage-back" onClick={() => setPage("top")} aria-label="設定に戻る"><ChevronLeft size={24} /></button>
+          <h1>{SETTINGS_PAGE_TITLES[page]}</h1>
+          {page === "accounts" || page === "categories" || page === "fixed" ? (
+            <button
+              type="button"
+              className="subpage-add"
+              onClick={() => {
+                if (page === "accounts") setShowAccountForm(true);
+                if (page === "categories") { setCategoryDraft({ ...categoryDraft, level: "main", kind: categoryKind, name: "" }); setShowCategoryForm(true); }
+                if (page === "fixed") setShowFixedForm(true);
+              }}
+            ><Plus size={14} />追加</button>
+          ) : <span />}
+        </div>
       )}
       {settingsTab === "ledger" && (
       <>
-      <section className="panel">
-        <div className="section-title"><h2>家計簿管理</h2><span>{state.householdName ?? (state.activeSpace === "personal" ? "個人" : "共有")}</span></div>
-        <div className="ledger-list">
+      <section className="settings-block">
+        <div className="settings-sec-h"><span>あなたの家計簿</span></div>
+        <div className="settings-list">
           {(state.households ?? []).map((household) => (
             <button
-              className={household.id === state.householdId ? "selected-ledger" : ""}
+              className="settings-row ledger-row"
               key={household.id}
               type="button"
-              onClick={() => {
-                setLedgerModalId(household.id);
-              }}
+              onClick={() => setLedgerModalId(household.id)}
             >
-              <span>{household.name}</span>
-              <em>{household.spaceType === "personal" ? "個人" : "共有"} / {household.memberRole === "owner" ? "所有者" : "メンバー"}{household.id === state.householdId ? " / 表示中" : ""}</em>
+              <i className="cover-swatch" style={{ background: coverColor(household.themeColor) }} />
+              <span className="settings-row-text"><b>{household.name}</b><small>{household.spaceType === "personal" ? "個人" : "共有"}／{household.memberRole === "owner" ? "オーナー" : "メンバー"}</small></span>
+              {household.id === state.householdId ? <span className="now-tag">表示中</span> : <span />}
+              <ChevronRight size={16} className="settings-chev" />
             </button>
           ))}
+        </div>
+        <div className="settings-btn-row">
+          <button className="full-primary" type="button" onClick={() => { setSharedName("共有家計簿"); setShowCreateShared(true); }}>共有家計簿をつくる</button>
+          <button className="google-button" type="button" onClick={() => setShowJoin((v) => !v)}>招待コードで参加</button>
         </div>
         {modalLedger && createPortal(
           <div className="sheet-backdrop page-backdrop" onClick={() => setLedgerModalId(null)}>
             <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
               <button className="modal-close" type="button" onClick={() => setLedgerModalId(null)}>閉じる</button>
+              {modalLedger.id !== state.householdId && (
+                <button
+                  className="full-primary"
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await reloadHousehold(modalLedger.id);
+                      setLedgerModalId(null);
+                      setNotice(`${modalLedger.name}に切り替えました。`);
+                    } catch (error) {
+                      setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。"));
+                    }
+                  }}
+                >この家計簿を表示する</button>
+              )}
               <div>
                 <span>家計簿名</span>
                 <strong>{modalLedger.name}</strong>
@@ -4233,7 +4272,7 @@ function SettingsView({
                 currentColor={modalLedger.themeColor}
                 onSave={(color) => {
                   saveHouseholdThemeColor(modalLedger.id, color);
-                  setNotice("テーマカラーを変更しました。");
+                  setNotice("表紙の色を変更しました。");
                   // 現在表示中の家計簿なら CSS 変数を即時反映
                   if (modalLedger.id === state.householdId) {
                     if (color) {
@@ -4376,19 +4415,9 @@ function SettingsView({
         )}
       </section>
 
-      <section className="panel">
-        <div className="section-title"><h2>共有家計簿</h2><span>作成・参加</span></div>
-        <div className="share-actions">
-          <button
-            className="full-primary"
-            type="button"
-            onClick={() => {
-              setSharedName("共有家計簿");
-              setShowCreateShared(true);
-            }}
-          >
-            共有家計簿を作成
-          </button>
+      {showJoin && (
+      <section className="settings-block">
+        <div className="share-actions join-box">
           <label>招待コード<input value={inviteCode} onChange={(event) => setInviteCode(event.target.value.toUpperCase())} placeholder="例: A1B2C3D4" /></label>
           {joinDebug && <div className="debug-box">{joinDebug}</div>}
           <button
@@ -4417,10 +4446,11 @@ function SettingsView({
               }
             }}
           >
-            招待コードで参加
+            参加する
           </button>
         </div>
       </section>
+      )}
       {showCreateShared && createPortal(
         <div className="sheet-backdrop page-backdrop" onClick={() => { if (!creatingShared) setShowCreateShared(false); }}>
           <div className="ledger-detail page-sheet" onClick={(event) => event.stopPropagation()}>
@@ -4469,113 +4499,50 @@ function SettingsView({
       </>
       )}
       {settingsTab === "accounts" && (
-      <>
-      <section className="panel">
-        <div className="section-title with-action">
-          <div><h2>口座・支払い方法</h2><span>{state.mode === "balance" ? "残高管理あり" : "収支のみ"}</span></div>
-          <button type="button" onClick={() => setShowAccountForm(!showAccountForm)}>{showAccountForm ? "閉じる" : "追加する"}</button>
-        </div>
-        <p className="setting-copy">銀行口座・現金・貯金口座は「口座」、クレジットカードは「支払い方法」として分けて管理します。</p>
-        {showAccountForm && <div className="crud-form">
-          <label>口座名<input placeholder="例: 生活口座 / 楽天カード" value={newAccount.name} onChange={(event) => setNewAccount({ ...newAccount, name: event.target.value })} /></label>
-          <label>種類<select value={newAccount.type} onChange={(event) => {
-            const nextType = event.target.value as AccountType;
-            setNewAccount({ ...newAccount, type: nextType, color: accountColorForType(nextType) });
-          }}>
-            <option value="bank">銀行口座</option><option value="cash">現金</option><option value="saving">貯金口座</option><option value="credit">クレジットカード</option>
-          </select></label>
-          <label>表示色<input type="color" value={newAccount.color} onChange={(event) => setNewAccount({ ...newAccount, color: event.target.value })} /></label>
-          {newAccount.type !== "credit" && (
-            <>
-              <label>初期残高<input type="number" min="0" value={numberInputValue(newAccount.openingBalance)} onChange={(event) => setNewAccount({ ...newAccount, openingBalance: Number(event.target.value || 0) })} /></label>
-              <label>初期残高の日付<input type="date" value={newAccount.openingBalanceDate} onChange={(event) => setNewAccount({ ...newAccount, openingBalanceDate: event.target.value })} /></label>
-            </>
-          )}
-          {newAccount.type === "credit" && (
-            <>
-              <label>締め日<input type="number" min="1" max="31" value={numberInputValue(newAccount.closingDay)} onChange={(event) => setNewAccount({ ...newAccount, closingDay: Number(event.target.value || 0) })} /></label>
-              <label>引落日<input type="number" min="1" max="31" value={numberInputValue(newAccount.withdrawalDay)} onChange={(event) => setNewAccount({ ...newAccount, withdrawalDay: Number(event.target.value || 0) })} /></label>
-              <label>引落口座<select value={newAccount.withdrawalAccountId} onChange={(event) => setNewAccount({ ...newAccount, withdrawalAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => account.type !== "credit").map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>
-              <p className="setting-copy">このカードで支出登録すると、残高反映日が自動で次回引落日に設定され、未確定のクレカ支出として月末予測に反映されます。</p>
-            </>
-          )}
-          <button className="full-primary" type="button" onClick={async () => {
-            try {
-              if (newAccount.type === "credit" && !newAccount.withdrawalAccountId) {
-                setNotice("引落口座を選択してください。");
-                return;
-              }
-              await createAccount(state.householdId ?? "", { ...newAccount, openingBalance: newAccount.type === "credit" ? 0 : newAccount.openingBalance });
-              await reload();
-              setNewAccount({ name: "", type: "bank", openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
-              setShowAccountForm(false);
-              setNotice("口座を追加しました。");
-            } catch (error) { setNotice(toJapaneseError(error, "口座追加に失敗しました。")); }
-          }}>口座を追加</button>
-        </div>}
-        <EditableAccountList state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
-      </section>
-      <section className="panel">
-        <div className="section-title"><h2>初期残高</h2><span>口座残高の基準</span></div>
-        <p className="setting-copy">初回登録時の残高です。普段の月末残高調整は「月末資産」から行うのがおすすめです。</p>
-        <button className="google-button" type="button" onClick={() => setShowOpeningBalances(!showOpeningBalances)}>{showOpeningBalances ? "初期残高を閉じる" : "初期残高を開く"}</button>
-        {showOpeningBalances && <div className="opening-list">
-          {state.accounts.filter((account) => account.type !== "credit").map((account) => (
-            <label key={account.id}>{account.name}
-              <input
-                type="number"
-                min="0"
-                value={numberInputValue(openingBalances[account.id]?.amount ?? account.openingBalance)}
-                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { date: todayIso() }), amount: Number(event.target.value || 0) } })}
-              />
-              <input
-                type="date"
-                value={openingBalances[account.id]?.date ?? account.openingBalanceDate ?? todayIso()}
-                onChange={(event) => setOpeningBalances({ ...openingBalances, [account.id]: { ...(openingBalances[account.id] ?? { amount: account.openingBalance }), date: event.target.value } })}
-              />
-            </label>
-          ))}
-          <button
-            className="full-primary"
-            type="button"
-            onClick={async () => {
-              try {
-                await updateOpeningBalances(openingBalances);
-                await reload();
-                setNotice("初期残高を更新しました。");
-              } catch (error) {
-                setNotice(toJapaneseError(error, "初期残高の更新に失敗しました。"));
-              }
-            }}
-          >
-            初期残高を更新
-          </button>
-        </div>}
-      </section>
-      </>
+        <AccountsSettings state={state} setNotice={setNotice} reload={reload} addOpen={showAccountForm} setAddOpen={setShowAccountForm} />
       )}
       {settingsTab === "snapshots" && (
         <AssetSnapshotSettings state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
       )}
       {settingsTab === "categories" && (
-      <section className="panel">
-        <div className="section-title"><h2>カテゴリ管理</h2><span>カテゴリーとサブカテゴリー</span></div>
-        <p className="setting-copy">カテゴリーは「食費」「住居」など大きな分類です。サブカテゴリーは「スーパー」「外食」などカテゴリー内の細かい分類です。</p>
-        <button className="full-primary" type="button" onClick={() => setShowCategoryForm(!showCategoryForm)}>{showCategoryForm ? "追加を閉じる" : "カテゴリを追加する"}</button>
-        {showCategoryForm && <div className="mini-panel category-add-panel">
-          <label>追加するもの<select value={categoryDraft.level} onChange={(event) => {
-            const nextLevel = event.target.value as "main" | "sub";
-            const nextParent = categoryDraft.parentId || sortCategories(state.categories.filter((category) => !category.parentId && category.kind === categoryDraft.kind))[0]?.id || "";
-            setCategoryDraft({ ...categoryDraft, level: nextLevel, parentId: nextLevel === "sub" ? nextParent : categoryDraft.parentId, color: nextLevel === "sub" ? nextSubcategoryColor(state.categories, nextParent) : categoryDraft.color });
-          }}>
-            <option value="main">カテゴリー</option>
-            <option value="sub">サブカテゴリー</option>
-          </select></label>
-          <label>用途<select value={categoryDraft.kind} onChange={(event) => {
-            const nextKind = event.target.value as "expense" | "income";
-            const nextParent = sortCategories(state.categories.filter((category) => !category.parentId && category.kind === nextKind))[0];
-            setCategoryDraft({ ...categoryDraft, kind: nextKind, parentId: nextParent?.id ?? "", color: categoryDraft.level === "sub" ? nextSubcategoryColor(state.categories, nextParent?.id ?? "") : categoryDraft.color });
-          }}><option value="expense">支出</option><option value="income">収入</option></select></label>
+      <>
+        <nav className="segment-tabs" style={{ display: "flex" }} aria-label="カテゴリの種類">
+          <button type="button" className={categoryKind === "expense" ? "active" : ""} onClick={() => setCategoryKind("expense")}>支出</button>
+          <button type="button" className={categoryKind === "income" ? "active" : ""} onClick={() => setCategoryKind("income")}>収入</button>
+        </nav>
+        <div className="settings-list">
+          {sortCategories(state.categories.filter((category) => !category.parentId && category.kind === categoryKind)).map((parent) => {
+            const children = sortSubcategories(state.categories.filter((category) => category.parentId === parent.id));
+            return (
+              <div className="cat-parent" key={parent.id}>
+                <button type="button" className="cat-parent-head" onClick={() => setCategoryModalId(parent.id)}>
+                  <i style={{ background: parent.color }} />
+                  <b>{parent.name}</b>
+                  <small>{children.length > 0 ? `サブ ${children.length}` : ""}</small>
+                  <ChevronRight size={16} className="settings-chev" />
+                </button>
+                <div className="cat-subs">
+                  {children.map((child) => (
+                    <button type="button" key={child.id} onClick={() => setCategoryModalId(child.id)}>{child.name}</button>
+                  ))}
+                  <button
+                    type="button"
+                    className="cat-sub-add"
+                    onClick={() => {
+                      setCategoryDraft({ ...categoryDraft, level: "sub", kind: categoryKind, parentId: parent.id, name: "", color: nextSubcategoryColor(state.categories, parent.id) });
+                      setShowCategoryForm(true);
+                    }}
+                  ><Plus size={12} />{children.length > 0 ? "追加" : "サブカテゴリを追加"}</button>
+                </div>
+              </div>
+            );
+          })}
+          {state.categories.filter((category) => !category.parentId && category.kind === categoryKind).length === 0 && (
+            <div className="empty-state">まだカテゴリがありません。右上の「追加」から作成できます。</div>
+          )}
+        </div>
+        <p className="settings-note">名前をタップすると、名前・色の変更や削除ができます。削除するときは、その取引の移し先を選べます。</p>
+        {showCategoryForm && <SettingsSheet title={categoryDraft.level === "sub" ? "サブカテゴリを追加" : "カテゴリを追加"} onClose={() => setShowCategoryForm(false)}><div className="crud-form">
           {categoryDraft.level === "sub" && (
             <label>所属カテゴリー<select value={categoryDraft.parentId} onChange={(event) => {
               setCategoryDraft({ ...categoryDraft, parentId: event.target.value, color: nextSubcategoryColor(state.categories, event.target.value) });
@@ -4585,7 +4552,8 @@ function SettingsView({
             </select></label>
           )}
           <label>{categoryDraft.level === "sub" ? "サブカテゴリー名" : "カテゴリー名"}<input placeholder={categoryDraft.level === "sub" ? "例: スーパー" : "例: 食費"} value={categoryDraft.name} onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })} /></label>
-          <label>{categoryDraft.level === "sub" ? "色（自動グラデーション）" : "色"}<input type="color" value={categoryDraft.color} disabled={categoryDraft.level === "sub"} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} /></label>
+          {categoryDraft.level === "main" && <label>色<input type="color" value={categoryDraft.color} onChange={(event) => setCategoryDraft({ ...categoryDraft, color: event.target.value })} /></label>}
+          <p className="sheet-hint">{categoryDraft.level === "sub" ? "色は親カテゴリから自動で決まります。" : `${categoryDraft.kind === "income" ? "収入" : "支出"}のカテゴリとして追加します。`}</p>
           <button className="full-primary" type="button" onClick={async () => {
             try {
               if (!categoryDraft.name.trim()) {
@@ -4609,30 +4577,14 @@ function SettingsView({
               setNotice(categoryDraft.level === "sub" ? "サブカテゴリーを追加しました。" : "カテゴリーを追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "カテゴリー追加に失敗しました。")); }
           }}>追加する</button>
-        </div>}
-        <div className="category-tree">
-          {(["expense", "income"] as const).map((kind) => (
-            <div className="category-kind-block" key={kind}>
-              <strong>{kind === "expense" ? "支出カテゴリー" : "収入カテゴリー"}</strong>
-              {sortCategories(state.categories.filter((category) => !category.parentId && category.kind === kind)).map((parent) => (
-                <section key={parent.id}>
-                  <button type="button" onClick={() => setCategoryModalId(parent.id)}><strong><i style={{ background: parent.color }} />{parent.name}</strong></button>
-                  {sortSubcategories(state.categories.filter((category) => category.parentId === parent.id)).map((child) => <button type="button" key={child.id} onClick={() => setCategoryModalId(child.id)}><span><i style={{ background: categoryDisplayColor(child, state.categories) }} />{child.name}</span></button>)}
-                </section>
-              ))}
-            </div>
-          ))}
-        </div>
+        </div></SettingsSheet>}
         {modalCategory && <CategoryModal category={modalCategory} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onClose={() => setCategoryModalId(null)} />}
-      </section>
+      </>
       )}
       {settingsTab === "fixed" && (
       <>
-      <section className="panel">
-        <div className="section-title"><h2>定期項目管理</h2><span>支出・収入・振替</span></div>
-        <p className="setting-copy">毎月ほぼ必ず発生する支払い・収入・口座間の振替です。家賃、通信費、給与、貯金口座への移動などを登録します。</p>
-        <button className="full-primary" type="button" onClick={() => setShowFixedForm(!showFixedForm)}>{showFixedForm ? "追加を閉じる" : "固定項目を追加する"}</button>
-        {showFixedForm && <div className="crud-form">
+        <FixedCostsOverview state={state} onEdit={(id) => setFixedEditId(id)} />
+        {showFixedForm && <SettingsSheet title="定期項目を追加" onClose={() => setShowFixedForm(false)}><div className="crud-form">
           <label>種類<select value={newFixed.kind} onChange={(event) => {
             const nextKind = event.target.value as TransactionType;
             setNewFixed({ ...newFixed, kind: nextKind, categoryId: nextKind === "income" ? firstIncomeCategoryId : nextKind === "expense" ? firstExpenseCategoryId : "", transferToAccountId: nextKind === "transfer" ? state.accounts.filter((account) => account.type !== "credit").find((account) => account.id !== newFixed.accountId)?.id ?? "" : "" });
@@ -4665,33 +4617,37 @@ function SettingsView({
               setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
           }}>追加する</button>
-        </div>}
-        <EditableFixedCostList state={state} setNotice={setNotice} reloadHousehold={async () => reload()} />
-      </section>
+        </div></SettingsSheet>}
+        {fixedEditId && (() => {
+          const cost = state.fixedCosts.find((item) => item.id === fixedEditId);
+          if (!cost) return null;
+          return (
+            <SettingsSheet title={cost.name} onClose={() => setFixedEditId(null)}>
+              <EditableFixedCostRow cost={cost} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onDone={() => setFixedEditId(null)} />
+            </SettingsSheet>
+          );
+        })()}
       </>
       )}
       {settingsTab === "investment" && (
         <InvestmentSettings state={state} setNotice={setNotice} reload={reload} />
       )}
-      {settingsTab === "display" && (
+      {settingsTab === "cover" && state.householdId && (
         <section className="panel">
-          <div className="section-title"><h2>カレンダー設定</h2></div>
-          <div className="display-setting-row">
-            <div className="display-setting-label">
-              <span>週の始まり</span>
-              <small><span className="day-sat-preview">■ 土曜</span> <span className="day-hol-preview">■ 日曜・祝日</span> で色分け</small>
-            </div>
-            <div className="segment-control">
-              <button type="button" className={weekStart === 0 ? "active" : ""} onClick={() => setWeekStart(0)}>日曜始まり</button>
-              <button type="button" className={weekStart === 1 ? "active" : ""} onClick={() => setWeekStart(1)}>月曜始まり</button>
-            </div>
-          </div>
+          <LedgerColorPicker
+            householdId={state.householdId}
+            currentColor={state.themeColor}
+            onSave={(color) => {
+              saveHouseholdThemeColor(state.householdId!, color);
+              setNotice("表紙の色を変更しました。");
+              reload().catch(() => undefined);
+            }}
+          />
         </section>
       )}
       {settingsTab === "templates" && <TemplateSettings state={state} setNotice={setNotice} />}
       {settingsTab === "export" && (
         <section className="panel">
-          <div className="section-title"><h2>データ出力（CSV）</h2></div>
           <p className="setting-copy" style={{ marginBottom: 12 }}>記録したデータをCSVファイルとして書き出します。Excelやスプレッドシートで開けます（文字コードはUTF-8）。</p>
           <div className="export-period">
             <span className="export-period-title">出力期間（空欄なら全期間）</span>
@@ -4735,6 +4691,373 @@ function SettingsView({
         </section>
       )}
     </div>
+  );
+}
+
+
+// ============================================================
+// 設定：トップ（目的別のグループリスト）
+// ============================================================
+function SettingsRow({ icon: Icon, title, sub, value, onClick, children }: { icon: React.ElementType; title: string; sub?: string; value?: React.ReactNode; onClick?: () => void; children?: React.ReactNode }) {
+  const body = (
+    <>
+      <span className="settings-ic"><Icon size={18} /></span>
+      <span className="settings-row-text"><b>{title}</b>{sub && <small>{sub}</small>}</span>
+      {children ?? <span className="settings-val">{value}</span>}
+      {onClick && <ChevronRight size={16} className="settings-chev" />}
+    </>
+  );
+  if (onClick) return <button type="button" className="settings-row" onClick={onClick}>{body}</button>;
+  return <div className="settings-row inline">{body}</div>;
+}
+
+function SettingsTop({
+  state,
+  setPage,
+  theme,
+  setTheme,
+  weekStart,
+  setWeekStart,
+  onOpenTour,
+  onOpenAdmin,
+  onSignOut
+}: {
+  state: LedgerState;
+  setPage: (page: SettingsPage) => void;
+  theme: ThemeMode;
+  setTheme: (theme: ThemeMode) => void;
+  weekStart: number;
+  setWeekStart: (value: number) => void;
+  onOpenTour: () => void;
+  onOpenAdmin: () => void;
+  onSignOut: () => void;
+}) {
+  const currentMonth = todayIso().slice(0, 7);
+  const prevMonth = shiftMonthKey(currentMonth, -1);
+  const bankCount = state.accounts.filter((account) => account.type !== "credit").length;
+  const cardCount = state.accounts.filter((account) => account.type === "credit").length;
+  const expenseCats = state.categories.filter((category) => !category.parentId && category.kind === "expense").length;
+  const incomeCats = state.categories.filter((category) => !category.parentId && category.kind === "income").length;
+  const activeFixed = state.fixedCosts.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth).length;
+  const templateCount = loadTxTemplates(state.householdId).length;
+  const latestConfirmed = isAssetSnapshotConfirmed(state, currentMonth) ? currentMonth : isAssetSnapshotConfirmed(state, prevMonth) ? prevMonth : null;
+  const cover = coverColor(state.themeColor);
+  const coverLabel = LEDGER_PRESET_COLORS.find((preset) => preset.value === cover)?.label ?? "カスタム";
+  const household = (state.households ?? []).find((item) => item.id === state.householdId);
+  return (
+    <div className="settings-top">
+      <button type="button" className="ledger-cover" onClick={() => setPage("ledger")}>
+        <span className="ledger-cover-label"><small>Mirai Ledger</small><b>{state.householdName ?? "家計簿"}</b></span>
+        <span className="ledger-cover-meta">
+          <span>{(household?.spaceType ?? state.activeSpace) === "shared" ? "共有の家計簿" : "個人の家計簿"}／口座 {bankCount}・カード {cardCount}</span>
+          <span className="ledger-cover-manage">家計簿を管理<ChevronRight size={14} /></span>
+        </span>
+      </button>
+
+      <div className="settings-group-label">お金の記録</div>
+      <div className="settings-list">
+        <SettingsRow icon={Wallet} title="口座・カード" sub="銀行・現金・クレジットカード" value={`${bankCount + cardCount}件`} onClick={() => setPage("accounts")} />
+        <SettingsRow icon={Tag} title="カテゴリ" sub="食費 › 外食 などの分類" value={`支出 ${expenseCats}・収入 ${incomeCats}`} onClick={() => setPage("categories")} />
+        <SettingsRow icon={Repeat} title="定期項目" sub="家賃・給与など毎月の予定" value={`${activeFixed}件`} onClick={() => setPage("fixed")} />
+        <SettingsRow icon={Star} title="テンプレート" sub="よく使う取引を1タップで" value={`${templateCount}件`} onClick={() => setPage("templates")} />
+      </div>
+
+      <div className="settings-group-label">資産</div>
+      <div className="settings-list">
+        <SettingsRow
+          icon={Stamp}
+          title="月末資産の確定"
+          sub="口座の実際の残高に合わせる"
+          value={latestConfirmed ? <span className="mini-hanko" title={`${formatMonthLabel(latestConfirmed)}は確定済み`}>確定</span> : <span className="settings-val-warn">未確定</span>}
+          onClick={() => setPage("snapshots")}
+        />
+        <SettingsRow icon={LineChartIcon} title="投資口座" sub="評価額・積立額・目標年利" value={`${(state.investmentAccounts ?? []).length}件`} onClick={() => setPage("investment")} />
+      </div>
+
+      <div className="settings-group-label">表示</div>
+      <div className="settings-list">
+        <SettingsRow icon={BookMarked} title="表紙の色" value={<>{coverLabel}<i className="cover-swatch small" style={{ background: cover }} /></>} onClick={() => setPage("cover")} />
+        <SettingsRow icon={Sun} title="テーマ">
+          <span className="mini-seg" role="group" aria-label="テーマ">
+            <button type="button" className={theme === "light" ? "on" : ""} onClick={() => setTheme("light")}>昼</button>
+            <button type="button" className={theme === "dark" ? "on" : ""} onClick={() => setTheme("dark")}>夜</button>
+          </span>
+        </SettingsRow>
+        <SettingsRow icon={CalendarDays} title="週の始まり">
+          <span className="mini-seg" role="group" aria-label="週の始まり">
+            <button type="button" className={weekStart === 0 ? "on" : ""} onClick={() => setWeekStart(0)}>日曜</button>
+            <button type="button" className={weekStart === 1 ? "on" : ""} onClick={() => setWeekStart(1)}>月曜</button>
+          </span>
+        </SettingsRow>
+      </div>
+
+      <div className="settings-group-label">データとサポート</div>
+      <div className="settings-list">
+        <SettingsRow icon={Download} title="データの書き出し" sub="取引明細・投資実績をCSVで" onClick={() => setPage("export")} />
+        <SettingsRow icon={HelpCircle} title="使い方ガイド" onClick={onOpenTour} />
+        {state.profileRole === "admin" && <SettingsRow icon={ShieldCheck} title="管理画面" sub="管理者のみ表示" onClick={onOpenAdmin} />}
+      </div>
+
+      <div className="settings-list settings-logout">
+        <button type="button" onClick={onSignOut}>ログアウト</button>
+      </div>
+      <p className="settings-foot">Mirai Ledger</p>
+    </div>
+  );
+}
+
+// 下から出る編集シート
+function SettingsSheet({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="sheet-backdrop settings-sheet-backdrop" onClick={onClose}>
+      <section className="bottom-sheet settings-sheet" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
+        <div className="sheet-handle" />
+        <div className="settings-sheet-head"><h2>{title}</h2><button type="button" onClick={onClose}>閉じる</button></div>
+        {children}
+      </section>
+    </div>,
+    document.body
+  );
+}
+
+const ACCOUNT_TYPE_OPTIONS: { value: AccountType; label: string; icon: React.ElementType }[] = [
+  { value: "bank", label: "銀行", icon: Landmark },
+  { value: "cash", label: "現金", icon: Banknote },
+  { value: "saving", label: "貯金", icon: PiggyBank },
+  { value: "credit", label: "カード", icon: CreditCard }
+];
+
+function closingDayLabel(day?: number) {
+  if (!day) return "未設定";
+  return day >= 31 ? "末日" : `${day}日`;
+}
+
+function AccountsSettings({ state, setNotice, reload, addOpen, setAddOpen }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; addOpen: boolean; setAddOpen: (open: boolean) => void }) {
+  const [editId, setEditId] = useState<string | null>(null);
+  const month = todayIso().slice(0, 7);
+  const today = todayIso();
+  const banks = sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"));
+  const cards = state.accounts.filter((account) => account.type === "credit");
+  const balances = Object.fromEntries(banks.map((account) => [account.id, confirmedAccountBalance(account, state, month)]));
+  const bankTotal = banks.reduce((sum, account) => sum + (balances[account.id] ?? 0), 0);
+  const pendingFor = (cardId: string) => {
+    const rows = state.transactions.filter((tx) => tx.accountId === cardId && tx.type === "expense" && (tx.reflectedDate ?? tx.date) >= today);
+    const amount = rows.reduce((sum, tx) => sum + tx.amount, 0);
+    const next = rows.map((tx) => tx.reflectedDate ?? tx.date).sort()[0];
+    return { amount, next };
+  };
+  const editing = state.accounts.find((account) => account.id === editId);
+  return (
+    <>
+      <div className="settings-sec-h"><span>口座</span><b className="num">{plainAmount(bankTotal)}</b></div>
+      <div className="settings-list">
+        {banks.map((account) => (
+          <button type="button" className="settings-row account-item" key={account.id} onClick={() => setEditId(account.id)}>
+            <span className="passbook-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</span>
+            <span className="settings-row-text"><b>{account.name}</b><small>{accountTypeLabel(account.type)}</small></span>
+            <span className="settings-amount num">{(balances[account.id] ?? 0) < 0 ? "−" : ""}{plainAmount(balances[account.id] ?? 0)}</span>
+            <ChevronRight size={16} className="settings-chev" />
+          </button>
+        ))}
+        {banks.length === 0 && <div className="empty-state">口座がまだありません。右上の「追加」から登録できます。</div>}
+      </div>
+      <div className="settings-sec-h"><span>クレジットカード</span></div>
+      <div className="settings-list">
+        {cards.map((account) => {
+          const withdrawal = state.accounts.find((item) => item.id === account.withdrawalAccountId);
+          const pending = pendingFor(account.id);
+          return (
+            <button type="button" className="settings-row account-item" key={account.id} onClick={() => setEditId(account.id)}>
+              <span className="passbook-mark card" style={{ background: account.color }}>CARD</span>
+              <span className="settings-row-text"><b>{account.name}</b><small>{closingDayLabel(account.closingDay)}締め・{account.withdrawalDay ?? 10}日引落／{withdrawal?.name ?? "引落口座未設定"}から</small></span>
+              <span className="settings-amount num">{plainAmount(pending.amount)}{pending.next && <small>{shortDate(pending.next)} 引落</small>}</span>
+              <ChevronRight size={16} className="settings-chev" />
+            </button>
+          );
+        })}
+        {cards.length === 0 && <div className="empty-state">カードはまだありません。</div>}
+      </div>
+      <p className="settings-note">残高は月末資産の確定と登録した取引から計算しています。行をタップすると、名前・色・はじめの残高・締め日を変えられます。</p>
+      {addOpen && <AccountSheet state={state} setNotice={setNotice} reload={reload} onClose={() => setAddOpen(false)} />}
+      {editing && <AccountSheet account={editing} state={state} setNotice={setNotice} reload={reload} onClose={() => setEditId(null)} />}
+    </>
+  );
+}
+
+function AccountSheet({ account, state, setNotice, reload, onClose }: { account?: LedgerState["accounts"][number]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const firstBank = state.accounts.find((item) => item.type === "bank")?.id ?? state.accounts.find((item) => item.type !== "credit")?.id ?? "";
+  const [type, setType] = useState<AccountType>(account?.type ?? "bank");
+  const [name, setName] = useState(account?.name ?? "");
+  const [color, setColor] = useState(account?.color ?? LEDGER_PRESET_COLORS[0].value);
+  const [openingBalance, setOpeningBalance] = useState(account?.openingBalance ?? 0);
+  const [openingBalanceDate, setOpeningBalanceDate] = useState(account?.openingBalanceDate ?? todayIso());
+  const [closingDay, setClosingDay] = useState(account?.closingDay ?? 25);
+  const [withdrawalDay, setWithdrawalDay] = useState(account?.withdrawalDay ?? 10);
+  const [withdrawalAccountId, setWithdrawalAccountId] = useState(account?.withdrawalAccountId ?? firstBank);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const isCard = type === "credit";
+  const swatches = LEDGER_PRESET_COLORS.some((preset) => preset.value === color) ? LEDGER_PRESET_COLORS : [...LEDGER_PRESET_COLORS, { label: "今の色", value: color }];
+  async function save() {
+    if (!name.trim()) { setNotice("名前を入力してください。"); return; }
+    if (isCard && !withdrawalAccountId) { setNotice("引落口座を選んでください。"); return; }
+    setSaving(true);
+    try {
+      if (account) {
+        await updateAccount(account.id, {
+          name: name.trim(),
+          color,
+          openingBalance: isCard ? 0 : openingBalance,
+          openingBalanceDate: isCard ? account.openingBalanceDate ?? todayIso() : openingBalanceDate,
+          closingDay: isCard ? closingDay : undefined,
+          withdrawalDay: isCard ? withdrawalDay : undefined,
+          withdrawalAccountId: isCard ? withdrawalAccountId : undefined
+        });
+        setNotice(`${name.trim()}を保存しました。`);
+      } else {
+        await createAccount(state.householdId ?? "", { name: name.trim(), type, color, openingBalance: isCard ? 0 : openingBalance, openingBalanceDate, closingDay, withdrawalDay, withdrawalAccountId: isCard ? withdrawalAccountId : undefined });
+        setNotice(`${name.trim()}を追加しました。`);
+      }
+      await reload();
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, account ? "口座の保存に失敗しました。" : "口座の追加に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function remove() {
+    if (!account) return;
+    try {
+      await deleteAccount(account.id);
+      await reload();
+      onClose();
+      setNotice(`${account.name}を削除しました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "口座の削除に失敗しました。"));
+    }
+  }
+  return (
+    <SettingsSheet title={account ? account.name : "口座・カードを追加"} onClose={onClose}>
+      <div className="type-grid" role="group" aria-label="種類">
+        {ACCOUNT_TYPE_OPTIONS.map((option) => {
+          const Icon = option.icon;
+          return (
+            <button key={option.value} type="button" className={type === option.value ? "on" : ""} disabled={Boolean(account) && account?.type !== option.value} onClick={() => setType(option.value)}>
+              <Icon size={20} />{option.label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="sheet-fields">
+        <label className="sheet-field"><span>名前</span><input value={name} placeholder={isCard ? "例: 楽天カード" : "例: 楽天銀行"} onChange={(event) => setName(event.target.value)} /></label>
+        <div className="sheet-field"><span>色</span>
+          <div className="swatch-row">
+            {swatches.map((preset) => (
+              <button key={preset.value} type="button" title={preset.label} className={`cover-swatch${color === preset.value ? " on" : ""}`} style={{ background: preset.value }} onClick={() => setColor(preset.value)} aria-label={preset.label} />
+            ))}
+          </div>
+        </div>
+        {isCard ? (
+          <>
+            <div className="sheet-sub-title">カードの引落</div>
+            <label className="sheet-field"><span>締め日</span>
+              <select value={closingDay} onChange={(event) => setClosingDay(Number(event.target.value))}>
+                {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => <option key={day} value={day}>{closingDayLabel(day)}</option>)}
+              </select>
+            </label>
+            <label className="sheet-field"><span>引落日</span>
+              <select value={withdrawalDay} onChange={(event) => setWithdrawalDay(Number(event.target.value))}>
+                {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => <option key={day} value={day}>毎月 {day}日</option>)}
+              </select>
+            </label>
+            <label className="sheet-field"><span>引落口座</span>
+              <select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>
+                <option value="">選んでください</option>
+                {state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </select>
+            </label>
+            <p className="sheet-hint">このカードの支出は、自動で次の引落日に計上されます。</p>
+          </>
+        ) : (
+          <>
+            <div className="sheet-sub-title">はじめの残高</div>
+            <label className="sheet-field"><span>初期残高</span><input type="number" inputMode="numeric" value={numberInputValue(openingBalance)} onChange={(event) => setOpeningBalance(Number(event.target.value || 0))} /></label>
+            <label className="sheet-field"><span>基準日</span><input type="date" value={openingBalanceDate} onChange={(event) => setOpeningBalanceDate(event.target.value)} /></label>
+            <p className="sheet-hint">普段のズレの調整は「月末資産の確定」で行えます。</p>
+          </>
+        )}
+      </div>
+      <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "保存中…" : account ? "保存する" : "追加する"}</button>
+      {account && (
+        confirmDelete ? (
+          <div className="sheet-danger-confirm">
+            <p>{account.name}を削除しますか？ 登録済みの取引は残りますが、口座の一覧からは消えます。</p>
+            <div><button type="button" className="danger-solid" onClick={remove}>削除する</button><button type="button" className="google-button" onClick={() => setConfirmDelete(false)}>やめる</button></div>
+          </div>
+        ) : (
+          <button type="button" className="sheet-danger-link" onClick={() => setConfirmDelete(true)}>この{isCard ? "カード" : "口座"}を削除</button>
+        )
+      )}
+    </SettingsSheet>
+  );
+}
+
+function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id: string) => void }) {
+  const currentMonth = todayIso().slice(0, 7);
+  const active = state.fixedCosts.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth);
+  const ended = state.fixedCosts.filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
+  const sum = (kind: TransactionType) => active.filter((cost) => cost.kind === kind).reduce((total, cost) => total + cost.amount, 0);
+  const income = sum("income");
+  const expense = sum("expense");
+  const row = (cost: LedgerState["fixedCosts"][number], isEnded = false) => {
+    const account = state.accounts.find((item) => item.id === cost.accountId);
+    const transferTo = state.accounts.find((item) => item.id === cost.transferToAccountId);
+    const sub = cost.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferTo?.name ?? "未設定"}` : `${categoryPathLabel(state, cost.categoryId) || "カテゴリなし"}／${account?.name ?? "未設定"}`;
+    return (
+      <button type="button" className={`settings-row fixed-item${isEnded ? " ended" : ""}`} key={cost.id} onClick={() => onEdit(cost.id)}>
+        <span className="fixed-day num">{cost.dueDay}日<small>{isEnded ? "終了" : "毎月"}</small></span>
+        <span className="settings-row-text"><b>{cost.name}{cost.variable && <em className="vtag">変動</em>}</b><small>{sub}</small></span>
+        <span className={`settings-amount num${cost.kind === "income" ? " pos" : ""}`}>{cost.kind === "income" ? "+" : ""}{cost.variable ? "約 " : ""}{plainAmount(cost.amount)}</span>
+        <ChevronRight size={16} className="settings-chev" />
+      </button>
+    );
+  };
+  const groups: { kind: TransactionType; label: string }[] = [
+    { kind: "income", label: "収入" },
+    { kind: "expense", label: "支出" },
+    { kind: "transfer", label: "振替" }
+  ];
+  return (
+    <>
+      <div className="fixed-summary">
+        <div><span>毎月の収入</span><b className="num pos">{plainAmount(income)}</b></div>
+        <div><span>毎月の支出</span><b className="num">{plainAmount(expense)}</b></div>
+        <div><span>差し引き</span><b className={`num ${income - expense >= 0 ? "pos" : "neg"}`}>{income - expense > 0 ? "+" : income - expense < 0 ? "−" : ""}{plainAmount(income - expense)}</b></div>
+      </div>
+      {groups.map(({ kind, label }) => {
+        const rows = active.filter((cost) => cost.kind === kind).sort((a, b) => a.dueDay - b.dueDay);
+        if (rows.length === 0) return null;
+        return (
+          <div key={kind}>
+            <div className="settings-sec-h"><span>{label}</span></div>
+            <div className="settings-list">{rows.map((cost) => row(cost))}</div>
+          </div>
+        );
+      })}
+      {active.length === 0 && <div className="settings-list"><div className="empty-state">定期項目はまだありません。家賃や給与など、毎月の予定を右上の「追加」から登録できます。</div></div>}
+      {ended.length > 0 && (
+        <>
+          <div className="settings-sec-h"><span>終了した項目</span></div>
+          <div className="settings-list">{ended.map((cost) => row(cost, true))}</div>
+        </>
+      )}
+    </>
   );
 }
 
