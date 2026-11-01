@@ -1599,6 +1599,98 @@ function formatDayLabel(date: string) {
   return `${d.getMonth() + 1}/${d.getDate()}（${["日","月","火","水","木","金","土"][d.getDay()]}）`;
 }
 
+
+// ============================================================
+// これから出ていくカードの引落（取引＋カード払いの定期項目）
+// 口座残高の計算では、カード支出は「計上日（引落日 or 使用日）」、カード払いの定期項目は「支払日」に
+// 引落口座から引いている。月末の予定残高にまだ入っていない分（notInBalance）を別に持つ。
+// ============================================================
+type CardWithdrawal = {
+  card: LedgerState["accounts"][number];
+  date: string;
+  amount: number;
+  notInBalance: number;
+  fixedCount: number;
+  txCount: number;
+  transactions: Transaction[];
+  fixed: FixedCostOccurrence[];
+};
+
+function upcomingCardWithdrawals(state: LedgerState, today = todayIso()): CardWithdrawal[] {
+  const currentMonth = today.slice(0, 7);
+  const monthEnd = `${currentMonth}-${String(new Date(Number(currentMonth.slice(0, 4)), Number(currentMonth.slice(5, 7)), 0).getDate()).padStart(2, "0")}`;
+  const cards = state.accounts.filter((account) => account.type === "credit");
+  const groups = new Map<string, CardWithdrawal>();
+  const add = (card: LedgerState["accounts"][number], date: string, amount: number, inBalance: boolean, item: { tx?: Transaction; fixed?: FixedCostOccurrence }) => {
+    const key = `${card.id}|${date}`;
+    const group = groups.get(key) ?? { card, date, amount: 0, notInBalance: 0, fixedCount: 0, txCount: 0, transactions: [], fixed: [] };
+    group.amount += amount;
+    if (!inBalance) group.notInBalance += amount;
+    if (item.fixed) { group.fixedCount += 1; group.fixed.push(item.fixed); }
+    if (item.tx) { group.txCount += 1; group.transactions.push(item.tx); }
+    groups.set(key, group);
+  };
+  cards.forEach((card) => {
+    state.transactions
+      .filter((tx) => tx.accountId === card.id && tx.type === "expense" && tx.creditStatus !== "withdrawn")
+      .forEach((tx) => {
+        const withdrawal = tx.reflectedDate ?? nextWithdrawalDate(card, tx.date);
+        if (withdrawal < today) return;
+        add(card, withdrawal, tx.amount, transactionLedgerDate(tx) <= monthEnd, { tx });
+      });
+    // カード払いの定期項目：前々月〜今月に計上された分で、引落がまだ先のもの
+    [-2, -1, 0].map((delta) => shiftMonthKey(currentMonth, delta)).forEach((month) => {
+      fixedCostOccurrencesForMonth(state.fixedCosts, month, state)
+        .filter((cost) => cost.kind === "expense" && cost.accountId === card.id)
+        .forEach((cost) => {
+          const withdrawal = nextWithdrawalDate(card, cost.date);
+          if (withdrawal < today) return;
+          add(card, withdrawal, cost.amount, cost.date <= monthEnd, { fixed: cost });
+        });
+    });
+  });
+  groups.forEach((group) => {
+    group.transactions.sort((a, b) => b.date.localeCompare(a.date));
+    group.fixed.sort((a, b) => b.date.localeCompare(a.date));
+  });
+  return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date) || a.card.name.localeCompare(b.card.name));
+}
+
+// カード引落の明細（取引は編集・削除、定期項目はこの月だけ変更）
+function CardWithdrawalSheet({ state, cardId, date, setNotice, reload, onClose }: { state: LedgerState; cardId: string; date: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  // 編集後の最新データで組み直す
+  const group = upcomingCardWithdrawals(state).find((item) => item.card.id === cardId && item.date === date);
+  const card = state.accounts.find((item) => item.id === cardId);
+  const withdrawal = state.accounts.find((item) => item.id === card?.withdrawalAccountId);
+  return (
+    <SettingsSheet title={`${card?.name ?? "カード"}　${shortDate(date)} 引落`} onClose={onClose}>
+      <div className="withdrawal-summary">
+        {card && <AccountMark account={card} size="lg" />}
+        <span><small>{withdrawal?.name ?? "引落口座未設定"}から引き落とし</small><b className="num">{plainAmount(group?.amount ?? 0)}</b></span>
+        <em>{group ? `${group.txCount + group.fixedCount}件` : "0件"}</em>
+      </div>
+      {!group && <div className="empty-state">この引落の明細はありません。</div>}
+      {group && group.fixed.length > 0 && (
+        <div className="withdrawal-block">
+          <div className="settings-sec-h"><span>定期項目</span><b className="num">{plainAmount(group.fixed.reduce((sum, row) => sum + row.amount, 0))}</b></div>
+          <div className="withdrawal-list">
+            {group.fixed.map((row) => <FixedCostOccurrenceRow key={`${row.id}-${row.date}`} row={row} state={state} setNotice={setNotice} reload={reload} />)}
+          </div>
+        </div>
+      )}
+      {group && group.transactions.length > 0 && (
+        <div className="withdrawal-block">
+          <div className="settings-sec-h"><span>カードで払った取引</span><b className="num">{plainAmount(group.transactions.reduce((sum, tx) => sum + tx.amount, 0))}</b></div>
+          <div className="withdrawal-list">
+            <TransactionList state={{ ...state, transactions: group.transactions }} setNotice={setNotice} reload={reload} />
+          </div>
+        </div>
+      )}
+      <p className="sheet-hint">取引はタップして「編集」「削除」、定期項目は「この月だけ変更」で直せます。定期項目そのものの変更は 設定 › 定期項目 から行えます。</p>
+    </SettingsSheet>
+  );
+}
+
 function upcomingBills(state: LedgerState, days: number) {
   const today = todayIso();
   const cutoff = new Date(`${today}T00:00:00`);
@@ -3075,11 +3167,10 @@ function AnalysisView({
     assetTrend.push({ label: `${Number(nextKey.slice(5, 7))}月`, acc: NaN, inv: NaN, total: NaN, forecast: nextTotal });
   }
   const today = todayIso();
-  const pendingCards = state.accounts.filter((account) => account.type === "credit").map((card) => {
-    const rows = state.transactions.filter((tx) => tx.accountId === card.id && tx.type === "expense" && (tx.reflectedDate ?? tx.date) >= today);
-    return { card, amount: rows.reduce((sum, tx) => sum + tx.amount, 0), next: rows.map((tx) => tx.reflectedDate ?? tx.date).sort()[0] };
-  }).filter((item) => item.amount > 0);
-  const pendingTotal = pendingCards.reduce((sum, item) => sum + item.amount, 0);
+  const pendingCards = upcomingCardWithdrawals(state, today).filter((item) => item.amount > 0);
+  const [withdrawalDetail, setWithdrawalDetail] = useState<{ cardId: string; date: string } | null>(null);
+  // 口座の金額（月末の予定残高）にまだ入っていない引落だけを差し引く（二重に引かない）
+  const pendingNotInBalance = pendingCards.reduce((sum, item) => sum + item.notInBalance, 0);
   const investGain = (state.investmentAccounts ?? []).reduce((sum, account) => {
     const rows = investmentRows(state, account.id, monthKey);
     return sum + (rows[rows.length - 1]?.unrealizedGain ?? 0);
@@ -3187,20 +3278,21 @@ function AnalysisView({
             <>
               <div className="settings-sec-h"><span>これから出ていくお金</span></div>
               <div className="settings-list">
-                {pendingCards.map(({ card, amount, next }) => {
+                {pendingCards.map(({ card, date, amount, fixedCount }) => {
                   const withdrawal = state.accounts.find((item) => item.id === card.withdrawalAccountId);
                   return (
-                    <div className="settings-row account-item no-chev" key={card.id}>
+                    <button type="button" className="settings-row account-item" key={`${card.id}-${date}`} onClick={() => setWithdrawalDetail({ cardId: card.id, date })}>
                       <AccountMark account={card} size="lg" />
-                      <span className="settings-row-text"><b>{card.name}</b><small>{next ? `${shortDate(next)} 引落` : "引落予定"}／{withdrawal?.name ?? "引落口座未設定"}から</small></span>
+                      <span className="settings-row-text"><b>{card.name}<em className="withdraw-date">{shortDate(date)} 引落</em></b><small>{withdrawal?.name ?? "引落口座未設定"}から{fixedCount > 0 ? `／定期 ${fixedCount}件を含む` : ""}</small></span>
                       <span className="settings-amount num">−{plainAmount(amount)}</span>
-                    </div>
+                      <ChevronRight size={16} className="settings-chev" />
+                    </button>
                   );
                 })}
                 <div className="settings-row account-item no-chev total-row">
                   <span />
-                  <span className="settings-row-text"><b>引落後に使える口座残高</b></span>
-                  <span className="settings-amount num">{plainAmount(accountTotal - pendingTotal)}</span>
+                  <span className="settings-row-text"><b>引落後に使える口座残高</b><small>{pendingNotInBalance > 0 ? "月末の予定残高から、来月以降の引落分を差し引いた額" : "今月の引落は口座の金額に反映済みです"}</small></span>
+                  <span className="settings-amount num">{plainAmount(accountTotal - pendingNotInBalance)}</span>
                 </div>
               </div>
             </>
@@ -3471,6 +3563,9 @@ function AnalysisView({
         );
       })()}
 
+      {withdrawalDetail && (
+        <CardWithdrawalSheet state={state} cardId={withdrawalDetail.cardId} date={withdrawalDetail.date} setNotice={setNotice} reload={reload} onClose={() => setWithdrawalDetail(null)} />
+      )}
       {selectedAccountHistoryId && (
         <AccountHistoryModal
           accountId={selectedAccountHistoryId}
@@ -5027,11 +5122,11 @@ function AccountsSettings({ state, setNotice, reload, addOpen, setAddOpen }: { s
   const cards = state.accounts.filter((account) => account.type === "credit");
   const balances = Object.fromEntries(banks.map((account) => [account.id, confirmedAccountBalance(account, state, month)]));
   const bankTotal = banks.reduce((sum, account) => sum + (balances[account.id] ?? 0), 0);
+  const withdrawals = upcomingCardWithdrawals(state, today);
+  // 次回の引落（いちばん近い引落日の金額）を表示する
   const pendingFor = (cardId: string) => {
-    const rows = state.transactions.filter((tx) => tx.accountId === cardId && tx.type === "expense" && (tx.reflectedDate ?? tx.date) >= today);
-    const amount = rows.reduce((sum, tx) => sum + tx.amount, 0);
-    const next = rows.map((tx) => tx.reflectedDate ?? tx.date).sort()[0];
-    return { amount, next };
+    const next = withdrawals.find((item) => item.card.id === cardId);
+    return { amount: next?.amount ?? 0, next: next?.date };
   };
   const editing = state.accounts.find((account) => account.id === editId);
   return (
@@ -6424,7 +6519,7 @@ function TransactionEditSheet({
   const [saving, setSaving] = useState(false);
   const typeLabel = draft.type === "income" ? "収入" : draft.type === "transfer" ? "振替" : "支出";
   return createPortal(
-    <div className="sheet-backdrop" style={{ zIndex: 60 }} onClick={onClose}>
+    <div className="sheet-backdrop" style={{ zIndex: 90 }} onClick={onClose}>
       <form
         className="bottom-sheet"
         onClick={(e) => e.stopPropagation()}
