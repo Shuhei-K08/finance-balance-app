@@ -152,7 +152,7 @@ import {
 import { AccountType } from "@/lib/types";
 import type { HouseholdMember } from "@/lib/types";
 
-type Tab = "home" | "transactions" | "analysis" | "investments" | "settings" | "admin";
+type Tab = "home" | "transactions" | "analysis" | "cashflow" | "investments" | "settings" | "admin";
 type SettingsPage = "top" | "ledger" | "accounts" | "categories" | "fixed" | "templates" | "snapshots" | "investment" | "cover" | "export";
 
 const SETTINGS_PAGE_TITLES: Record<SettingsPage, string> = {
@@ -201,17 +201,19 @@ function coverColor(themeColor?: string | null) {
 const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "home", label: "ホーム", icon: Home },
   { id: "transactions", label: "取引", icon: BookText },
-  { id: "analysis", label: "口座", icon: Wallet },
+  { id: "analysis", label: "総資産", icon: Wallet },
+  { id: "cashflow", label: "収支", icon: BarChart3 },
   { id: "investments", label: "投資", icon: Landmark },
   { id: "settings", label: "設定", icon: Settings }
 ];
 
-const ASSET_TABS: Tab[] = ["analysis", "investments"];
+const ASSET_TABS: Tab[] = ["analysis", "cashflow", "investments"];
 
 const TAB_TITLES: Record<Tab, string> = {
   home: "ホーム",
   transactions: "取引",
   analysis: "資産",
+  cashflow: "資産",
   investments: "資産",
   settings: "設定",
   admin: "管理"
@@ -677,7 +679,7 @@ export default function App() {
 
         {ASSET_TABS.includes(tab) && (
           <nav className="segment-tabs mobile-only" aria-label="資産メニュー">
-            {([["analysis", "口座・収支"], ["investments", "投資"]] as const).map(([id, label]) => (
+            {([["analysis", "総資産"], ["cashflow", "収支"], ["investments", "投資"]] as const).map(([id, label]) => (
               <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
@@ -708,13 +710,15 @@ export default function App() {
             onQuick={openQuick}
           />
         )}
-        {tab === "analysis" && (
+        {(tab === "analysis" || tab === "cashflow") && (
           <AnalysisView
+            section={tab === "analysis" ? "total" : "flow"}
             state={state}
             monthKey={calendarMonth}
             stats={stats}
             setNotice={setNotice}
             reload={() => refreshRemoteState()}
+            onNavigate={setTab}
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
@@ -2841,24 +2845,27 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
 }
 
 function AnalysisView({
+  section,
   state,
   monthKey,
   stats,
   setNotice,
-  reload
+  reload,
+  onNavigate
 }: {
+  section: "total" | "flow";
   state: LedgerState;
   monthKey: string;
   stats: Record<string, number>;
   setNotice: (message: string) => void;
   reload: () => Promise<void>;
+  onNavigate: (tab: Tab) => void;
 }) {
   const monthLabel = formatMonthLabel(monthKey);
   const category = categoryExpense(state, monthKey);
   const [drillParentId, setDrillParentId] = useState<string | null>(null);
   const [selectedAccountHistoryId, setSelectedAccountHistoryId] = useState<string | null>(null);
-  const [balancePeriod, setBalancePeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
-  const [categoryPeriod, setCategoryPeriod] = useState<"6m" | "1y" | "3y" | "all">("6m");
+  const [balancePeriod, setBalancePeriod] = useState<"6m" | "1y" | "3y" | "all">("1y");
   const [categoryDrill, setCategoryDrill] = useState<{ monthKey: string; categoryId: string } | null>(null);
   const [paymentDrill, setPaymentDrill] = useState<string | null>(null); // accountId
   const drillParent = state.categories.find((item) => item.id === drillParentId);
@@ -2898,37 +2905,6 @@ function AnalysisView({
     });
   }
 
-  // 口座残高 + 収支の複合グラフデータ
-  const balanceMonths = buildMonths(balancePeriod);
-  const combinedTrend = balanceMonths.map((m) => {
-    const row: Record<string, string | number> = { label: m.label };
-    liquidAccounts.forEach((acc) => { row[acc.name] = confirmedAccountBalance(acc, state, m.key); });
-    row["totalBalance"] = liquidAccounts.reduce((s, acc) => s + (row[acc.name] as number), 0);
-    const inc = monthlyIncomeWithFixedByKey(state, m.key);
-    const exp = monthlyExpenseWithFixedByKey(state, m.key);
-    row["saving"] = inc - exp;
-    return row;
-  });
-
-  // カテゴリー別支出
-  const categoryMonths = buildMonths(categoryPeriod);
-  const trendMonths = categoryMonths; // 後方互換
-  const categoryTrend = categoryMonths.map((m) => {
-    const row: Record<string, string | number> = { label: m.label };
-    const monthTx = monthTransactionsByKey(state.transactions, m.key);
-    const fixedOcc = fixedCostOccurrencesForMonth(state.fixedCosts, m.key, state);
-    let total = 0;
-    expenseCategories.forEach((cat) => {
-      const childIds = new Set([cat.id, ...state.categories.filter((c) => c.parentId === cat.id).map((c) => c.id)]);
-      const txAmt = monthTx.filter((t) => t.type === "expense" && t.categoryId && childIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0);
-      const fixedAmt = fixedOcc.filter((c) => c.kind === "expense" && c.categoryId && childIds.has(c.categoryId)).reduce((s, c) => s + c.amount, 0);
-      row[cat.name] = txAmt + fixedAmt;
-      total += txAmt + fixedAmt;
-    });
-    row["_total"] = total;
-    return row;
-  });
-
   // 支出インサイト：今月 vs 直近3ヶ月平均
   const spendingInsights = useMemo(() => {
     const now = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
@@ -2954,239 +2930,247 @@ function AnalysisView({
     }).filter((item) => item.current > 0 || item.avg > 0);
   }, [state, monthKey, expenseCategories]);
 
+  // ---------- 総資産 ----------
+  const currentMonthKey = todayIso().slice(0, 7);
+  const prevKey = shiftMonthKey(monthKey, -1);
+  const accountBalances = liquidAccounts.map((account) => ({ account, balance: confirmedAccountBalance(account, state, monthKey) }));
+  const accountTotal = accountBalances.reduce((sum, item) => sum + item.balance, 0);
+  const investTotal = investmentAssets(state, monthKey);
+  const grandTotal = accountTotal + investTotal;
+  const prevTotal = liquidAccounts.reduce((sum, account) => sum + confirmedAccountBalance(account, state, prevKey), 0) + investmentAssets(state, prevKey);
+  const totalDelta = grandTotal - prevTotal;
+  const snapshotConfirmed = isAssetSnapshotConfirmed(state, monthKey);
+  const monthEndDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
+  const showForecast = monthKey >= currentMonthKey;
+  const assetTrend = buildMonths(balancePeriod).map((m) => {
+    const acc = liquidAccounts.reduce((sum, account) => sum + confirmedAccountBalance(account, state, m.key), 0);
+    const inv = investmentAssets(state, m.key);
+    return { label: m.label, acc, inv, total: acc + inv, forecast: null as number | null };
+  });
+  if (showForecast && assetTrend.length > 0) {
+    const nextKey = shiftMonthKey(monthKey, 1);
+    const nextTotal = totalAssets(state, nextKey);
+    assetTrend[assetTrend.length - 1].forecast = assetTrend[assetTrend.length - 1].total;
+    assetTrend.push({ label: `${Number(nextKey.slice(5, 7))}月`, acc: NaN, inv: NaN, total: NaN, forecast: nextTotal });
+  }
+  const today = todayIso();
+  const pendingCards = state.accounts.filter((account) => account.type === "credit").map((card) => {
+    const rows = state.transactions.filter((tx) => tx.accountId === card.id && tx.type === "expense" && (tx.reflectedDate ?? tx.date) >= today);
+    return { card, amount: rows.reduce((sum, tx) => sum + tx.amount, 0), next: rows.map((tx) => tx.reflectedDate ?? tx.date).sort()[0] };
+  }).filter((item) => item.amount > 0);
+  const pendingTotal = pendingCards.reduce((sum, item) => sum + item.amount, 0);
+  const investGain = (state.investmentAccounts ?? []).reduce((sum, account) => {
+    const rows = investmentRows(state, account.id, monthKey);
+    return sum + (rows[rows.length - 1]?.unrealizedGain ?? 0);
+  }, 0);
+
+  // ---------- 収支 ----------
+  const [flowPeriod, setFlowPeriod] = useState<"6m" | "1y" | "3y">("6m");
+  const flowTrend = buildMonths(flowPeriod).map((m) => ({
+    label: m.label,
+    income: monthlyIncomeWithFixedByKey(state, m.key),
+    expense: monthlyExpenseWithFixedByKey(state, m.key)
+  }));
+  const savingNow = income - expense;
+  const savingRateNow = income > 0 ? Math.round((savingNow / income) * 100) : 0;
+  const prevSixSaving = buildMonths("6m").map((m) => monthlyIncomeWithFixedByKey(state, m.key) - monthlyExpenseWithFixedByKey(state, m.key));
+  const avgSaving = prevSixSaving.length ? Math.round(prevSixSaving.reduce((sum, v) => sum + v, 0) / prevSixSaving.length) : 0;
+  const fixedExpenseNow = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((cost) => cost.kind === "expense").reduce((sum, cost) => sum + cost.amount, 0);
+  const breakdown = [...spendingInsights].sort((x, y) => y.current - x.current);
+  const breakdownMax = Math.max(1, ...breakdown.map((item) => Math.max(item.current, item.avg)));
+  const breakdownTotal = breakdown.reduce((sum, item) => sum + item.current, 0);
+  const paymentRows = (() => {
+    const monthTx = monthTransactionsByKey(state.transactions, monthKey);
+    const fixedOccurrences = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+    return state.accounts.map((account) => {
+      const txTotal = monthTx.filter((t) => t.type === "expense" && t.accountId === account.id).reduce((sum, t) => sum + t.amount, 0);
+      const fixedTotal = fixedOccurrences.filter((c) => c.kind === "expense" && c.accountId === account.id).reduce((sum, c) => sum + c.amount, 0);
+      return { account, total: txTotal + fixedTotal };
+    }).filter((row) => row.total > 0).sort((x, y) => y.total - x.total);
+  })();
+
+  const periodChips = <T extends string>(value: T, setValue: (v: T) => void, options: readonly T[]) => (
+    <span className="period-chips" role="group" aria-label="期間">
+      {options.map((option) => (
+        <button key={option} type="button" className={value === option ? "on" : ""} onClick={() => setValue(option)}>{option === "all" ? "ALL" : option.toUpperCase()}</button>
+      ))}
+    </span>
+  );
+  const chartTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number | string; color?: string; dataKey?: string | number }>; label?: string }) => {
+    if (!active || !payload?.length) return null;
+    const rows = payload.filter((item) => item.value != null && !Number.isNaN(Number(item.value)));
+    if (rows.length === 0) return null;
+    return (
+      <div className="chart-tip">
+        <b>{label}</b>
+        {rows.map((item) => <div key={String(item.dataKey)}><span><i style={{ background: item.color }} />{item.name}</span><em className="num">{plainAmount(Number(item.value))}</em></div>)}
+      </div>
+    );
+  };
+
   return (
     <div className="view-stack">
-      {/* 月次収支サマリー */}
-      <section className="panel month-context">
-        <div className="section-title"><h2>{monthLabel} の収支</h2><span>カレンダー選択月と連動</span></div>
-        <div className="month-summary">
-          <span>収入 <strong style={{ color: "var(--income)" }}>{yen.format(income)}</strong></span>
-          <span>支出 <strong style={{ color: "var(--expense)" }}>{yen.format(expense)}</strong></span>
-          <span>収支 <strong style={{ color: income - expense >= 0 ? "var(--income)" : "var(--expense)" }}>{income - expense >= 0 ? "+" : ""}{yen.format(income - expense)}</strong></span>
-        </div>
-      </section>
-
-      {/* 支出インサイト */}
-      {spendingInsights.length > 0 && (
-        <section className="panel">
-          <div className="panel-title">
-            <h2>今月の支出インサイト</h2>
-            <span className="panel-meta">6ヶ月平均比</span>
-          </div>
-          <div className="spending-insights">
-            {spendingInsights.map(({ cat, current, avg, ratio }) => {
-              const isOver = ratio !== null && ratio > 1.15;
-              const isUnder = ratio !== null && ratio < 0.85 && avg > 0;
-              const barPct = avg > 0 ? Math.min((current / avg) * 100, 200) : 100;
-              const avgBarPct = 100;
-              const hasChildren = state.categories.some((c) => c.parentId === cat.id);
-              return (
-                <div
-                  key={cat.id}
-                  className="spending-insight-row"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => hasChildren ? setDrillParentId(cat.id) : setCategoryDrill({ monthKey, categoryId: cat.id })}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="si-header">
-                    <div className="si-dot" style={{ background: cat.color }} />
-                    <span className="si-name">{cat.name}</span>
-                    {ratio !== null && (
-                      <span className={`si-badge ${isOver ? "over" : isUnder ? "under" : "normal"}`}>
-                        {isOver ? `+${Math.round((ratio - 1) * 100)}%` : isUnder ? `-${Math.round((1 - ratio) * 100)}%` : "平均的"}
-                      </span>
-                    )}
-                    <span className="si-amount">{yen.format(current)}</span>
-                    <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: "auto" }}>›</span>
-                  </div>
-                  <div className="si-bar-wrap">
-                    <div className="si-bar-track">
-                      <div className="si-bar-fill" style={{ width: `${Math.min(barPct, 100)}%`, background: isOver ? "var(--expense)" : isUnder ? "var(--income)" : cat.color }} />
-                      {barPct > 100 && <div className="si-bar-over" style={{ width: `${Math.min(barPct - 100, 100)}%` }} />}
-                    </div>
-                    {avg > 0 && (
-                      <span className="si-avg-label">平均 {yen.format(Math.round(avg))}</span>
-                    )}
-                  </div>
+      {section === "total" && (
+        <>
+          <section className="asset-hero">
+            {snapshotConfirmed && <div className="hanko small"><b>確定</b><i>{Number(monthKey.slice(5, 7))}.{monthEndDay}</i></div>}
+            <div className="asset-hero-label">{snapshotConfirmed ? `${monthLabel}末の総資産` : monthKey === currentMonthKey ? "月末の予定総資産" : `${monthLabel}の総資産`}</div>
+            <div className="amount asset-hero-amount"><span className="yen">¥</span>{plainAmount(grandTotal)}</div>
+            <div className="asset-hero-delta">前月から <b className={totalDelta >= 0 ? "pos" : "neg"}>{totalDelta >= 0 ? "+" : "−"}{plainAmount(totalDelta)}</b>{prevTotal > 0 && <>（{totalDelta >= 0 ? "+" : "−"}{Math.abs((totalDelta / prevTotal) * 100).toFixed(1)}%）</>}</div>
+            {grandTotal > 0 && (
+              <div className="compo">
+                <div className="compo-bar">
+                  {accountBalances.filter((item) => item.balance > 0).map(({ account, balance }) => (
+                    <i key={account.id} title={account.name} style={{ width: `${(balance / grandTotal) * 100}%`, background: account.color }} />
+                  ))}
+                  {investTotal > 0 && <i className="invest" title="投資" style={{ width: `${(investTotal / grandTotal) * 100}%` }} />}
                 </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* 口座残高 + 支払い方法別支出 横並び（PC） */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16 }}>
-      {/* 口座残高一覧 */}
-      <section className="panel">
-        <div className="panel-title"><h2>口座残高</h2><span className="panel-meta">{monthLabel} 時点</span></div>
-        {liquidAccounts.length === 0 ? (
-          <div className="empty-state"><div className="empty-illustration"><Wallet size={20} /></div>設定タブから口座を追加してください。</div>
-        ) : (
-          <div className="account-list">
-            {liquidAccounts.map((account) => {
-              const balance = confirmedAccountBalance(account, state, monthKey);
-              const total = liquidAccounts.reduce((s, a) => s + confirmedAccountBalance(a, state, monthKey), 0);
-              const ratio = total > 0 ? Math.max(Math.min(balance / total, 1), 0) : 0;
-              return (
-                <div className="account-row account-row-clickable" key={account.id} onClick={() => setSelectedAccountHistoryId(account.id)} role="button" tabIndex={0}>
-                  <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
-                  <div className="account-name"><strong>{account.name}</strong><small>{accountTypeLabel(account.type)}</small></div>
-                  <div className="balance">{yen.format(balance)}</div>
-                  <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
+                <div className="compo-keys">
+                  <span><i style={{ background: "var(--ink)" }} />口座 <b className="num">{plainAmount(accountTotal)}</b></span>
+                  {(state.investmentAccounts ?? []).length > 0 && <span><i className="invest" />投資 <b className="num">{plainAmount(investTotal)}</b></span>}
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* 支払い方法別支出 */}
-      {(() => {
-        const allAccounts = state.accounts;
-        const monthTx = monthTransactionsByKey(state.transactions, monthKey);
-        const fixedOccurrences = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
-        const rows = allAccounts
-          .map((account) => {
-            const txTotal = monthTx
-              .filter((t) => t.type === "expense" && t.accountId === account.id)
-              .reduce((s, t) => s + t.amount, 0);
-            const fixedTotal = fixedOccurrences
-              .filter((c) => c.kind === "expense" && c.accountId === account.id)
-              .reduce((s, c) => s + c.amount, 0);
-            return { account, total: txTotal + fixedTotal };
-          })
-          .filter((r) => r.total > 0)
-          .sort((a, b) => b.total - a.total);
-        const grandTotal = rows.reduce((s, r) => s + r.total, 0);
-        if (rows.length === 0) return null;
-        return (
-          <section className="panel">
-            <div className="panel-title"><h2>支払い方法別支出</h2><span className="panel-meta">{monthLabel}</span></div>
-            <div className="account-list">
-              {rows.map(({ account, total }) => {
-                const ratio = grandTotal > 0 ? total / grandTotal : 0;
-                return (
-                  <div className="account-row account-row-clickable" key={account.id} role="button" tabIndex={0} onClick={() => setPaymentDrill(account.id)}>
-                    <div className="account-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</div>
-                    <div className="account-name">
-                      <strong>{account.name}</strong>
-                      <small>{accountTypeLabel(account.type)}</small>
-                    </div>
-                    <div className="balance" style={{ color: "var(--expense)" }}>{yen.format(total)}</div>
-                    <div className="account-bar"><i style={{ width: `${ratio * 100}%`, background: account.color }} /></div>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ textAlign: "right", fontSize: 12, color: "var(--muted)", marginTop: 4 }}>合計 {yen.format(grandTotal)}</div>
+              </div>
+            )}
           </section>
-        );
-      })()}
-      </div>{/* end grid */}
 
-      {/* 口座残高推移 + 収支推移 複合グラフ */}
-      {liquidAccounts.length > 0 && (
-        <section className="panel chart-panel">
-          <div className="panel-title">
-            <h2>残高・収支推移</h2>
-            <div style={{ display: "flex", gap: 4 }}>
-              {(["6m","1y","3y","all"] as const).map((p) => (
-                <button key={p} className={balancePeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setBalancePeriod(p)}>{p === "all" ? "全期間" : p}</button>
-              ))}
-            </div>
+          <section className="chart-card">
+            <div className="chart-card-head"><h2>総資産の推移</h2>{periodChips(balancePeriod, setBalancePeriod, ["6m", "1y", "3y", "all"] as const)}</div>
+            <ResponsiveContainer width="100%" height={180}>
+              <ComposedChart data={assetTrend} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} interval="preserveStartEnd" minTickGap={18} />
+                <YAxis hide domain={[0, "auto"]} />
+                <Tooltip content={chartTooltip} />
+                <Area type="monotone" dataKey="acc" name="口座" stackId="a" stroke="none" fill="var(--chart-acc)" fillOpacity={1} isAnimationActive={false} />
+                <Area type="monotone" dataKey="inv" name="投資" stackId="a" stroke="var(--chart-inv-line)" strokeWidth={2} fill="var(--chart-inv)" fillOpacity={1} isAnimationActive={false} />
+                {showForecast && <Line type="linear" dataKey="forecast" name="予測" stroke="var(--muted)" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 3, fill: "var(--panel)", stroke: "var(--muted)" }} connectNulls={false} isAnimationActive={false} />}
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div className="chart-legend"><span><i className="box" style={{ background: "var(--chart-acc)" }} />口座</span>{(state.investmentAccounts ?? []).length > 0 && <span><i className="box" style={{ background: "var(--chart-inv)" }} />投資</span>}{showForecast && <span><i className="dash" />来月末の予測</span>}</div>
+          </section>
+
+          <div className="settings-sec-h"><span>口座</span><b className="num">{plainAmount(accountTotal)}</b></div>
+          <div className="settings-list">
+            {accountBalances.map(({ account, balance }) => (
+              <button type="button" className="settings-row account-item" key={account.id} onClick={() => setSelectedAccountHistoryId(account.id)}>
+                <span className="passbook-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</span>
+                <span className="settings-row-text"><b>{account.name}</b><small>{accountTypeLabel(account.type)}</small></span>
+                <span className="settings-amount num">{balance < 0 ? "−" : ""}{plainAmount(balance)}</span>
+                <ChevronRight size={16} className="settings-chev" />
+              </button>
+            ))}
+            {liquidAccounts.length === 0 && <div className="empty-state">口座がまだありません。設定の「口座・カード」から追加できます。</div>}
           </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <ComposedChart data={combinedTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-              <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-              <YAxis yAxisId="balance" hide />
-              <YAxis yAxisId="saving" orientation="right" hide />
-              <ReferenceLine yAxisId="saving" y={0} stroke="var(--line-strong)" />
-              <Tooltip
-                content={({ active, payload, label }) => {
-                  if (!active || !payload?.length) return null;
-                  const total = payload.find((p) => p.dataKey === "totalBalance")?.value as number | undefined;
-                  const saving = payload.find((p) => p.dataKey === "saving")?.value as number | undefined;
+
+          {monthKey === currentMonthKey && pendingCards.length > 0 && (
+            <>
+              <div className="settings-sec-h"><span>これから出ていくお金</span></div>
+              <div className="settings-list">
+                {pendingCards.map(({ card, amount, next }) => {
+                  const withdrawal = state.accounts.find((item) => item.id === card.withdrawalAccountId);
                   return (
-                    <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
-                      {liquidAccounts.map((acc) => {
-                        const entry = payload.find((p) => p.dataKey === acc.name);
-                        if (!entry) return null;
-                        return <div key={acc.id} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}><span style={{ color: acc.color }}>● {acc.name}</span><span>{yen.format(Number(entry.value))}</span></div>;
-                      })}
-                      {total !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, fontWeight: 700 }}><span>合計残高</span><span>{yen.format(total)}</span></div>}
-                      {saving !== undefined && <div style={{ display: "flex", justifyContent: "space-between", gap: 16, color: saving >= 0 ? "#1E9A84" : "#C8553F" }}><span>収支</span><span>{saving >= 0 ? "+" : ""}{yen.format(saving)}</span></div>}
+                    <div className="settings-row account-item no-chev" key={card.id}>
+                      <span className="passbook-mark card" style={{ background: card.color }}>CARD</span>
+                      <span className="settings-row-text"><b>{card.name}</b><small>{next ? `${shortDate(next)} 引落` : "引落予定"}／{withdrawal?.name ?? "引落口座未設定"}から</small></span>
+                      <span className="settings-amount num">−{plainAmount(amount)}</span>
                     </div>
                   );
-                }}
-              />
-              <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-              <Bar yAxisId="saving" dataKey="saving" name="収支" barSize={20} radius={[3, 3, 0, 0]}>
-                {combinedTrend.map((row, i) => (
-                  <Cell key={i} fill={(Number(row.saving) ?? 0) >= 0 ? "#1E9A84" : "#C8553F"} fillOpacity={0.8} />
-                ))}
-              </Bar>
-              {liquidAccounts.map((acc) => (
-                <Line key={acc.id} yAxisId="balance" type="monotone" dataKey={acc.name} name={acc.name} stroke="transparent" strokeWidth={0} dot={false} legendType="none" />
-              ))}
-              <Line yAxisId="balance" type="monotone" dataKey="totalBalance" name="口座残高合計" stroke="currentColor" strokeWidth={2.5} dot={false} />
-            </ComposedChart>
-          </ResponsiveContainer>
-        </section>
+                })}
+                <div className="settings-row account-item no-chev total-row">
+                  <span />
+                  <span className="settings-row-text"><b>引落後に使える口座残高</b></span>
+                  <span className="settings-amount num">{plainAmount(accountTotal - pendingTotal)}</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {(state.investmentAccounts ?? []).length > 0 && (
+            <>
+              <div className="settings-sec-h"><span>投資</span></div>
+              <div className="settings-list">
+                <button type="button" className="settings-row account-item" onClick={() => onNavigate("investments")}>
+                  <span className="passbook-mark" style={{ background: "#5A4386" }}>投</span>
+                  <span className="settings-row-text"><b>投資の評価額</b><small>{(state.investmentAccounts ?? []).length}口座／含み益 {investGain >= 0 ? "+" : "−"}{plainAmount(investGain)}</small></span>
+                  <span className="settings-amount num">{plainAmount(investTotal)}</span>
+                  <ChevronRight size={16} className="settings-chev" />
+                </button>
+              </div>
+            </>
+          )}
+        </>
       )}
 
-      {/* カテゴリー別支出 積み上げ棒グラフ */}
-      <section className="panel chart-panel">
-        <div className="panel-title">
-          <h2>カテゴリー別支出</h2>
-          <div style={{ display: "flex", gap: 4 }}>
-            {(["6m","1y","3y","all"] as const).map((p) => (
-              <button key={p} className={categoryPeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setCategoryPeriod(p)}>{p === "all" ? "全期間" : p}</button>
-            ))}
+      {section === "flow" && (
+        <>
+          <section className="asset-hero">
+            <div className="asset-hero-label">{monthLabel}の収支</div>
+            <div className={`amount asset-hero-amount ${savingNow >= 0 ? "pos" : "neg"}`}><span className="yen">{savingNow >= 0 ? "+" : "−"}</span>{plainAmount(savingNow)}</div>
+            <div className="asset-hero-delta">貯金率 <b className={savingNow >= 0 ? "pos" : "neg"}>{savingRateNow}%</b>／6ヶ月平均 {avgSaving >= 0 ? "+" : "−"}{plainAmount(avgSaving)}</div>
+            <div className="hero-kpis">
+              <div><span>収入</span><b className="num pos">{plainAmount(income)}</b></div>
+              <div><span>支出</span><b className="num">{plainAmount(expense)}</b></div>
+              <div><span>うち固定費</span><b className="num">{plainAmount(fixedExpenseNow)}</b></div>
+            </div>
+          </section>
+
+          <section className="chart-card">
+            <div className="chart-card-head"><h2>収入と支出の推移</h2>{periodChips(flowPeriod, setFlowPeriod, ["6m", "1y", "3y"] as const)}</div>
+            <ResponsiveContainer width="100%" height={170}>
+              <BarChart data={flowTrend} margin={{ top: 8, right: 4, left: 4, bottom: 0 }} barGap={2}>
+                <CartesianGrid stroke="var(--line)" vertical={false} />
+                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} interval="preserveStartEnd" minTickGap={14} />
+                <YAxis hide />
+                <Tooltip content={chartTooltip} cursor={{ fill: "var(--panel-soft)" }} />
+                <Bar dataKey="income" name="収入" fill="var(--income)" radius={[2, 2, 0, 0]} maxBarSize={14} isAnimationActive={false} />
+                <Bar dataKey="expense" name="支出" fill="var(--ink)" radius={[2, 2, 0, 0]} maxBarSize={14} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+            <div className="chart-legend"><span><i className="box" style={{ background: "var(--income)" }} />収入</span><span><i className="box" style={{ background: "var(--ink)" }} />支出</span></div>
+          </section>
+
+          <div className="settings-sec-h"><span>支出の内訳</span><span>｜は6ヶ月平均</span></div>
+          <div className="settings-list">
+            {breakdown.map(({ cat, current, avg, ratio }) => {
+              const hasChildren = state.categories.some((c) => c.parentId === cat.id);
+              const diff = Math.round(current - avg);
+              const status = ratio === null || avg === 0 ? "none" : ratio > 1.15 ? "up" : ratio < 0.85 ? "down" : "even";
+              return (
+                <button type="button" key={cat.id} className="breakdown-row" onClick={() => hasChildren ? setDrillParentId(cat.id) : setCategoryDrill({ monthKey, categoryId: cat.id })}>
+                  <b><i style={{ background: cat.color }} />{cat.name}</b>
+                  <span className="num breakdown-amount">{plainAmount(current)}</span>
+                  <span className="breakdown-track">
+                    <i style={{ width: `${(current / breakdownMax) * 100}%`, background: cat.color }} />
+                    {avg > 0 && <u style={{ left: `calc(${(avg / breakdownMax) * 100}% - 1px)` }} />}
+                  </span>
+                  <span className="breakdown-meta">
+                    <span>{breakdownTotal > 0 ? Math.round((current / breakdownTotal) * 100) : 0}%</span>
+                    <span className={status}>{status === "up" ? `平均より +${plainAmount(diff)}` : status === "down" ? `平均より −${plainAmount(diff)}` : status === "even" ? "平均どおり" : "平均なし"}</span>
+                  </span>
+                </button>
+              );
+            })}
+            {breakdown.length === 0 && <div className="empty-state">この月の支出はまだありません。</div>}
           </div>
-        </div>
-        <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={categoryTrend} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-            <YAxis hide />
-            <Tooltip
-              content={({ active, payload, label }) => {
-                if (!active || !payload?.length) return null;
-                const total = payload.reduce((s, p) => s + Number(p.value ?? 0), 0);
-                const sorted = [...payload].reverse().filter((p) => Number(p.value) > 0);
-                return (
-                  <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 12px", fontSize: 12, maxWidth: 220 }}>
-                    <div style={{ fontWeight: 700, marginBottom: 4 }}>{label}</div>
-                    {sorted.map((p) => (
-                      <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                        <span style={{ color: p.fill as string }}>● {p.name}</span>
-                        <span>{yen.format(Number(p.value))} <span style={{ color: "var(--muted)" }}>({total > 0 ? Math.round(Number(p.value) / total * 100) : 0}%)</span></span>
-                      </div>
-                    ))}
-                    <div style={{ borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-                      <span>合計</span><span>{yen.format(total)}</span>
-                    </div>
-                  </div>
-                );
-              }}
-            />
-            <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 11 }} />
-            {expenseCategories.map((cat) => (
-              <Bar key={cat.id} dataKey={cat.name} stackId="cat" fill={cat.color} radius={[0, 0, 0, 0]} style={{ cursor: "pointer" }}
-                onClick={(data) => {
-                  const mKey = categoryMonths.find((m) => m.label === data.label)?.key;
-                  if (mKey) setCategoryDrill({ monthKey: mKey, categoryId: cat.id });
-                }}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-        <p style={{ fontSize: 11, color: "var(--muted)", textAlign: "center", marginTop: 4 }}>棒をクリックするとカテゴリー詳細を表示</p>
-      </section>
+          {breakdown.length > 0 && <p className="settings-note">カテゴリをタップすると、サブカテゴリと取引の一覧が開きます。取引はそこから編集できます。</p>}
+
+          {paymentRows.length > 0 && (
+            <>
+              <div className="settings-sec-h"><span>支払い方法別</span><b className="num">{plainAmount(paymentRows.reduce((sum, row) => sum + row.total, 0))}</b></div>
+              <div className="settings-list">
+                {paymentRows.map(({ account, total }) => (
+                  <button type="button" className="settings-row account-item" key={account.id} onClick={() => setPaymentDrill(account.id)}>
+                    <span className={`passbook-mark${account.type === "credit" ? " card" : ""}`} style={{ background: account.color }}>{account.type === "credit" ? "CARD" : account.name.slice(0, 1)}</span>
+                    <span className="settings-row-text"><b>{account.name}</b><small>{account.type === "credit" ? "カード払い" : account.type === "cash" ? "現金払い" : "口座から直接"}</small></span>
+                    <span className="settings-amount num">{plainAmount(total)}</span>
+                    <ChevronRight size={16} className="settings-chev" />
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
 
       {/* カテゴリー詳細モーダル */}
       {categoryDrill && (() => {
@@ -3560,287 +3544,353 @@ function investmentKindColor(kind?: string) {
   return "#0f766e";
 }
 
-function InvestmentsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
-  const investmentAccounts = state.investmentAccounts ?? [];
-  const investmentRecords = state.investmentRecords ?? [];
-  const [selectedId, setSelectedId] = useState(investmentAccounts[0]?.id ?? "");
-  const selected = investmentAccounts.find((account) => account.id === selectedId) ?? investmentAccounts[0];
-  const [showRecordForm, setShowRecordForm] = useState(false);
-  const [recordsView, setRecordsView] = useState<"monthly" | "yearly" | "returnRate">("monthly");
-  const [chartPeriod, setChartPeriod] = useState<"1y" | "3y" | "5y" | "all">("all");
-  const [monthlyYear, setMonthlyYear] = useState(new Date().getFullYear());
-  const [recordMonth, setRecordMonth] = useState(monthKey);
-  const existingRecord = selected ? investmentRecords.find((record) => record.investmentAccountId === selected.id && record.month === recordMonth) : undefined;
-  const [recordDraft, setRecordDraft] = useState({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, saleAmount: existingRecord?.saleAmount ?? 0, note: existingRecord?.note ?? "" });
-  useEffect(() => {
-    if (selected && !selectedId) setSelectedId(selected.id);
-  }, [selected?.id, selectedId]);
-  useEffect(() => {
-    setRecordMonth(monthKey);
-  }, [monthKey]);
-  useEffect(() => {
-    setRecordDraft({ monthEndValue: existingRecord?.monthEndValue ?? 0, additionalInvestment: existingRecord?.additionalInvestment ?? 0, saleAmount: existingRecord?.saleAmount ?? 0, note: existingRecord?.note ?? "" });
-  }, [selected?.id, recordMonth, existingRecord?.id]);
-  const summary = selected ? investmentSummary(state, selected.id, monthKey) : null;
-  const allRows = selected ? investmentRows(state, selected.id, monthKey >= recordMonth ? monthKey : recordMonth) : [];
-  const filteredRows = allRows.filter((row) => {
-    if (chartPeriod === "all") return true;
-    const monthsAgo = chartPeriod === "1y" ? 12 : chartPeriod === "3y" ? 36 : 60;
-    const cutoffMonth = new Date(new Date().getTime() - monthsAgo * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7);
-    return row.month >= cutoffMonth;
-  });
-  const monthlyRows = [...allRows.filter((row) => parseInt(row.month.slice(0, 4)) === monthlyYear)].reverse();
-  const rows = filteredRows;
-  const yearlyRows = investmentYearRows(allRows);
-  const totalInvestments = investmentAssets(state, monthKey);
+type InvestmentRow = ReturnType<typeof investmentRows>[number] & { recordedCount: number; accountCount: number; capitalBase: number };
 
-  async function saveRecord() {
-    if (!selected) return;
-    try {
-      await upsertInvestmentRecord(state.householdId ?? "", {
-        investmentAccountId: selected.id,
-        month: recordMonth,
-        monthEndValue: recordDraft.monthEndValue,
-        additionalInvestment: recordDraft.additionalInvestment,
-        saleAmount: recordDraft.saleAmount,
-        note: recordDraft.note
-      });
-      await reload();
-      setNotice(`${formatMonthLabel(recordMonth)}の投資実績を保存しました。`);
-    } catch (error) {
-      setNotice(toJapaneseError(error, "投資実績の保存に失敗しました。"));
-    }
+// 複数口座の月次成績を合算する（「すべて」表示用）
+function combinedInvestmentRows(state: LedgerState, accountIds: string[], endMonthKey: string): InvestmentRow[] {
+  const byMonth = new Map<string, InvestmentRow>();
+  const records = state.investmentRecords ?? [];
+  accountIds.forEach((id) => {
+    investmentRows(state, id, endMonthKey).forEach((row) => {
+      const recorded = records.some((record) => record.investmentAccountId === id && record.month === row.month) ? 1 : 0;
+      const capitalBase = row.monthEndValue - row.assetDelta + row.monthlyContribution + row.additionalInvestment;
+      const current = byMonth.get(row.month);
+      if (!current) {
+        byMonth.set(row.month, { ...row, recordedCount: recorded, accountCount: 1, capitalBase });
+        return;
+      }
+      current.targetValue += row.targetValue;
+      current.monthEndValue += row.monthEndValue;
+      current.monthlyContribution += row.monthlyContribution;
+      current.additionalInvestment += row.additionalInvestment;
+      current.saleAmount += row.saleAmount;
+      current.assetDelta += row.assetDelta;
+      current.profit += row.profit;
+      current.cumulativePrincipal += row.cumulativePrincipal;
+      current.unrealizedGain += row.unrealizedGain;
+      current.capitalBase += capitalBase;
+      current.recordedCount += recorded;
+      current.accountCount += 1;
+    });
+  });
+  return Array.from(byMonth.values())
+    .map((row) => ({ ...row, monthlyReturnRate: row.capitalBase > 0 ? (row.profit / row.capitalBase) * 100 : 0 }))
+    .sort((x, y) => x.month.localeCompare(y.month));
+}
+
+function signedAmount(value: number) {
+  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${plainAmount(value)}`;
+}
+
+function signedRate(value: number, digits = 1) {
+  return `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(digits)}%`;
+}
+
+function InvestmentsView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const accounts = state.investmentAccounts ?? [];
+  const records = state.investmentRecords ?? [];
+  const [selectedId, setSelectedId] = useState<string>("all");
+  const effectiveId = accounts.length <= 1 ? (accounts[0]?.id ?? "all") : (selectedId === "all" || accounts.some((account) => account.id === selectedId) ? selectedId : "all");
+  const selectedAccounts = effectiveId === "all" ? accounts : accounts.filter((account) => account.id === effectiveId);
+  const single = selectedAccounts.length === 1 ? selectedAccounts[0] : null;
+  const [chartPeriod, setChartPeriod] = useState<"1y" | "3y" | "5y" | "all">("all");
+  const [perfView, setPerfView] = useState<"monthly" | "yearly">("monthly");
+  const [perfYear, setPerfYear] = useState(Number(monthKey.slice(0, 4)));
+  const [recordTarget, setRecordTarget] = useState<{ month: string; accountId: string } | null>(null);
+  useEffect(() => { setPerfYear(Number(monthKey.slice(0, 4))); }, [monthKey]);
+
+  const currentMonthKey = todayIso().slice(0, 7);
+  const rows = useMemo(() => combinedInvestmentRows(state, selectedAccounts.map((account) => account.id), monthKey), [state, effectiveId, monthKey]);
+  const yearRows = useMemo(() => investmentYearRows(rows), [rows]);
+  // 記入済みの最新月を主役にする（未記入の月は見込み値なので）
+  const recordedRows = rows.filter((row) => row.month <= monthKey && row.recordedCount > 0);
+  const cur = recordedRows[recordedRows.length - 1] ?? rows.find((row) => row.month === monthKey) ?? rows[rows.length - 1];
+  const thisYear = yearRows.find((row) => row.year === monthKey.slice(0, 4));
+  const fullyRecorded = cur ? cur.recordedCount >= cur.accountCount : false;
+  const missing = selectedAccounts.filter((account) => (!account.startMonth || account.startMonth <= monthKey) && !records.some((record) => record.investmentAccountId === account.id && record.month === monthKey));
+  const monthNum = Number(monthKey.slice(5, 7));
+  const heroMonthNum = cur ? Number(cur.month.slice(5, 7)) : monthNum;
+  const gainRate = cur && cur.cumulativePrincipal > 0 ? (cur.unrealizedGain / cur.cumulativePrincipal) * 100 : 0;
+  const targetLabel = single ? `目標（年${single.targetAnnualRate}%）` : "目標";
+
+  const chartRows = rows.filter((row) => {
+    if (chartPeriod === "all") return true;
+    const months = chartPeriod === "1y" ? 12 : chartPeriod === "3y" ? 36 : 60;
+    return row.month >= shiftMonthKey(monthKey, -(months - 1));
+  }).map((row) => ({ ...row, label: chartPeriod === "all" && rows.length > 13 ? `${row.month.slice(2, 4)}/${Number(row.month.slice(5, 7))}` : row.label }));
+  const yearMonthRows = [...rows.filter((row) => Number(row.month.slice(0, 4)) === perfYear)].reverse();
+  const perfYearSummary = yearRows.find((row) => row.year === String(perfYear));
+  const years = Array.from(new Set(rows.map((row) => Number(row.month.slice(0, 4)))));
+  const minYear = years.length ? Math.min(...years) : perfYear;
+  const maxYear = years.length ? Math.max(...years) : perfYear;
+
+  const openRecord = (month: string) => {
+    const unrecorded = selectedAccounts.find((account) => (!account.startMonth || account.startMonth <= month) && !records.some((record) => record.investmentAccountId === account.id && record.month === month));
+    const target = unrecorded ?? selectedAccounts[0];
+    if (target) setRecordTarget({ month, accountId: target.id });
+  };
+
+  const tip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name?: string; value?: number | string; color?: string; dataKey?: string | number }>; label?: string }) => {
+    if (!active || !payload?.length) return null;
+    return (
+      <div className="chart-tip">
+        <b>{label}</b>
+        {payload.map((item) => <div key={String(item.dataKey)}><span><i style={{ background: item.color }} />{item.name}</span><em className="num">{item.dataKey === "rate" ? `${Number(item.value).toFixed(1)}%` : plainAmount(Number(item.value))}</em></div>)}
+      </div>
+    );
+  };
+
+  if (accounts.length === 0) {
+    return (
+      <div className="view-stack">
+        <section className="panel">
+          <div className="empty-state">
+            <div className="empty-illustration"><LineChartIcon size={20} /></div>
+            投資口座はまだありません。設定の「投資口座」から、NISA・iDeCo・証券口座を追加できます。
+          </div>
+        </section>
+      </div>
+    );
   }
 
   return (
     <div className="view-stack">
-      {/* ヘッダーサマリー */}
-      <section className="panel investment-hero">
-        <div className="section-title">
-          <h2>投資管理</h2>
-          <span>{formatMonthLabel(monthKey)}</span>
+      {accounts.length > 1 && (
+        <div className="inv-chips" role="group" aria-label="投資口座">
+          <button type="button" className={effectiveId === "all" ? "on" : ""} onClick={() => setSelectedId("all")}>すべて</button>
+          {accounts.map((account) => (
+            <button key={account.id} type="button" className={effectiveId === account.id ? "on" : ""} onClick={() => setSelectedId(account.id)}>
+              <i style={{ background: account.color || investmentKindColor(account.accountKind) }} />{account.name}
+            </button>
+          ))}
         </div>
-        <div className="month-summary">
-          <span>投資評価額 <strong>{yen.format(totalInvestments)}</strong></span>
-          <span>月間損益 <strong style={{ color: (summary?.profit ?? 0) >= 0 ? "var(--income)" : "var(--expense)" }}>{yen.format(summary?.profit ?? 0)}</strong></span>
-          <span>目標達成率 <strong>{Math.round(summary?.achievementRate ?? 0)}%</strong></span>
-        </div>
-      </section>
+      )}
 
-      {/* 口座選択 */}
-      <section className="panel">
-        <div className="section-title">
-          <h2>口座を選択</h2>
-          <span className="panel-meta">設定 → 投資 で口座の追加・編集</span>
-        </div>
-        {investmentAccounts.length === 0 ? (
-          <div className="empty-state"><span>設定タブの「投資」から投資口座を追加してください。</span></div>
-        ) : (
-          <div className="inv-account-cards">
-            {investmentAccounts.map((account) => {
-              const val = latestInvestmentValue(state, account.id, monthKey);
-              const accRows = investmentRows(state, account.id, monthKey);
-              const latestRow = accRows[accRows.length - 1];
-              const gain = latestRow?.unrealizedGain ?? (val - (account.initialAmount ?? 0));
-              const isActive = selected?.id === account.id;
-              const kindLabel = investmentKindLabel(account.accountKind);
-              const kindColor = account.color || investmentKindColor(account.accountKind);
-              return (
-                <button
-                  key={account.id}
-                  type="button"
-                  className={`inv-account-card ${isActive ? "active" : ""}`}
-                  onClick={() => setSelectedId(account.id)}
-                  style={{ "--acc-color": kindColor } as React.CSSProperties}
-                >
-                  <div className="inv-acc-kind">{kindLabel}</div>
-                  <div className="inv-acc-name">{account.name}</div>
-                  <div className="inv-acc-value">{yen.format(val)}</div>
-                  <div className="inv-acc-gain" style={{ color: gain >= 0 ? "var(--income)" : "var(--expense)" }}>
-                    {gain >= 0 ? "+" : ""}{yen.format(gain)}
-                  </div>
-                </button>
-              );
-            })}
+      {cur && (
+        <section className="asset-hero">
+          <div className="asset-hero-label">{heroMonthNum}月末の評価額{!fullyRecorded && <span className="hero-tag">{cur.recordedCount > 0 ? "一部見込み" : "見込み"}</span>}</div>
+          <div className="amount asset-hero-amount"><span className="yen">¥</span>{plainAmount(cur.monthEndValue)}</div>
+          <div className="asset-hero-delta">含み益 <b className={cur.unrealizedGain >= 0 ? "pos" : "neg"}>{signedAmount(cur.unrealizedGain)}</b>（{signedRate(gainRate)}）</div>
+          <div className="hero-kpis">
+            <div><span>投資した元金</span><b className="num">{plainAmount(cur.cumulativePrincipal)}</b></div>
+            <div><span>{heroMonthNum}月の損益</span><b className={`num ${cur.profit >= 0 ? "pos" : "neg"}`}>{signedAmount(cur.profit)}</b></div>
+            <div><span>今年の年利</span><b className={`num ${(thisYear?.returnRate ?? 0) >= 0 ? "pos" : "neg"}`}>{signedRate(thisYear?.returnRate ?? 0)}</b></div>
           </div>
-        )}
+        </section>
+      )}
+
+      {monthKey <= currentMonthKey && missing.length > 0 && (
+        <button type="button" className="record-cta" onClick={() => openRecord(monthKey)}>
+          <span><b>{monthNum}月の評価額を記入</b><small>{missing.length > 1 ? `${missing.length}口座が未記入です` : "月末に証券口座の評価額を写すだけです"}</small></span>
+          <span className="record-cta-go">記入する</span>
+        </button>
+      )}
+
+      <section className="chart-card">
+        <div className="chart-card-head">
+          <h2>評価額と元金</h2>
+          <span className="period-chips" role="group" aria-label="期間">
+            {(["1y", "3y", "5y", "all"] as const).map((option) => (
+              <button key={option} type="button" className={chartPeriod === option ? "on" : ""} onClick={() => setChartPeriod(option)}>{option === "all" ? "ALL" : option.toUpperCase()}</button>
+            ))}
+          </span>
+        </div>
+        <ResponsiveContainer width="100%" height={190}>
+          <ComposedChart data={chartRows} margin={{ top: 8, right: 4, left: 4, bottom: 0 }}>
+            <CartesianGrid stroke="var(--line)" vertical={false} />
+            <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} interval="preserveStartEnd" minTickGap={18} />
+            <YAxis hide domain={["dataMin - 20000", "auto"]} />
+            <Tooltip content={tip} />
+            <Area type="monotone" dataKey="cumulativePrincipal" name="元金" stroke="none" fill="var(--chart-principal)" fillOpacity={1} isAnimationActive={false} />
+            <Line type="monotone" dataKey="targetValue" name={targetLabel} stroke="var(--muted)" strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+            <Line type="monotone" dataKey="monthEndValue" name="評価額" stroke="var(--income)" strokeWidth={2.5} dot={false} activeDot={{ r: 4 }} isAnimationActive={false} />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <div className="chart-legend"><span><i style={{ background: "var(--income)" }} />評価額</span><span><i className="box" style={{ background: "var(--chart-principal)" }} />元金</span><span><i className="dash" />{targetLabel}</span></div>
       </section>
 
-      {selected && (
+      <div className="perf-head">
+        <span className="mini-seg" role="group" aria-label="成績の表示">
+          <button type="button" className={perfView === "monthly" ? "on" : ""} onClick={() => setPerfView("monthly")}>月ごと</button>
+          <button type="button" className={perfView === "yearly" ? "on" : ""} onClick={() => setPerfView("yearly")}>年ごと</button>
+        </span>
+        {perfView === "monthly" && (
+          <span className="year-nav">
+            <button type="button" onClick={() => setPerfYear(perfYear - 1)} disabled={perfYear <= minYear} aria-label="前の年"><ChevronLeft size={16} /></button>
+            <b className="num">{perfYear}</b>
+            <button type="button" onClick={() => setPerfYear(perfYear + 1)} disabled={perfYear >= maxYear} aria-label="次の年"><ChevronRight size={16} /></button>
+          </span>
+        )}
+      </div>
+
+      {perfView === "monthly" ? (
         <>
-          {/* 推移グラフ */}
-          <section className="panel chart-panel">
-            <div className="section-title"><h2>{selected.name}の推移</h2><span>元金・含み益・評価額</span></div>
-            <div style={{ display: "flex", gap: "8px", marginBottom: "12px" }}>
-              {(["1y","3y","5y","all"] as const).map((p) => (
-                <button key={p} className={chartPeriod === p ? "mini-button-active" : "mini-button"} type="button" onClick={() => setChartPeriod(p)}>{p === "all" ? "全期間" : p}</button>
-              ))}
-            </div>
-            {/* 元金・含み益サマリー */}
-            {rows.length > 0 && (() => {
-              const latest = rows[rows.length - 1];
-              const gain = latest.unrealizedGain;
-              return (
-                <div className="inv-principal-summary">
-                  <div><span>累計元金</span><strong>{yen.format(latest.cumulativePrincipal)}</strong></div>
-                  <div><span>含み益</span><strong style={{ color: gain >= 0 ? "var(--income)" : "var(--expense)" }}>{gain >= 0 ? "+" : ""}{yen.format(gain)}</strong></div>
-                  <div><span>現在評価額</span><strong>{yen.format(latest.monthEndValue)}</strong></div>
-                </div>
-              );
-            })()}
-            <ResponsiveContainer width="100%" height={260}>
-              <ComposedChart data={rows} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="principalGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6F7B93" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#6F7B93" stopOpacity={0.05} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                <YAxis yAxisId="left" hide />
-                <Tooltip
-                  formatter={(value, name) => [yen.format(Number(value)), name]}
-                  contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                />
-                <Legend iconType="circle" wrapperStyle={{ paddingTop: 8, fontSize: 12 }} />
-                <Area yAxisId="left" type="monotone" dataKey="cumulativePrincipal" name="累計元金" stroke="#6F7B93" strokeWidth={1.5} fill="url(#principalGrad)" dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="targetValue" name="目標評価額" stroke="#1E9A84" strokeWidth={2} strokeDasharray="4 4" dot={false} />
-                <Line yAxisId="left" type="monotone" dataKey="monthEndValue" name="月末評価額" stroke={selected.color || "currentColor"} strokeWidth={3} dot={{ r: 3 }} />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </section>
-
-          {/* 月次実績入力モーダル */}
-          {showRecordForm && (
-            <div className="sheet-backdrop center-backdrop" onClick={() => setShowRecordForm(false)}>
-              <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 420px)" }}>
-                <div className="section-title">
-                  <h2>{formatMonthLabel(recordMonth)}の実績入力</h2>
-                  <span>{selected?.name}</span>
-                </div>
-                <div className="crud-form compact-form">
-                  <label>月末評価額<input type="number" value={numberInputValue(recordDraft.monthEndValue)} onChange={(event) => setRecordDraft({ ...recordDraft, monthEndValue: Number(event.target.value || 0) })} autoFocus /></label>
-                  <label>追加投資額<input type="number" value={numberInputValue(recordDraft.additionalInvestment)} onChange={(event) => setRecordDraft({ ...recordDraft, additionalInvestment: Number(event.target.value || 0) })} /></label>
-                  <label>売却額<input type="number" value={numberInputValue(recordDraft.saleAmount)} onChange={(event) => setRecordDraft({ ...recordDraft, saleAmount: Number(event.target.value || 0) })} /></label>
-                  <label>備考<input value={recordDraft.note} onChange={(event) => setRecordDraft({ ...recordDraft, note: event.target.value })} placeholder="例: S&P500追加購入" /></label>
-                  <button className="full-primary" type="button" onClick={async () => { await saveRecord(); setShowRecordForm(false); }}>保存</button>
-                  {existingRecord && (
-                    <button className="google-button" type="button" onClick={async () => {
-                      try { await deleteInvestmentRecord(existingRecord.id); await reload(); setNotice("投資実績を削除しました。"); setShowRecordForm(false); }
-                      catch (error) { setNotice(toJapaneseError(error, "投資実績の削除に失敗しました。")); }
-                    }}>この月の実績を削除</button>
-                  )}
-                  <button className="google-button" type="button" onClick={() => setShowRecordForm(false)}>キャンセル</button>
-                </div>
-              </section>
-            </div>
-          )}
-
-          {/* 月次成績 / 年次実績 切り替え */}
-          <section className="panel">
-            <div className="section-title">
-              <div style={{ display: "flex", gap: 4 }}>
-                <button className={recordsView === "monthly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("monthly")}>月次成績</button>
-                <button className={recordsView === "yearly" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("yearly")}>年ごとの実績</button>
-                <button className={recordsView === "returnRate" ? "mini-button-active" : "mini-button"} type="button" onClick={() => setRecordsView("returnRate")}>年利推移</button>
-              </div>
-              {recordsView === "monthly" && (
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear - 1)}>前年</button>
-                  <span style={{ fontWeight: 700, fontSize: 13 }}>{monthlyYear}年</span>
-                  <button className="mini-button" type="button" onClick={() => setMonthlyYear(monthlyYear + 1)} disabled={monthlyYear >= new Date().getFullYear()}>翌年</button>
-                </div>
+          <table className="passbook-table">
+            <thead><tr><th>月</th><th>評価額</th><th>損益</th><th>月利</th></tr></thead>
+            <tbody>
+              {yearMonthRows.map((row) => {
+                const empty = row.recordedCount === 0;
+                const partial = !empty && row.recordedCount < row.accountCount;
+                return (
+                  <tr key={row.month} className={empty ? "empty" : ""} onClick={() => openRecord(row.month)}>
+                    <td>{row.label}{partial && <i className="partial-dot" title="一部の口座が未記入" />}</td>
+                    {empty ? (
+                      <td colSpan={3} className="write-cell"><span className="write-chip">記入する</span></td>
+                    ) : (
+                      <>
+                        <td>{plainAmount(row.monthEndValue)}</td>
+                        <td className={row.profit >= 0 ? "pos" : "neg"}>{signedAmount(row.profit)}</td>
+                        <td className={row.monthlyReturnRate >= 0 ? "pos" : "neg"}>{signedRate(row.monthlyReturnRate)}</td>
+                      </>
+                    )}
+                  </tr>
+                );
+              })}
+              {yearMonthRows.length === 0 && <tr className="empty"><td colSpan={4}>この年の記録はありません。</td></tr>}
+              {perfYearSummary && yearMonthRows.length > 0 && (
+                <tr className="sum"><td>年初から</td><td /><td className={perfYearSummary.profit >= 0 ? "pos" : "neg"}>{signedAmount(perfYearSummary.profit)}</td><td className={perfYearSummary.returnRate >= 0 ? "pos" : "neg"}>{signedRate(perfYearSummary.returnRate)}</td></tr>
               )}
-              {(recordsView === "yearly" || recordsView === "returnRate") && <span>{yearlyRows.length}年分</span>}
-            </div>
-
-            {recordsView === "monthly" && (
-              <div className="inv-month-list">
-                {monthlyRows.length === 0 ? (
-                  <div className="empty-state"><span>行をタップして実績を入力できます。</span></div>
-                ) : monthlyRows.map((row) => {
-                  const hasRecord = (state.investmentRecords ?? []).some((r) => r.investmentAccountId === selected?.id && r.month === row.month);
-                  return (
-                    <div key={row.month} className="inv-month-row account-row-clickable" role="button" tabIndex={0}
-                      onClick={() => { setRecordMonth(row.month); setShowRecordForm(true); }}>
-                      <div className="inv-month-label">
-                        {row.label}
-                        {!hasRecord && <span style={{ fontSize: 10, color: "var(--muted)", marginLeft: 4 }}>未入力</span>}
-                      </div>
-                      <div className="inv-month-body">
-                        <div><span>評価額</span><strong>{yen.format(row.monthEndValue)}</strong></div>
-                        <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
-                        <div><span>月利</span><strong className={row.monthlyReturnRate >= 0 ? "positive" : "negative"}>{row.monthlyReturnRate.toFixed(2)}%</strong></div>
-                        <div><span>達成率</span><strong>{Math.round(row.achievementRate)}%</strong></div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {recordsView === "yearly" && (
-              <div className="inv-year-cards">
-                {yearlyRows.length === 0 ? (
-                  <div className="empty-state"><span>年次データがまだありません。</span></div>
-                ) : yearlyRows.map((row) => (
-                  <div key={row.year} className="inv-year-card">
-                    <div className="inv-year-label">{row.year}年</div>
-                    <div className="inv-year-grid">
-                      <div><span>年末評価額</span><strong>{yen.format(row.endValue)}</strong></div>
-                      <div><span>積立</span><strong>{yen.format(row.monthlyContribution)}</strong></div>
-                      <div><span>追加投資</span><strong>{yen.format(row.additionalInvestment)}</strong></div>
-                      <div><span>純利益</span><strong className={row.profit >= 0 ? "positive" : "negative"}>{yen.format(row.profit)}</strong></div>
-                      <div><span>増減</span><strong className={row.assetDelta >= 0 ? "positive" : "negative"}>{yen.format(row.assetDelta)}</strong></div>
-                      <div><span>年利</span><strong className={row.returnRate >= 0 ? "positive" : "negative"}>{row.returnRate.toFixed(2)}%</strong></div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {recordsView === "returnRate" && (() => {
-              const chartData = [...yearlyRows].reverse().map((row) => ({
-                year: `${row.year}年`,
-                年利: parseFloat(row.returnRate.toFixed(2)),
-                利益額: Math.round(row.profit),
-                目標年利: selected?.targetAnnualRate ?? 0,
-              }));
-              const target = selected?.targetAnnualRate ?? 0;
-              if (chartData.length === 0) return <div className="empty-state"><span>年次データがまだありません。</span></div>;
-              return (
-                <div>
-                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>棒＝年間利益額（目標 {target}% 基準で色分け）／ 折れ線＝年利</div>
-                  <ResponsiveContainer width="100%" height={260}>
-                    <ComposedChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" vertical={false} />
-                      <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} />
-                      <YAxis yAxisId="profit" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${Math.round(v / 10000)}万`} />
-                      <YAxis yAxisId="rate" orientation="right" tickLine={false} axisLine={false} tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => `${v}%`} />
-                      <Tooltip formatter={(v: number, name: string) => name === "年利" ? [`${v.toFixed(2)}%`, name] : [yen.format(v), name]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }} />
-                      <ReferenceLine yAxisId="rate" y={target} stroke="#1E9A84" strokeDasharray="4 4" label={{ value: `目標 ${target}%`, position: "insideTopRight", fontSize: 11, fill: "#1E9A84" }} />
-                      <Bar yAxisId="profit" dataKey="利益額" radius={[4, 4, 0, 0]}>
-                        {chartData.map((entry, i) => (
-                          <Cell key={i} fill={entry.年利 >= target ? "#1E9A84" : entry.年利 >= 0 ? "#C9952A" : "#C8553F"} />
-                        ))}
-                      </Bar>
-                      <Line yAxisId="rate" type="monotone" dataKey="年利" stroke="#3E6FB0" strokeWidth={2} dot={{ r: 3, fill: "#3E6FB0" }} />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                  <div style={{ display: "flex", gap: 16, fontSize: 11, color: "var(--muted)", marginTop: 8, flexWrap: "wrap" }}>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#1E9A84", marginRight: 4 }} />目標達成</span>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#C9952A", marginRight: 4 }} />プラスだが目標未達</span>
-                    <span><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "#C8553F", marginRight: 4 }} />マイナス</span>
-                    <span><span style={{ display: "inline-block", width: 12, height: 2, background: "#3E6FB0", marginRight: 4, verticalAlign: "middle" }} />年利</span>
-                  </div>
-                </div>
-              );
-            })()}
-          </section>
+            </tbody>
+          </table>
+          <p className="settings-note">行をタップすると、その月の評価額・追加投資・売却を記入・修正できます。{!single && "「すべて」では全口座の合計を表示しています。"}</p>
+        </>
+      ) : (
+        <>
+          {yearRows.length > 0 && (
+            <section className="chart-card">
+              <div className="chart-card-head"><h2>年ごとの利益と年利</h2>{single && <span className="chart-card-meta">目標 年{single.targetAnnualRate}%</span>}</div>
+              <ResponsiveContainer width="100%" height={180}>
+                <ComposedChart data={[...yearRows].reverse().map((row) => ({ year: row.year, profit: Math.round(row.profit), rate: Number(row.returnRate.toFixed(2)) }))} margin={{ top: 12, right: 4, left: 4, bottom: 0 }}>
+                  <CartesianGrid stroke="var(--line)" vertical={false} />
+                  <XAxis dataKey="year" tickLine={false} axisLine={false} tick={{ fontSize: 10, fill: "var(--muted)" }} />
+                  <YAxis yAxisId="profit" hide />
+                  <YAxis yAxisId="rate" hide orientation="right" />
+                  <Tooltip content={tip} cursor={{ fill: "var(--panel-soft)" }} />
+                  <ReferenceLine yAxisId="profit" y={0} stroke="var(--line-strong)" />
+                  {single && <ReferenceLine yAxisId="rate" y={single.targetAnnualRate} stroke="var(--muted)" strokeDasharray="3 3" />}
+                  <Bar yAxisId="profit" dataKey="profit" name="利益" maxBarSize={36} radius={[2, 2, 0, 0]} isAnimationActive={false}>
+                    {[...yearRows].reverse().map((row) => (
+                      <Cell key={row.year} fill={row.returnRate < 0 ? "var(--expense)" : single && row.returnRate < single.targetAnnualRate ? "var(--warning)" : "var(--income)"} />
+                    ))}
+                  </Bar>
+                  <Line yAxisId="rate" type="monotone" dataKey="rate" name="年利" stroke="var(--ink)" strokeWidth={2} dot={{ r: 3.5, fill: "var(--ink)", stroke: "var(--panel)", strokeWidth: 2 }} isAnimationActive={false} />
+                </ComposedChart>
+              </ResponsiveContainer>
+              <div className="chart-legend"><span><i className="box" style={{ background: "var(--income)" }} />{single ? "目標達成" : "プラス"}</span>{single && <span><i className="box" style={{ background: "var(--warning)" }} />未達</span>}<span><i className="box" style={{ background: "var(--expense)" }} />マイナス</span><span><i style={{ background: "var(--ink)" }} />年利</span></div>
+            </section>
+          )}
+          <table className="passbook-table">
+            <thead><tr><th>年</th><th>年末評価額</th><th>積立</th><th>利益</th><th>年利</th></tr></thead>
+            <tbody>
+              {yearRows.map((row) => (
+                <tr key={row.year}>
+                  <td>{row.year}</td>
+                  <td>{plainAmount(row.endValue)}</td>
+                  <td>{plainAmount(row.monthlyContribution + row.additionalInvestment - row.saleAmount)}</td>
+                  <td className={row.profit >= 0 ? "pos" : "neg"}>{signedAmount(row.profit)}</td>
+                  <td className={row.returnRate >= 0 ? "pos" : "neg"}>{signedRate(row.returnRate)}</td>
+                </tr>
+              ))}
+              {yearRows.length === 0 && <tr className="empty"><td colSpan={5}>年ごとの記録はまだありません。</td></tr>}
+            </tbody>
+          </table>
         </>
       )}
+
+      {recordTarget && (
+        <InvestmentRecordSheet
+          state={state}
+          month={recordTarget.month}
+          accountId={recordTarget.accountId}
+          accounts={selectedAccounts.length > 0 ? selectedAccounts : accounts}
+          setAccountId={(id) => setRecordTarget({ ...recordTarget, accountId: id })}
+          onClose={() => setRecordTarget(null)}
+          setNotice={setNotice}
+          reload={reload}
+        />
+      )}
     </div>
+  );
+}
+
+function InvestmentRecordSheet({ state, month, accountId, accounts, setAccountId, onClose, setNotice, reload }: { state: LedgerState; month: string; accountId: string; accounts: LedgerState["investmentAccounts"]; setAccountId: (id: string) => void; onClose: () => void; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const account = accounts.find((item) => item.id === accountId) ?? accounts[0];
+  const records = state.investmentRecords ?? [];
+  const existing = records.find((record) => record.investmentAccountId === account?.id && record.month === month);
+  const prevValue = account ? (shiftMonthKey(month, -1) < account.startMonth ? account.initialAmount : latestInvestmentValue(state, account.id, shiftMonthKey(month, -1))) : 0;
+  const contribution = account ? investmentContributionForMonth(state, account, month) : 0;
+  const [value, setValue] = useState(existing?.monthEndValue ?? 0);
+  const [additional, setAdditional] = useState(existing?.additionalInvestment ?? 0);
+  const [sale, setSale] = useState(existing?.saleAmount ?? 0);
+  const [note, setNote] = useState(existing?.note ?? "");
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setValue(existing?.monthEndValue ?? 0);
+    setAdditional(existing?.additionalInvestment ?? 0);
+    setSale(existing?.saleAmount ?? 0);
+    setNote(existing?.note ?? "");
+  }, [account?.id, month, existing?.id]);
+  if (!account) return null;
+  const profit = value > 0 ? value - prevValue - contribution - additional + sale : 0;
+  const base = prevValue + contribution + additional;
+  const rate = base > 0 ? (profit / base) * 100 : 0;
+  async function save() {
+    if (!value || value <= 0) { setNotice("月末の評価額を入力してください。"); return; }
+    setSaving(true);
+    try {
+      await upsertInvestmentRecord(state.householdId ?? "", { investmentAccountId: account.id, month, monthEndValue: value, additionalInvestment: additional, saleAmount: sale, note });
+      await reload();
+      setNotice(`${account.name}の${formatMonthLabel(month)}の評価額を記入しました。`);
+      const nextMissing = accounts.find((item) => item.id !== account.id && (!item.startMonth || item.startMonth <= month) && !records.some((record) => record.investmentAccountId === item.id && record.month === month));
+      if (nextMissing) setAccountId(nextMissing.id); else onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "評価額の記入に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function remove() {
+    if (!existing) return;
+    try {
+      await deleteInvestmentRecord(existing.id);
+      await reload();
+      setNotice(`${formatMonthLabel(month)}の記録を削除しました。`);
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "記録の削除に失敗しました。"));
+    }
+  }
+  return (
+    <SettingsSheet title={`${Number(month.slice(5, 7))}月の評価額を記入`} onClose={onClose}>
+      {accounts.length > 1 && (
+        <div className="inv-chips in-sheet" role="group" aria-label="投資口座">
+          {accounts.map((item) => {
+            const done = records.some((record) => record.investmentAccountId === item.id && record.month === month);
+            return (
+              <button key={item.id} type="button" className={item.id === account.id ? "on" : ""} onClick={() => setAccountId(item.id)}>
+                <i style={{ background: item.color || investmentKindColor(item.accountKind) }} />{item.name}<small>{done ? "記入済み" : "未記入"}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <label className="record-amount">
+        <span>{account.name}の月末の評価額</span>
+        <span className="record-amount-input"><em>¥</em><input type="number" inputMode="numeric" autoFocus value={numberInputValue(value)} placeholder={String(prevValue + contribution)} onChange={(event) => setValue(Number(event.target.value || 0))} /></span>
+      </label>
+      <div className="record-hint">
+        <span>先月 {plainAmount(prevValue)} ＋ 積立 {plainAmount(contribution)}</span>
+        {value > 0 && <span>今月の損益 <b className={profit >= 0 ? "pos" : "neg"}>{signedAmount(profit)}（{signedRate(rate)}）</b></span>}
+      </div>
+      <div className="sheet-fields">
+        <div className="sheet-field"><span>積立</span><span className="num sheet-static">{plainAmount(contribution)} <small>設定の積立額</small></span></div>
+        <label className="sheet-field"><span>追加投資</span><input type="number" inputMode="numeric" value={numberInputValue(additional)} placeholder="0" onChange={(event) => setAdditional(Number(event.target.value || 0))} /></label>
+        <label className="sheet-field"><span>売却</span><input type="number" inputMode="numeric" value={numberInputValue(sale)} placeholder="0" onChange={(event) => setSale(Number(event.target.value || 0))} /></label>
+        <label className="sheet-field"><span>メモ</span><input value={note} placeholder="任意" onChange={(event) => setNote(event.target.value)} /></label>
+      </div>
+      <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "記入中…" : existing ? "修正する" : "記入する"}</button>
+      {existing && <button type="button" className="sheet-danger-link" onClick={remove}>この月の記録を削除</button>}
+    </SettingsSheet>
   );
 }
 
