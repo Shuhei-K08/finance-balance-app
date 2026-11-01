@@ -97,7 +97,7 @@ import {
 } from "@/lib/finance";
 import type { FixedCostOccurrence } from "@/lib/finance";
 import { loadState, saveState } from "@/lib/storage";
-import { LedgerState, Transaction, TransactionType } from "@/lib/types";
+import { FixedCost, LedgerState, Transaction, TransactionType } from "@/lib/types";
 import type { AdminDashboard } from "@/lib/types";
 import { supabase } from "@/lib/supabase";
 import {
@@ -1305,7 +1305,7 @@ function HomeView({
             {upcoming.slice(0, 3).map((item) => (
               <div className="ledger-line" key={`${item.id}-${item.date}`}>
                 <div className="tx-lead">{shortDate(item.date)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
-                <div className="ledger-line-body"><strong>{item.name}</strong></div>
+                <div className="ledger-line-body"><strong>{item.name}</strong>{item.installment && <small className={item.installment.startsWith("最終回") ? "last" : ""}>{item.installment}</small>}</div>
                 <div className={`ledger-line-amount ${item.kind}`}>{item.kind === "income" ? "+" : ""}{plainAmount(item.amount)}</div>
               </div>
             ))}
@@ -1611,6 +1611,7 @@ function upcomingBills(state: LedgerState, days: number) {
     .filter((cost) => cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
     .map((cost) => ({
       id: cost.id,
+      installment: (() => { const info = cost.kind !== "income" ? installmentInfo(state, cost) : null; return info ? installmentLabel(info, cost.date.slice(0, 7)) : ""; })(),
       name: cost.name,
       amount: cost.amount,
       kind: cost.kind,
@@ -1904,15 +1905,9 @@ function QuickTransactionSheet({
           />
         )}
         <div className="form-grid">
-          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<select value={accountId} onChange={(event) => { setAccountId(event.target.value); if (event.target.value === transferToAccountId) setTransferToAccountId(""); const nextAccount = state.accounts.find((a) => a.id === event.target.value); setCreditPostingMode(type === "expense" && nextAccount?.type === "credit" ? "withdrawal" : "used"); }}>
-            <option value="">選択してください</option>
-            {sortAccountsByType(accountChoices).map((account) => <option key={account.id} value={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}
-          </select></label>
+          <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<AccountSelect value={accountId} onChange={(nextId: string) => { setAccountId(nextId); if (nextId === transferToAccountId) setTransferToAccountId(""); const nextAccount = state.accounts.find((a) => a.id === nextId); setCreditPostingMode(type === "expense" && nextAccount?.type === "credit" ? "withdrawal" : "used"); }} accounts={sortAccountsByType(accountChoices)} placeholder="選択してください" /></label>
           {type === "transfer" && (
-            <label>振替先<select value={transferToAccountId} onChange={(event) => setTransferToAccountId(event.target.value)}>
-              <option value="">選択してください</option>
-              {normalAccounts.filter((account) => account.id !== accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-            </select></label>
+            <label>振替先<AccountSelect value={transferToAccountId} onChange={(nextId: string) => setTransferToAccountId(nextId)} accounts={normalAccounts.filter((account) => account.id !== accountId)} placeholder="選択してください" /></label>
           )}
           <label>{isCreditExpense ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
         </div>
@@ -2168,15 +2163,9 @@ function TemplateSettings({ state, setNotice }: { state: LedgerState; setNotice:
           <CategoryOptions categories={state.categories} kind={draft.type === "income" ? "income" : "expense"} />
         </select></label>
       )}
-      <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(e) => setDraft({ ...draft, accountId: e.target.value })}>
-        <option value="">選択してください</option>
-        {sortAccountsByType(draft.type === "expense" ? state.accounts : state.accounts.filter((a) => a.type !== "credit")).map((account) => <option key={account.id} value={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}
-      </select></label>
+      <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId })} accounts={sortAccountsByType(draft.type === "expense" ? state.accounts : state.accounts.filter((a) => a.type !== "credit"))} placeholder="選択してください" /></label>
       {draft.type === "transfer" && (
-        <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(e) => setDraft({ ...draft, transferToAccountId: e.target.value || undefined })}>
-          <option value="">選択してください</option>
-          {state.accounts.filter((a) => a.type !== "credit" && a.id !== draft.accountId).map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-        </select></label>
+        <label>振替先<AccountSelect value={draft.transferToAccountId ?? ""} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId || undefined })} accounts={state.accounts.filter((a) => a.type !== "credit" && a.id !== draft.accountId)} placeholder="選択してください" /></label>
       )}
       <label>メモ（任意）<input placeholder="取引に入るメモ" value={draft.memo ?? ""} onChange={(e) => setDraft({ ...draft, memo: e.target.value })} /></label>
       {formError && <p className="form-error">{formError}</p>}
@@ -2388,6 +2377,138 @@ function nextSubcategoryColor(categories: LedgerState["categories"], parentId: s
   const parent = categories.find((category) => category.id === parentId);
   const index = categories.filter((category) => category.parentId === parentId).length;
   return subcategoryColorPreview(parent?.color ?? "#0f766e", index);
+}
+
+
+// ============================================================
+// 回数が決まっている定期項目（ローン・分割払い）
+// 「指定月以降だけ変更」で分割されたレコードも、名前・種類が同じで期間が続いていれば1つの支払いとして数える
+// ============================================================
+type InstallmentInfo = {
+  chainIds: string[];
+  startMonth: string;
+  endMonth: string;
+  total: number;
+  paid: number;
+  remaining: number;
+  remainingAmount: number;
+  nthOf: (month: string) => number | null;
+};
+
+function monthsBetweenInclusive(from: string, to: string) {
+  const [fy, fm] = from.split("-").map(Number);
+  const [ty, tm] = to.split("-").map(Number);
+  return (ty - fy) * 12 + (tm - fm) + 1;
+}
+
+function addMonthsKey(monthKey: string, delta: number) {
+  return shiftMonthKey(monthKey, delta);
+}
+
+function fixedCostChain(state: LedgerState, cost: FixedCost) {
+  const same = state.fixedCosts.filter((item) => item.name === cost.name && item.kind === cost.kind && item.effectiveFrom);
+  const chain: FixedCost[] = [cost];
+  // 前へたどる
+  let head = cost;
+  for (;;) {
+    const from = head.effectiveFrom?.slice(0, 7);
+    if (!from) break;
+    const prev = same.find((item) => item.id !== head.id && !chain.includes(item) && item.effectiveTo && addMonthsKey(item.effectiveTo.slice(0, 7), 1) === from);
+    if (!prev) break;
+    chain.unshift(prev);
+    head = prev;
+  }
+  // 後ろへたどる
+  let tail = cost;
+  for (;;) {
+    const to = tail.effectiveTo?.slice(0, 7);
+    if (!to) break;
+    const next = same.find((item) => item.id !== tail.id && !chain.includes(item) && item.effectiveFrom?.slice(0, 7) === addMonthsKey(to, 1));
+    if (!next) break;
+    chain.push(next);
+    tail = next;
+  }
+  return chain;
+}
+
+function installmentInfo(state: LedgerState, costOrOccurrence: FixedCost, today = todayIso()): InstallmentInfo | null {
+  // 「この月だけ変更」で名前が変わっていても元の定期項目でたどる
+  const cost = state.fixedCosts.find((item) => item.id === costOrOccurrence.id) ?? costOrOccurrence;
+  if (!cost.effectiveTo) {
+    const hasLater = state.fixedCosts.some((item) => item.name === cost.name && item.kind === cost.kind && item.effectiveTo);
+    if (!hasLater) return null;
+  }
+  const chain = fixedCostChain(state, cost);
+  const first = chain[0];
+  const last = chain[chain.length - 1];
+  if (!first.effectiveFrom || !last.effectiveTo) return null;
+  const startMonth = first.effectiveFrom.slice(0, 7);
+  const endMonth = last.effectiveTo.slice(0, 7);
+  if (endMonth < startMonth) return null;
+  const months: Array<{ month: string; amount: number; date: string }> = [];
+  for (let month = startMonth; month <= endMonth; month = addMonthsKey(month, 1)) {
+    const occurrence = fixedCostOccurrencesForMonth(chain, month, state)[0];
+    if (occurrence) months.push({ month, amount: occurrence.amount, date: occurrence.date });
+  }
+  const paidRows = months.filter((row) => row.date <= today);
+  const remainingRows = months.filter((row) => row.date > today);
+  const index = new Map(months.map((row, i) => [row.month, i + 1]));
+  return {
+    chainIds: chain.map((item) => item.id),
+    startMonth,
+    endMonth,
+    total: months.length,
+    paid: paidRows.length,
+    remaining: remainingRows.length,
+    remainingAmount: remainingRows.reduce((sum, row) => sum + row.amount, 0),
+    nthOf: (month: string) => index.get(month) ?? null
+  };
+}
+
+function installmentLabel(info: InstallmentInfo, month: string) {
+  const nth = info.nthOf(month);
+  if (!nth) return "";
+  return nth === info.total ? `最終回 ${nth}/${info.total}回` : `${nth}/${info.total}回目`;
+}
+
+// 回数 ⇄ 最終支払月 のどちらでも入力できる欄
+function InstallmentFields({ startMonth, endMonth, onChange, label = "支払いの終わり" }: { startMonth: string; endMonth?: string; onChange: (endMonth: string | undefined) => void; label?: string }) {
+  const finite = Boolean(endMonth);
+  const count = endMonth ? Math.max(monthsBetweenInclusive(startMonth, endMonth), 0) : 0;
+  const [countDraft, setCountDraft] = useState(count ? String(count) : "");
+  useEffect(() => { setCountDraft(count ? String(count) : ""); }, [startMonth, endMonth]);
+  return (
+    <div className="installment-fields">
+      <span className="installment-label">{label}</span>
+      <div className="segmented compact">
+        <button type="button" className={!finite ? "selected" : ""} onClick={() => onChange(undefined)}>ずっと続く</button>
+        <button type="button" className={finite ? "selected" : ""} onClick={() => onChange(endMonth ?? addMonthsKey(startMonth, 11))}>終わりがある</button>
+      </div>
+      {finite && (
+        <div className="installment-inputs">
+          <label>支払回数
+            <span className="installment-count">
+              <input
+                type="number"
+                inputMode="numeric"
+                min="1"
+                value={countDraft}
+                onChange={(event) => {
+                  setCountDraft(event.target.value);
+                  const value = Number(event.target.value);
+                  if (value >= 1) onChange(addMonthsKey(startMonth, value - 1));
+                }}
+              />回
+            </span>
+          </label>
+          <label>最終支払月
+            <input type="month" value={endMonth ?? ""} min={startMonth} onChange={(event) => { if (event.target.value) onChange(event.target.value); }} />
+          </label>
+          <p className="sheet-hint">{formatMonthLabel(startMonth)}から{formatMonthLabel(endMonth!)}まで、全{count}回。どちらを入力しても、もう片方は自動で入ります。</p>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function fixedKindMeta(kind: TransactionType) {
@@ -2619,7 +2740,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}</strong><span>{row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
+      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
       <em className={meta.className}>{row.kind === "income" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
@@ -2627,8 +2748,8 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
           <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
           {row.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>}
-          <label>{row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}>{sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit")).map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountTypeIcon(accountItem.type)}{accountItem.name}</option>)}</select></label>
-          {row.kind === "transfer" && <label>振替先<select value={draft.transferToAccountId} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId).map((accountItem) => <option value={accountItem.id} key={accountItem.id}>{accountItem.name}</option>)}</select></label>}
+          <label>{row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit"))} /></label>
+          {row.kind === "transfer" && <label>振替先<AccountSelect value={draft.transferToAccountId} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId)} placeholder="選択してください" /></label>}
           <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
           <button type="button" onClick={async () => {
             try {
@@ -3053,7 +3174,7 @@ function AnalysisView({
           <div className="settings-list">
             {accountBalances.map(({ account, balance }) => (
               <button type="button" className="settings-row account-item" key={account.id} onClick={() => setSelectedAccountHistoryId(account.id)}>
-                <span className="passbook-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</span>
+                <AccountMark account={account} size="lg" />
                 <span className="settings-row-text"><b>{account.name}</b><small>{accountTypeLabel(account.type)}</small></span>
                 <span className="settings-amount num">{balance < 0 ? "−" : ""}{plainAmount(balance)}</span>
                 <ChevronRight size={16} className="settings-chev" />
@@ -3070,7 +3191,7 @@ function AnalysisView({
                   const withdrawal = state.accounts.find((item) => item.id === card.withdrawalAccountId);
                   return (
                     <div className="settings-row account-item no-chev" key={card.id}>
-                      <span className="passbook-mark card" style={{ background: card.color }}>CARD</span>
+                      <AccountMark account={card} size="lg" />
                       <span className="settings-row-text"><b>{card.name}</b><small>{next ? `${shortDate(next)} 引落` : "引落予定"}／{withdrawal?.name ?? "引落口座未設定"}から</small></span>
                       <span className="settings-amount num">−{plainAmount(amount)}</span>
                     </div>
@@ -3160,7 +3281,7 @@ function AnalysisView({
               <div className="settings-list">
                 {paymentRows.map(({ account, total }) => (
                   <button type="button" className="settings-row account-item" key={account.id} onClick={() => setPaymentDrill(account.id)}>
-                    <span className={`passbook-mark${account.type === "credit" ? " card" : ""}`} style={{ background: account.color }}>{account.type === "credit" ? "CARD" : account.name.slice(0, 1)}</span>
+                    <AccountMark account={account} size="lg" />
                     <span className="settings-row-text"><b>{account.name}</b><small>{account.type === "credit" ? "カード払い" : account.type === "cash" ? "現金払い" : "口座から直接"}</small></span>
                     <span className="settings-amount num">{plainAmount(total)}</span>
                     <ChevronRight size={16} className="settings-chev" />
@@ -4201,7 +4322,7 @@ function SettingsView({
   const firstIncomeCategoryId = state.categories.find((category) => category.kind === "income" && !category.parentId)?.id ?? state.categories.find((category) => category.kind === "income")?.id ?? "";
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
   const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
-  const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01" });
+  const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined as string | undefined });
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showOpeningBalances, setShowOpeningBalances] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -4642,10 +4763,21 @@ function SettingsView({
           <label>名称<input placeholder={newFixed.kind === "income" ? "例: 給与 / 家賃収入" : newFixed.kind === "transfer" ? "例: 貯金口座へ移動" : "例: 家賃 / Netflix / 電気代"} value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
           <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
           {newFixed.kind !== "transfer" && <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={newFixed.kind} /></select></label>}
-          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? "振替元" : "支払元"}<select value={newFixed.accountId} onChange={(event) => setNewFixed({ ...newFixed, accountId: event.target.value, transferToAccountId: event.target.value === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId })}>{sortAccountsByType(state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit")).map((account) => <option value={account.id} key={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}</select></label>
-          {newFixed.kind === "transfer" && <label>振替先<select value={newFixed.transferToAccountId} onChange={(event) => setNewFixed({ ...newFixed, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => account.type !== "credit" && account.id !== newFixed.accountId).map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>}
+          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={newFixed.accountId} onChange={(nextId: string) => setNewFixed({ ...newFixed, accountId: nextId, transferToAccountId: nextId === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit"))} /></label>
+          {newFixed.kind === "transfer" && <label>振替先<AccountSelect value={newFixed.transferToAccountId} onChange={(nextId: string) => setNewFixed({ ...newFixed, transferToAccountId: nextId })} accounts={state.accounts.filter((account) => account.type !== "credit" && account.id !== newFixed.accountId)} placeholder="選択してください" /></label>}
           <label>{newFixed.kind === "income" ? "入金予定日" : newFixed.kind === "transfer" ? "振替予定日" : "支払予定日"}<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
-          <label>開始月<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01` })} /></label>
+          <label>{newFixed.effectiveTo ? "初回の月" : "開始月"}<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => {
+            if (!event.target.value) return;
+            // 回数を保ったまま開始月を動かす
+            const count = newFixed.effectiveTo ? monthsBetweenInclusive(newFixed.effectiveFrom.slice(0, 7), newFixed.effectiveTo.slice(0, 7)) : 0;
+            setNewFixed({ ...newFixed, effectiveFrom: `${event.target.value}-01`, effectiveTo: count > 0 ? `${addMonthsKey(event.target.value, count - 1)}-01` : undefined });
+          }} /></label>
+          <InstallmentFields
+            startMonth={newFixed.effectiveFrom.slice(0, 7)}
+            endMonth={newFixed.effectiveTo?.slice(0, 7)}
+            onChange={(end) => setNewFixed({ ...newFixed, effectiveTo: end ? `${end}-01` : undefined })}
+            label="支払いの終わり（ローン・分割払いなら「終わりがある」）"
+          />
           <button className="full-primary" type="button" onClick={async () => {
             try {
               if (newFixed.kind !== "transfer" && !newFixed.categoryId) {
@@ -4662,7 +4794,7 @@ function SettingsView({
               }
               await createFixedCost(state.householdId ?? "", newFixed);
               await reload();
-              setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01" });
+              setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined });
               setShowFixedForm(false);
               setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
             } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
@@ -4908,7 +5040,7 @@ function AccountsSettings({ state, setNotice, reload, addOpen, setAddOpen }: { s
       <div className="settings-list">
         {banks.map((account) => (
           <button type="button" className="settings-row account-item" key={account.id} onClick={() => setEditId(account.id)}>
-            <span className="passbook-mark" style={{ background: account.color }}>{account.name.slice(0, 1)}</span>
+            <AccountMark account={account} size="lg" />
             <span className="settings-row-text"><b>{account.name}</b><small>{accountTypeLabel(account.type)}</small></span>
             <span className="settings-amount num">{(balances[account.id] ?? 0) < 0 ? "−" : ""}{plainAmount(balances[account.id] ?? 0)}</span>
             <ChevronRight size={16} className="settings-chev" />
@@ -4923,7 +5055,7 @@ function AccountsSettings({ state, setNotice, reload, addOpen, setAddOpen }: { s
           const pending = pendingFor(account.id);
           return (
             <button type="button" className="settings-row account-item" key={account.id} onClick={() => setEditId(account.id)}>
-              <span className="passbook-mark card" style={{ background: account.color }}>CARD</span>
+              <AccountMark account={account} size="lg" />
               <span className="settings-row-text"><b>{account.name}</b><small>{closingDayLabel(account.closingDay)}締め・{account.withdrawalDay ?? 10}日引落／{withdrawal?.name ?? "引落口座未設定"}から</small></span>
               <span className="settings-amount num">{plainAmount(pending.amount)}{pending.next && <small>{shortDate(pending.next)} 引落</small>}</span>
               <ChevronRight size={16} className="settings-chev" />
@@ -5027,10 +5159,7 @@ function AccountSheet({ account, state, setNotice, reload, onClose }: { account?
               </select>
             </label>
             <label className="sheet-field"><span>引落口座</span>
-              <select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}>
-                <option value="">選んでください</option>
-                {state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
+              <AccountSelect value={withdrawalAccountId} onChange={(nextId: string) => setWithdrawalAccountId(nextId)} accounts={state.accounts.filter((item) => item.type !== "credit")} placeholder="選んでください" />
             </label>
             <p className="sheet-hint">このカードの支出は、自動で次の引落日に計上されます。</p>
           </>
@@ -5063,6 +5192,18 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
   const active = state.fixedCosts.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth);
   const ended = state.fixedCosts.filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
   const sum = (kind: TransactionType) => active.filter((cost) => cost.kind === kind).reduce((total, cost) => total + cost.amount, 0);
+  // 分割で生まれた後続レコードは代表1件にまとめる（今月有効なものを優先）
+  const installments = new Map<string, { cost: LedgerState["fixedCosts"][number]; info: InstallmentInfo }>();
+  active.forEach((cost) => {
+    if (cost.kind === "income") return;
+    const info = installmentInfo(state, cost);
+    if (!info) return;
+    const key = info.chainIds.join(",");
+    const existing = installments.get(key);
+    const isCurrent = (!cost.effectiveFrom || cost.effectiveFrom.slice(0, 7) <= currentMonth);
+    if (!existing || isCurrent) installments.set(key, { cost, info });
+  });
+  const installmentIds = new Set(Array.from(installments.values()).flatMap(({ info }) => info.chainIds));
   const income = sum("income");
   const expense = sum("expense");
   const row = (cost: LedgerState["fixedCosts"][number], isEnded = false) => {
@@ -5083,6 +5224,7 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
     { kind: "expense", label: "支出" },
     { kind: "transfer", label: "振替" }
   ];
+  const installmentList = Array.from(installments.values()).sort((x, y) => x.info.remaining - y.info.remaining);
   return (
     <>
       <div className="fixed-summary">
@@ -5090,8 +5232,35 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
         <div><span>毎月の支出</span><b className="num">{plainAmount(expense)}</b></div>
         <div><span>差し引き</span><b className={`num ${income - expense >= 0 ? "pos" : "neg"}`}>{income - expense > 0 ? "+" : income - expense < 0 ? "−" : ""}{plainAmount(income - expense)}</b></div>
       </div>
+      {installmentList.length > 0 && (
+        <div>
+          <div className="settings-sec-h"><span>ローン・分割払い</span><span>残り {plainAmount(installmentList.reduce((total, item) => total + item.info.remainingAmount, 0))}</span></div>
+          <div className="settings-list">
+            {installmentList.map(({ cost, info }) => {
+              const account = state.accounts.find((item) => item.id === cost.accountId);
+              const progress = info.total > 0 ? (info.paid / info.total) * 100 : 0;
+              const soon = info.remaining > 0 && info.remaining <= 3;
+              return (
+                <button type="button" className={`settings-row fixed-item installment-item${soon ? " soon" : ""}`} key={cost.id} onClick={() => onEdit(cost.id)}>
+                  <span className="fixed-day num">{cost.dueDay}日<small>毎月</small></span>
+                  <span className="settings-row-text"><b>{cost.name}</b><small>{categoryPathLabel(state, cost.categoryId) || "振替"}／{account?.name ?? "未設定"}</small></span>
+                  <span className="settings-amount num">{plainAmount(cost.amount)}</span>
+                  <ChevronRight size={16} className="settings-chev" />
+                  <span className="installment-progress">
+                    <span className="installment-bar"><i style={{ width: `${progress}%` }} /></span>
+                    <span className="installment-meta">
+                      <b>{info.remaining === 0 ? "支払い完了" : `残り ${info.remaining}/${info.total}回`}</b>
+                      <span>{info.remaining > 0 ? `残り ${plainAmount(info.remainingAmount)}／${Number(info.endMonth.slice(0, 4))}年${Number(info.endMonth.slice(5, 7))}月まで` : `${formatMonthLabel(info.endMonth)}に完了`}</span>
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {groups.map(({ kind, label }) => {
-        const rows = active.filter((cost) => cost.kind === kind).sort((a, b) => a.dueDay - b.dueDay);
+        const rows = active.filter((cost) => cost.kind === kind && !installmentIds.has(cost.id)).sort((a, b) => a.dueDay - b.dueDay);
         if (rows.length === 0) return null;
         return (
           <div key={kind}>
@@ -5672,7 +5841,7 @@ function EditableAccountRow({ account, state, setNotice, reloadHousehold, onDone
         <>
           <label>締め日<input type="number" min="1" max="31" value={numberInputValue(closingDay)} onChange={(event) => setClosingDay(Number(event.target.value || 0))} /></label>
           <label>引落日<input type="number" min="1" max="31" value={numberInputValue(withdrawalDay)} onChange={(event) => setWithdrawalDay(Number(event.target.value || 0))} /></label>
-          <label>引落口座<select value={withdrawalAccountId} onChange={(event) => setWithdrawalAccountId(event.target.value)}><option value="">選択してください</option>{state.accounts.filter((item) => item.type !== "credit").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <label>引落口座<AccountSelect value={withdrawalAccountId} onChange={(nextId: string) => setWithdrawalAccountId(nextId)} accounts={state.accounts.filter((item) => item.type !== "credit")} placeholder="選択してください" /></label>
         </>
       )}
       <button
@@ -6008,11 +6177,15 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
       <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       {draft.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>}
-      <label>{draft.kind === "income" ? "入金先" : draft.kind === "transfer" ? "振替元" : "支払元"}<select value={draft.accountId} onChange={(event) => setDraft({ ...draft, accountId: event.target.value, transferToAccountId: event.target.value === draft.transferToAccountId ? "" : draft.transferToAccountId })}><option value="">選択してください</option>{sortAccountsByType(state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit")).map((account) => <option value={account.id} key={account.id}>{accountTypeIcon(account.type)}{account.name}</option>)}</select></label>
-      {draft.kind === "transfer" && <label>振替先<select value={draft.transferToAccountId ?? ""} onChange={(event) => setDraft({ ...draft, transferToAccountId: event.target.value })}><option value="">選択してください</option>{state.accounts.filter((account) => account.type !== "credit" && account.id !== draft.accountId).map((account) => <option value={account.id} key={account.id}>{account.name}</option>)}</select></label>}
+      <label>{draft.kind === "income" ? "入金先" : draft.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((account) => draft.kind === "expense" || account.type !== "credit"))} placeholder="選択してください" /></label>
+      {draft.kind === "transfer" && <label>振替先<AccountSelect value={draft.transferToAccountId ?? ""} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((account) => account.type !== "credit" && account.id !== draft.accountId)} placeholder="選択してください" /></label>}
       <label>{draft.kind === "income" ? "入金日" : draft.kind === "transfer" ? "振替日" : "支払日"}<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
       <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
-      <label>終了月<input type="month" value={(draft.effectiveTo ?? "").slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveTo: event.target.value ? `${event.target.value}-01` : undefined })} /></label>
+      <InstallmentFields
+        startMonth={(fixedCostChain(state, cost)[0].effectiveFrom ?? draft.effectiveFrom ?? todayIso()).slice(0, 7)}
+        endMonth={draft.effectiveTo?.slice(0, 7)}
+        onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
+      />
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
       <button onClick={async () => { try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }}>変更を保存</button>
@@ -6306,8 +6479,8 @@ function TransactionEditSheet({
         )}
         <div className="form-grid">
           <label>{draft.type === "income" ? "入金先" : draft.type === "transfer" ? "振替元" : "支払元"}
-            <select value={draft.accountId} onChange={(e) => {
-              const nextAccountId = e.target.value;
+            <AccountSelect value={draft.accountId} onChange={(nextId: string) => {
+              const nextAccountId = nextId;
               const nextCreditAccount = state.accounts.find((item) => item.id === nextAccountId && item.type === "credit");
               setDraft({
                 ...draft,
@@ -6316,21 +6489,11 @@ function TransactionEditSheet({
                 reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
                 creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
               });
-            }}>
-              <option value="">選択してください</option>
-              {sortAccountsByType(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts).map((item) => (
-                <option key={item.id} value={item.id}>{accountTypeIcon(item.type)}{item.name}</option>
-              ))}
-            </select>
+            }} accounts={sortAccountsByType(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts)} placeholder="選択してください" />
           </label>
           {draft.type === "transfer" && (
             <label>振替先
-              <select value={draft.transferToAccountId ?? ""} onChange={(e) => setDraft({ ...draft, transferToAccountId: e.target.value })}>
-                <option value="">選択してください</option>
-                {normalAccounts.filter((item) => item.id !== draft.accountId).map((item) => (
-                  <option key={item.id} value={item.id}>{item.name}</option>
-                ))}
-              </select>
+              <AccountSelect value={draft.transferToAccountId ?? ""} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={normalAccounts.filter((item) => item.id !== draft.accountId)} placeholder="選択してください" />
             </label>
           )}
           <label>{isDraftCreditExpense ? "使用日" : "日付"}
@@ -6403,11 +6566,67 @@ function shiftMonth(date: string, delta: number) {
   return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
 }
 
-function accountTypeIcon(type: string): string {
-  if (type === "credit") return "💳 ";
-  if (type === "bank" || type === "saving") return "🏦 ";
-  return "👛 ";
+
+// 口座の目印（通帳の表紙／カード）
+function AccountMark({ account, size = "md" }: { account: Pick<LedgerState["accounts"][number], "name" | "type" | "color">; size?: "sm" | "md" | "lg" }) {
+  if (account.type === "credit") {
+    return <span className={`acct-mark card ${size}`} style={{ background: account.color }} aria-hidden="true"><i /></span>;
+  }
+  if (account.type === "cash") {
+    // お札：縁取り＋中央の ¥ メダリオン、後ろにもう1枚重なっている
+    return <span className={`acct-mark cash ${size}`} style={{ background: account.color, color: account.color }} aria-hidden="true"><b>¥</b></span>;
+  }
+  return <span className={`acct-mark ${size}`} style={{ background: account.color }} aria-hidden="true">{account.name.slice(0, 1)}</span>;
 }
+
+// 口座を選ぶ欄（マーク付き）。ネイティブの select はアイコンを出せないため自前で描く
+function AccountSelect({ value, onChange, accounts, placeholder = "選択してください" }: { value?: string; onChange: (id: string) => void; accounts: LedgerState["accounts"]; placeholder?: string }) {
+  const [open, setOpen] = useState(false);
+  const selected = accounts.find((account) => account.id === value);
+  const banks = sortAccountsByType(accounts.filter((account) => account.type !== "credit"));
+  const cards = accounts.filter((account) => account.type === "credit");
+  const groups = [
+    { label: "口座", items: banks },
+    { label: "カード", items: cards }
+  ].filter((group) => group.items.length > 0);
+  return (
+    <span className={`account-select${open ? " open" : ""}`}>
+      <button type="button" className="account-select-btn" aria-haspopup="listbox" aria-expanded={open} onClick={(event) => { event.preventDefault(); setOpen((v) => !v); }}>
+        {selected ? (
+          <>
+            <AccountMark account={selected} size="sm" />
+            <span className="account-select-name">{selected.name}<small>{accountTypeLabel(selected.type)}</small></span>
+          </>
+        ) : <span className="account-select-placeholder">{accounts.length ? placeholder : "選べる口座がありません"}</span>}
+        <ChevronDown size={16} className="account-select-chev" />
+      </button>
+      {open && (
+        <span className="account-select-list" role="listbox">
+          {groups.map((group) => (
+            <span className="account-select-group" key={group.label}>
+              {groups.length > 1 && <span className="account-select-group-label">{group.label}</span>}
+              {group.items.map((account) => (
+                <button
+                  key={account.id}
+                  type="button"
+                  role="option"
+                  aria-selected={account.id === value}
+                  className={`account-select-option${account.id === value ? " on" : ""}`}
+                  onClick={(event) => { event.preventDefault(); onChange(account.id); setOpen(false); }}
+                >
+                  <AccountMark account={account} size="sm" />
+                  <span className="account-select-name">{account.name}<small>{accountTypeLabel(account.type)}</small></span>
+                  {account.id === value && <Check size={16} />}
+                </button>
+              ))}
+            </span>
+          ))}
+        </span>
+      )}
+    </span>
+  );
+}
+
 
 function sortAccountsByType<T extends { type: string }>(accounts: T[]): T[] {
   const order: Record<string, number> = { credit: 0, bank: 1, saving: 2, cash: 3 };
