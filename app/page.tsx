@@ -138,7 +138,6 @@ import {
   updateLedgerFixedTransfer,
   deleteLedgerFixedTransfer,
   upsertLedgerFixedOverride,
-  saveFixedMemo,
   saveLedgerFixedMemo,
   saveLedgerFixedMemoFromMonth,
   loadRemoteState,
@@ -3131,7 +3130,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
           <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
           {row.kind !== "transfer" && !row.transferGroupId && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>}
-          {row.transferGroupId && <p className="settings-note">金額と日付は相手の家計簿（{row.counterpartyHouseholdName ?? "別の家計簿"}）にも反映されます。</p>}
+          {row.transferGroupId && <p className="settings-note">金額・日付・メモは相手の家計簿（{row.counterpartyHouseholdName ?? "別の家計簿"}）にも反映されます。</p>}
           <label>{row.transferGroupId ? (row.transferDirection === "in" ? "入ってくる口座" : "移動元の口座") : row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit"))} /></label>
           {row.kind === "transfer" && !row.transferGroupId && <label>振替先<AccountSelect value={draft.transferToAccountId} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId)} placeholder="選択してください" /></label>}
           <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
@@ -3140,7 +3139,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
             try {
               if (row.transferGroupId) {
                 await upsertLedgerFixedOverride({ groupId: row.transferGroupId, householdId: state.householdId ?? "", month: row.date.slice(0, 7), name: draft.name, amount: draft.amount, dueDay: draft.dueDay, accountId: draft.accountId, categoryId: row.categoryId || undefined });
-                if (draft.memo.trim() || row.overrideMemo) await saveFixedMemo({ fixedCostId: row.id, month: row.date.slice(0, 7) }, draft.memo.trim());
+                if (draft.memo.trim() || row.overrideMemo) await saveLedgerFixedMemo(row.transferGroupId, draft.memo.trim(), row.date.slice(0, 7));
                 await reload?.();
                 setEditing(false);
                 setNotice?.("選択月のみ変更しました（相手の家計簿にも反映）。");
@@ -4825,7 +4824,7 @@ function SettingsView({
           countAsExpense: newFixedDest.countAsExpense,
           countAsIncome: newFixedDest.countAsIncome
         });
-        if (newFixed.memo.trim() && groupId) await saveLedgerFixedMemo(groupId, state.householdId ?? "", newFixed.memo.trim());
+        if (newFixed.memo.trim() && groupId) await saveLedgerFixedMemo(groupId, newFixed.memo.trim());
       } else {
         await createFixedCost(state.householdId ?? "", { ...newFixed, memo: newFixed.memo.trim() || undefined });
       }
@@ -6750,7 +6749,7 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
       });
       if ((draft.memo ?? "") !== (cost.memo ?? "")) {
         if (updateScope === "future") await saveLedgerFixedMemoFromMonth(state.householdId ?? "", cost.transferDirection ?? "out", draft.name, fromMonth, (draft.memo ?? "").trim());
-        else await saveLedgerFixedMemo(cost.transferGroupId ?? "", state.householdId ?? "", (draft.memo ?? "").trim());
+        else await saveLedgerFixedMemo(cost.transferGroupId ?? "", (draft.memo ?? "").trim());
       }
       await reloadHousehold(state.householdId ?? "");
       onDone();
@@ -6781,10 +6780,10 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
         endMonth={draft.effectiveTo?.slice(0, 7)}
         onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
       />
-      <label className="fixed-memo-field">メモ（この家計簿だけ）<textarea className="memo-input" rows={2} placeholder="例: 2人で月6万円ずつ" value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
+      <label className="fixed-memo-field">メモ（相手の家計簿にも表示）<textarea className="memo-input" rows={2} placeholder="例: 2人で月6万円ずつ" value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
-      <p className="settings-note">名称・金額・移動日・期間は相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
+      <p className="settings-note">名称・金額・移動日・期間・メモは相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
       {overdraft
         ? <OverdraftConfirm info={overdraft} busy={busy} onCancel={() => setOverdraft(null)} onConfirm={() => save(true)} />
         : <button type="button" disabled={busy} onClick={() => save(false)}>{busy ? "保存中…" : "変更を保存"}</button>}
@@ -6857,7 +6856,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
         countAsExpense: dest.countAsExpense,
         countAsIncome: dest.countAsIncome
       });
-      if ((draft.memo ?? "").trim() && groupId) await saveLedgerFixedMemo(groupId, state.householdId ?? "", (draft.memo ?? "").trim());
+      if ((draft.memo ?? "").trim() && groupId) await saveLedgerFixedMemo(groupId, (draft.memo ?? "").trim());
       await deleteFixedCost(cost.id, scope, fromMonth);
       await reloadHousehold(state.householdId ?? "");
       onDone();

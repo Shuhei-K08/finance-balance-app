@@ -1772,18 +1772,22 @@ export async function saveFixedMemo(target: { fixedCostId: string; month?: strin
   if (error) throwJapanese(error, "メモの保存に失敗しました。");
 }
 
-export async function saveLedgerFixedMemo(groupId: string, householdId: string, memo: string) {
+export async function saveLedgerFixedMemo(groupId: string, memo: string, month?: string) {
+  // 家計簿間の定期移動のメモは、両方の家計簿にそろえる
   const client = requireSupabase();
-  const { error } = await client.from("fixed_costs").update({ memo: memo || null }).eq("transfer_group_id", groupId).eq("household_id", householdId).is("deleted_at", null);
-  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
+  const { error } = await client.rpc("set_ledger_fixed_memo", { target_group_id: groupId, new_memo: memo || "", override_month: month ? `${month}-01` : null });
+  if (error && (fixedMemoSetupError(error) || /set_ledger_fixed_memo|Could not find the function/i.test(error.message ?? ""))) throw new Error(FIXED_MEMO_SETUP_MESSAGE.replace("を実行", "を（もう一度）実行"));
   if (error) throwJapanese(error, "メモの保存に失敗しました。");
 }
 
 // 「指定月以降だけ変更」で作り直された自分側の定期移動にメモを付ける
 export async function saveLedgerFixedMemoFromMonth(householdId: string, direction: "out" | "in", name: string, fromMonth: string, memo: string) {
+  // 「指定月以降だけ変更」で作り直された組を探してメモを付ける
   const client = requireSupabase();
-  const { error } = await client.from("fixed_costs").update({ memo: memo || null })
-    .eq("household_id", householdId).eq("transfer_direction", direction).eq("name", name).eq("effective_from", `${fromMonth}-01`).is("deleted_at", null);
-  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
+  const { data, error } = await client.from("fixed_costs").select("transfer_group_id")
+    .eq("household_id", householdId).eq("transfer_direction", direction).eq("name", name).eq("effective_from", `${fromMonth}-01`).is("deleted_at", null)
+    .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throwJapanese(error, "メモの保存に失敗しました。");
+  const groupId = (data as { transfer_group_id?: string } | null)?.transfer_group_id;
+  if (groupId) await saveLedgerFixedMemo(groupId, memo);
 }
