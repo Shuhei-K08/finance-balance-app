@@ -5768,3 +5768,34 @@ button.settings-row:active { background: var(--tint); }
 .withdraw-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
 .withdraw-line .withdraw-date { margin-left: 0; vertical-align: 0; color: var(--ink); white-space: nowrap; }
 .settings-row.total-row .settings-row-text small { white-space: normal; overflow: visible; }
+
+/* ===== 家計簿間の資金移動 ===== */
+.bottom-sheet .transfer-scope { margin-top: -2px; }
+.ledger-transfer { display: grid; gap: 10px; }
+.ledger-transfer-side { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper, var(--panel)); }
+.ledger-transfer-side > label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.ledger-transfer-head { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; color: var(--ink); }
+.ledger-transfer-head small { font-size: 11px; font-weight: 700; color: var(--muted); }
+.ledger-transfer-badge { width: 12px; height: 16px; border-radius: 2px 3px 3px 2px; box-shadow: inset 2px 0 0 rgba(0,0,0,.18), 0 0 0 1px var(--rule); flex: none; }
+.ledger-transfer-arrow { display: grid; place-items: center; justify-self: center; width: 28px; height: 28px; margin: -16px 0; border-radius: 50%; background: var(--cover); color: var(--on-cover, #fff); position: relative; z-index: 1; border: 3px solid var(--panel); }
+.ledger-transfer-toggle { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; padding: 10px 12px; border: 1px dashed var(--rule); border-radius: 10px; cursor: pointer; }
+.ledger-transfer-toggle input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--cover); }
+.ledger-transfer-toggle span { display: grid; gap: 2px; }
+.ledger-transfer-toggle b { font-size: 13px; color: var(--ink); }
+.ledger-transfer-toggle small { font-size: 11px; color: var(--muted); line-height: 1.5; }
+.ledger-transfer > label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.ledger-loading { display: block; padding: 12px; border: 1px solid var(--rule); border-radius: 8px; }
+.ledger-transfer-pair { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px; border-radius: 10px; background: var(--tint); font-size: 13px; }
+.ledger-transfer-pair span { font-size: 11px; font-weight: 700; color: var(--muted); flex: none; }
+.ledger-transfer-pair b { color: var(--ink); overflow-wrap: anywhere; }
+.cat-chip.none { color: var(--muted); }
+.cat-selected-text.muted { color: var(--muted); }
+.template-save.danger-text { color: var(--stamp); }
+.tx-main .tx-amount.move-in { color: var(--income); }
+.tx-main .tx-amount.move-out { color: var(--ink-soft); }
+.tx-lead.kind.transfer { white-space: nowrap; }
+.ledger-move-row { cursor: default; }
+.ledger-move-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: var(--tint); color: var(--cover); flex: none; }
+.ledger-move-amounts { display: grid; justify-items: end; gap: 1px; font-size: 14px; white-space: nowrap; }
+.ledger-move-amounts b { font-weight: 600; color: var(--ink); }
+.ledger-move-amounts b.pos { color: var(--income); }

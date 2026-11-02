@@ -40,6 +40,14 @@ export type Transaction = {
   memo?: string;
   creditStatus?: CreditStatus;
   createdAt?: string;
+  // 家計簿間の資金移動（個人 ⇄ 共有）
+  transferGroupId?: string;
+  transferDirection?: "out" | "in";
+  counterpartyHouseholdId?: string;
+  counterpartyAccountId?: string;
+  counterpartyHouseholdName?: string;
+  counterpartyAccountName?: string;
+  transferSenderId?: string;
 };
 
 export type FixedCost = {

@@ -22,6 +22,7 @@ import {
   YAxis
 } from "recharts";
 import {
+  ArrowDown,
   ArrowDownUp,
   ArrowDownLeft,
   ArrowUpRight,
@@ -127,6 +128,10 @@ import {
   leaveSharedLedger,
   loadAdminDashboard,
   loadHouseholdMembers,
+  loadLedgerAccountsAndCategories,
+  createLedgerTransfer,
+  updateLedgerTransfer,
+  deleteLedgerTransfer,
   loadRemoteState,
   removeSharedLedgerMember,
   renameSharedLedger,
@@ -778,7 +783,7 @@ export default function App() {
         </div>
       </nav>
 
-      {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} initialType={quickType} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} />}
+      {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} initialType={quickType} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} onLedgerTransferDone={async () => { setQuickOpen(false); await refreshRemoteState(); setNotice("資金移動を登録しました。相手の家計簿にも記録されています。"); }} />}
       {showTour && <GuidedTour isAdmin={state.profileRole === "admin"} setTab={setTab} onClose={closeTour} />}
     </main>
   );
@@ -1587,6 +1592,7 @@ function categoryPathLabel(state: LedgerState, categoryId?: string) {
 
 function txKindLabel(transaction: Transaction, state: LedgerState) {
   if (transaction.type === "income") return "収入";
+  if (transaction.transferGroupId) return "移動";
   if (transaction.type === "transfer") return "振替";
   const account = state.accounts.find((item) => item.id === transaction.accountId);
   if (account?.type === "credit") return "カード";
@@ -1819,13 +1825,15 @@ function QuickTransactionSheet({
   initialDate,
   initialType,
   onClose,
-  onSubmit
+  onSubmit,
+  onLedgerTransferDone
 }: {
   state: LedgerState;
   initialDate: string;
   initialType: TransactionType;
   onClose: () => void;
   onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string; creditPostingMode?: "used" | "withdrawal" }) => Promise<void>;
+  onLedgerTransferDone?: () => Promise<void>;
 }) {
   const usableAccounts = state.accounts;
   const normalAccounts = state.accounts.filter((account) => account.type !== "credit");
@@ -1842,6 +1850,69 @@ function QuickTransactionSheet({
   const selectedAccount = state.accounts.find((account) => account.id === accountId);
   const isCreditExpense = type === "expense" && selectedAccount?.type === "credit";
   const accountChoices = type === "income" || type === "transfer" ? normalAccounts : usableAccounts;
+
+  // 別の家計簿への資金移動
+  const otherLedgers = (state.households ?? []).filter((ledger) => ledger.id !== state.householdId);
+  const [transferScope, setTransferScope] = useState<"self" | "ledger">("self");
+  const [ledgerTarget, setLedgerTarget] = useState(() => readLedgerTransferMemory(state.householdId));
+  const [targetLedgerData, setTargetLedgerData] = useState<{ householdId: string; accounts: LedgerState["accounts"]; categories: LedgerState["categories"] } | null>(null);
+  const [targetLoading, setTargetLoading] = useState(false);
+  const isLedgerTransfer = type === "transfer" && transferScope === "ledger" && otherLedgers.length > 0;
+  const targetHouseholdId = otherLedgers.some((ledger) => ledger.id === ledgerTarget.toHouseholdId) ? ledgerTarget.toHouseholdId : otherLedgers[0]?.id ?? "";
+  const targetLedger = otherLedgers.find((ledger) => ledger.id === targetHouseholdId);
+  useEffect(() => {
+    if (!isLedgerTransfer || !targetHouseholdId || targetLedgerData?.householdId === targetHouseholdId) return;
+    let cancelled = false;
+    setTargetLoading(true);
+    loadLedgerAccountsAndCategories(targetHouseholdId)
+      .then((data) => { if (!cancelled) setTargetLedgerData({ householdId: targetHouseholdId, ...data }); })
+      .catch((loadError) => { if (!cancelled) setError(toJapaneseError(loadError, "相手の家計簿を読み込めませんでした。")); })
+      .finally(() => { if (!cancelled) setTargetLoading(false); });
+    return () => { cancelled = true; };
+  }, [isLedgerTransfer, targetHouseholdId]);
+  const targetAccounts = targetLedgerData?.householdId === targetHouseholdId ? targetLedgerData.accounts.filter((account) => account.type !== "credit") : [];
+  const targetCategories = targetLedgerData?.householdId === targetHouseholdId ? targetLedgerData.categories : [];
+  const targetAccountId = targetAccounts.some((account) => account.id === ledgerTarget.toAccountId) ? ledgerTarget.toAccountId : "";
+  const fromCategoryId = state.categories.some((category) => category.id === ledgerTarget.fromCategoryId) ? ledgerTarget.fromCategoryId : "";
+  const toCategoryId = targetCategories.some((category) => category.id === ledgerTarget.toCategoryId) ? ledgerTarget.toCategoryId : "";
+  function patchLedgerTarget(patch: Partial<LedgerTransferMemory>) {
+    setLedgerTarget((current) => ({ ...current, ...patch }));
+  }
+  useEffect(() => {
+    // 前回の移動元口座を初期値にする
+    if (isLedgerTransfer && !accountId && ledgerTarget.fromAccountId && normalAccounts.some((account) => account.id === ledgerTarget.fromAccountId)) {
+      setAccountId(ledgerTarget.fromAccountId);
+    }
+  }, [isLedgerTransfer]);
+
+  async function submitLedgerTransfer(value: number) {
+    if (!accountId) return setError("移動元の口座を選択してください。");
+    if (!targetHouseholdId) return setError("移動先の家計簿を選択してください。");
+    if (!targetAccountId) return setError("移動先の口座を選択してください。");
+    setError("");
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await createLedgerTransfer({
+        fromHouseholdId: state.householdId ?? "",
+        fromAccountId: accountId,
+        fromCategoryId: fromCategoryId || undefined,
+        toHouseholdId: targetHouseholdId,
+        toAccountId: targetAccountId,
+        toCategoryId: toCategoryId || undefined,
+        amount: value,
+        date,
+        memo,
+        countAsExpense: ledgerTarget.countAsExpense
+      });
+      storeLedgerTransferMemory(state.householdId, { ...ledgerTarget, toHouseholdId: targetHouseholdId, toAccountId: targetAccountId, fromAccountId: accountId });
+      await onLedgerTransferDone?.();
+    } catch (submitError) {
+      setError(toJapaneseError(submitError, "資金移動の登録に失敗しました。"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   useEffect(() => {
     setType(initialType);
@@ -1920,6 +1991,10 @@ function QuickTransactionSheet({
       setError("金額を入力してください。");
       return;
     }
+    if (isLedgerTransfer) {
+      await submitLedgerTransfer(value);
+      return;
+    }
     if (type !== "transfer" && !categoryId) {
       setError("カテゴリーを選択してください。");
       return;
@@ -1971,7 +2046,13 @@ function QuickTransactionSheet({
             </button>
           ))}
         </div>
-        {templates.length > 0 && (
+        {type === "transfer" && otherLedgers.length > 0 && (
+          <div className="segmented compact transfer-scope" role="tablist" aria-label="移動先">
+            <button type="button" className={transferScope === "self" ? "selected" : ""} onClick={() => { setTransferScope("self"); setError(""); }}>自分の口座間</button>
+            <button type="button" className={transferScope === "ledger" ? "selected" : ""} onClick={() => { setTransferScope("ledger"); setError(""); }}>別の家計簿へ</button>
+          </div>
+        )}
+        {!isLedgerTransfer && templates.length > 0 && (
           <div className="template-strip" aria-label="よく使う取引">
             {templates.map((tpl) => (
               <span key={tpl.id} className={`template-chip${tpl.saved ? " saved" : ""}`}>
@@ -1996,13 +2077,44 @@ function QuickTransactionSheet({
             onChange={setCategoryId}
           />
         )}
-        <div className="form-grid">
+        {isLedgerTransfer && (
+          <div className="ledger-transfer">
+            <div className="ledger-transfer-side">
+              <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(state.themeColor) }} />{state.householdName ?? "この家計簿"}<small>から</small></div>
+              <label>移動元の口座<AccountSelect value={accountId} onChange={(nextId: string) => setAccountId(nextId)} accounts={sortAccountsByType(normalAccounts)} placeholder="選択してください" /></label>
+              <CategoryPicker categories={state.categories} kind="expense" value={fromCategoryId} onChange={(id) => patchLedgerTarget({ fromCategoryId: id })} label="この家計簿のカテゴリ" optional />
+            </div>
+            <div className="ledger-transfer-arrow" aria-hidden="true"><ArrowDown size={16} /></div>
+            <div className="ledger-transfer-side">
+              <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(targetLedger?.themeColor) }} />{targetLedger?.name ?? "相手の家計簿"}<small>へ</small></div>
+              {otherLedgers.length > 1 && (
+                <div className="cat-chips">
+                  {otherLedgers.map((ledger) => (
+                    <button key={ledger.id} type="button" className={`cat-chip${ledger.id === targetHouseholdId ? " active" : ""}`} onClick={() => patchLedgerTarget({ toHouseholdId: ledger.id, toAccountId: "", toCategoryId: "" })}>
+                      <span className="cat-chip-dot" style={{ background: coverColor(ledger.themeColor) }} />{ledger.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <label>移動先の口座{targetLoading ? <span className="account-select-placeholder ledger-loading">読み込み中…</span> : <AccountSelect value={targetAccountId} onChange={(nextId: string) => patchLedgerTarget({ toAccountId: nextId })} accounts={sortAccountsByType(targetAccounts)} placeholder="選択してください" />}</label>
+              {targetCategories.some((category) => category.kind === "income") && (
+                <CategoryPicker categories={targetCategories} kind="income" value={toCategoryId} onChange={(id) => patchLedgerTarget({ toCategoryId: id })} label={`${targetLedger?.name ?? "相手"}のカテゴリ`} optional />
+              )}
+            </div>
+            <label className="ledger-transfer-toggle">
+              <input type="checkbox" checked={ledgerTarget.countAsExpense} onChange={(event) => patchLedgerTarget({ countAsExpense: event.target.checked })} />
+              <span><b>この家計簿の支出として数える</b><small>{ledgerTarget.countAsExpense ? "移動した金額が、この家計簿の今月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
+            </label>
+            <label>日付<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
+          </div>
+        )}
+        {!isLedgerTransfer && <div className="form-grid">
           <label>{type === "income" ? "入金先" : type === "transfer" ? "振替元" : "支払元"}<AccountSelect value={accountId} onChange={(nextId: string) => { setAccountId(nextId); if (nextId === transferToAccountId) setTransferToAccountId(""); const nextAccount = state.accounts.find((a) => a.id === nextId); setCreditPostingMode(type === "expense" && nextAccount?.type === "credit" ? "withdrawal" : "used"); }} accounts={sortAccountsByType(accountChoices)} placeholder="選択してください" /></label>
           {type === "transfer" && (
             <label>振替先<AccountSelect value={transferToAccountId} onChange={(nextId: string) => setTransferToAccountId(nextId)} accounts={normalAccounts.filter((account) => account.id !== accountId)} placeholder="選択してください" /></label>
           )}
           <label>{isCreditExpense ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
-        </div>
+        </div>}
         {isCreditExpense && (
           <div className="credit-posting-mode">
             <span>計上する日付</span>
@@ -2015,12 +2127,29 @@ function QuickTransactionSheet({
         )}
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
-        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中…" : "登録する"}</button>
+        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中…" : isLedgerTransfer ? "資金移動を登録する" : "登録する"}</button>
+        {isLedgerTransfer && <p className="settings-note">両方の家計簿に1件ずつ記録されます。金額・日付・メモはどちらから直しても両方に反映されます。</p>}
         {templateMessage && <p className="form-success" role="status"><Check size={14} /> {templateMessage}</p>}
-        <button className="template-save" type="button" onClick={saveCurrentAsTemplate}><Star size={14} /> この内容をテンプレートに保存</button>
+        {!isLedgerTransfer && <button className="template-save" type="button" onClick={saveCurrentAsTemplate}><Star size={14} /> この内容をテンプレートに保存</button>}
       </form>
     </div>
   );
+}
+
+type LedgerTransferMemory = { toHouseholdId: string; toAccountId: string; fromAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean };
+
+function readLedgerTransferMemory(householdId?: string): LedgerTransferMemory {
+  const empty: LedgerTransferMemory = { toHouseholdId: "", toAccountId: "", fromAccountId: "", fromCategoryId: "", toCategoryId: "", countAsExpense: false };
+  try {
+    const raw = window.localStorage.getItem(`mirai-ledger-transfer:${householdId ?? "local"}`);
+    return raw ? { ...empty, ...JSON.parse(raw) } : empty;
+  } catch {
+    return empty;
+  }
+}
+
+function storeLedgerTransferMemory(householdId: string | undefined, memory: LedgerTransferMemory) {
+  try { window.localStorage.setItem(`mirai-ledger-transfer:${householdId ?? "local"}`, JSON.stringify(memory)); } catch { /* 保存できなくても登録は続ける */ }
 }
 
 type TxTemplate = {
@@ -2350,12 +2479,16 @@ function CategoryPicker({
   categories,
   kind,
   value,
-  onChange
+  onChange,
+  label = "カテゴリー",
+  optional = false
 }: {
   categories: LedgerState["categories"];
   kind: "expense" | "income";
   value: string;
   onChange: (id: string) => void;
+  label?: string;
+  optional?: boolean;
 }) {
   const parents = sortCategories(categories.filter((c) => !c.parentId && c.kind === kind));
   const selectedCat = categories.find((c) => c.id === value);
@@ -2387,8 +2520,11 @@ function CategoryPicker({
 
   return (
     <div className="category-picker">
-      <div className="cat-pick-label">カテゴリー{value && <span className="cat-selected-text">{selectedParent?.name}{selectedChild ? ` › ${selectedChild.name}` : ""}</span>}</div>
+      <div className="cat-pick-label">{label}{value ? <span className="cat-selected-text">{selectedParent?.name}{selectedChild ? ` › ${selectedChild.name}` : ""}</span> : optional ? <span className="cat-selected-text muted">なし</span> : null}</div>
       <div className="cat-chips">
+        {optional && (
+          <button type="button" className={`cat-chip none${!selectedParentId ? " active" : ""}`} onClick={() => { setSelectedParentId(""); onChange(""); }}>なし</button>
+        )}
         {parents.map((parent) => (
           <button
             key={parent.id}
@@ -3081,6 +3217,26 @@ function AnalysisView({
   const [balancePeriod, setBalancePeriod] = useState<"6m" | "1y" | "3y" | "all">("1y");
   const [categoryDrill, setCategoryDrill] = useState<{ monthKey: string; categoryId: string } | null>(null);
   const [paymentDrill, setPaymentDrill] = useState<string | null>(null); // accountId
+  const [ledgerMembers, setLedgerMembers] = useState<Array<{ userId: string; displayName: string }>>([]);
+  useEffect(() => {
+    if (section !== "flow" || state.activeSpace !== "shared" || !state.householdId) return;
+    let cancelled = false;
+    loadHouseholdMembers(state.householdId).then((members) => { if (!cancelled) setLedgerMembers(members); }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [section, state.activeSpace, state.householdId]);
+  const ledgerMoves = useMemo(() => {
+    const groups = new Map<string, { label: string; sub: string; inTotal: number; outTotal: number; count: number }>();
+    monthTransactionsByKey(state.transactions, monthKey).filter((t) => t.transferGroupId).forEach((t) => {
+      const memberName = t.transferDirection === "in" && state.activeSpace === "shared" ? ledgerMembers.find((m) => m.userId === t.transferSenderId)?.displayName : undefined;
+      const key = memberName ? `member:${t.transferSenderId}` : `ledger:${t.counterpartyHouseholdId ?? t.counterpartyHouseholdName ?? ""}`;
+      const current = groups.get(key) ?? { label: memberName ? `${memberName}さん` : t.counterpartyHouseholdName ?? "別の家計簿", sub: memberName ? (t.counterpartyHouseholdName ?? "") : "", inTotal: 0, outTotal: 0, count: 0 };
+      if (t.transferDirection === "in") current.inTotal += t.amount;
+      else current.outTotal += t.amount;
+      current.count += 1;
+      groups.set(key, current);
+    });
+    return Array.from(groups.values()).sort((a, b) => (b.inTotal + b.outTotal) - (a.inTotal + a.outTotal));
+  }, [state.transactions, state.activeSpace, monthKey, ledgerMembers]);
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
@@ -3395,6 +3551,25 @@ function AnalysisView({
                   </button>
                 ))}
               </div>
+            </>
+          )}
+
+          {ledgerMoves.length > 0 && (
+            <>
+              <div className="settings-sec-h"><span>資金移動</span><span>収支には含めていません</span></div>
+              <div className="settings-list">
+                {ledgerMoves.map((move) => (
+                  <div className="settings-row ledger-move-row" key={move.label}>
+                    <span className="ledger-move-icon" aria-hidden="true"><ArrowDownUp size={16} /></span>
+                    <span className="settings-row-text"><b>{move.label}</b><small>{move.sub ? `${move.sub}・` : ""}{move.count}件</small></span>
+                    <span className="ledger-move-amounts num">
+                      {move.inTotal > 0 && <b className="pos">+{plainAmount(move.inTotal)}</b>}
+                      {move.outTotal > 0 && <b>−{plainAmount(move.outTotal)}</b>}
+                    </span>
+                  </div>
+                ))}
+              </div>
+              <p className="settings-note">{state.activeSpace === "shared" ? "メンバーの家計簿から入ってきたお金と、出ていったお金です。" : "共有の家計簿などへ移したお金です。「支出として数える」にした分は、上の支出にも入っています。"}</p>
             </>
           )}
         </>
@@ -4262,11 +4437,12 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
   const transferTo = state.accounts.find((item) => item.id === transaction.transferToAccountId);
   return (
     <div className="transaction-detail">
-      <div><span>種類</span><strong>{transactionTypeLabel[transaction.type]}</strong></div>
+      <div><span>種類</span><strong>{transaction.transferGroupId ? (transaction.transferDirection === "in" ? "資金移動（受け取り）" : "資金移動") : transactionTypeLabel[transaction.type]}</strong></div>
+      {transaction.transferGroupId && <div><span>相手</span><strong>{transaction.counterpartyHouseholdName ?? "別の家計簿"}{transaction.counterpartyAccountName ? `（${transaction.counterpartyAccountName}）` : ""}</strong></div>}
       <div><span>金額</span><strong>{yen.format(transaction.amount)}</strong></div>
       {transaction.type !== "transfer" && <div><span>カテゴリ</span><strong>{category?.name ?? "未設定"}</strong></div>}
       <div><span>{transaction.type === "income" ? "入金先" : "支払元"}</span><strong>{account?.name ?? "未設定"}</strong></div>
-      {transaction.type === "transfer" && <div><span>振替先</span><strong>{transferTo?.name ?? "未設定"}</strong></div>}
+      {transaction.type === "transfer" && !transaction.transferGroupId && <div><span>振替先</span><strong>{transferTo?.name ?? "未設定"}</strong></div>}
       <div><span>{transaction.reflectedDate ? "使用日" : "日付"}</span><strong>{transaction.date}</strong></div>
       {transaction.reflectedDate && <div><span>引落日</span><strong>{transaction.reflectedDate}</strong></div>}
       <div><span>メモ</span><strong>{transaction.memo || "なし"}</strong></div>
@@ -4339,7 +4515,7 @@ function exportTransactionsCsv(state: LedgerState, from: string, to: string) {
         t.type === "transfer" ? "" : category?.name ?? "",
         t.type === "transfer" ? "" : subcategory?.name ?? "",
         account?.name ?? "",
-        t.type === "transfer" ? transferTo?.name ?? "" : "",
+        t.transferGroupId ? `${t.transferDirection === "in" ? "←" : "→"}${t.counterpartyHouseholdName ?? ""}${t.counterpartyAccountName ? `（${t.counterpartyAccountName}）` : ""}` : t.type === "transfer" ? transferTo?.name ?? "" : "",
         t.creditStatus ? creditStatusLabel[t.creditStatus] : "",
         t.memo ?? ""
       ];
@@ -6461,7 +6637,11 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
   }
   const categoryLabel = categoryPathLabel(state, transaction.categoryId);
   const transferTo = transaction.type === "transfer" ? state.accounts.find((item) => item.id === transaction.transferToAccountId) : undefined;
-  const subLine = transaction.type === "transfer"
+  const isLedgerMove = Boolean(transaction.transferGroupId);
+  const isMoveIn = transaction.transferDirection === "in";
+  const subLine = isLedgerMove
+    ? ledgerTransferLine(transaction, account?.name)
+    : transaction.type === "transfer"
     ? `${account?.name ?? "口座未設定"} → ${transferTo?.name ?? "未設定"}`
     : `${categoryLabel || "カテゴリなし"}／${account?.name ?? "口座未設定"}`;
   return (
@@ -6472,22 +6652,25 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
             ? <div className={`tx-lead kind ${transaction.type}`}>{txKindLabel(transaction, state)}</div>
             : <div className="tx-lead">{shortDate(transaction.date)}<small>{weekdayOf(transaction.date)}</small></div>}
           <div className="tx-body">
-            <strong>{transaction.memo || category?.name || transactionTypeLabel[transaction.type]}</strong>
+            <strong>{transaction.memo || category?.name || (isLedgerMove ? (isMoveIn ? "資金移動（受け取り）" : "資金移動") : transactionTypeLabel[transaction.type])}</strong>
             <small>{subLine}</small>
           </div>
-          <em className={`tx-amount ${transaction.type}`}>
-            {transaction.type === "income" ? "+" : ""}{plainAmount(transaction.amount)}
+          <em className={`tx-amount ${isLedgerMove ? (isMoveIn ? "move-in" : "move-out") : transaction.type}`}>
+            {transaction.type === "income" || isMoveIn ? "+" : ""}{plainAmount(transaction.amount)}
             {transaction.reflectedDate && <small>{shortDate(transaction.reflectedDate)} 引落</small>}
           </em>
         </button>
         {expanded && (
           <div className="tx-actions">
             <button type="button" onClick={() => setEditing(true)}>編集</button>
-            <button className="danger" type="button" onClick={async () => { try { await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除</button>
+            <button className="danger" type="button" onClick={async () => { try { if (transaction.transferGroupId) { await deleteLedgerTransfer(transaction.transferGroupId); await reload(); setNotice("資金移動を削除しました（相手の家計簿の記録も削除）。"); return; } await deleteTransaction(transaction.id); await reload(); setNotice("取引を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "取引削除に失敗しました。")); } }}>削除</button>
           </div>
         )}
       </article>
-      {editing && (
+      {editing && isLedgerMove && (
+        <LedgerTransferEditSheet transaction={transaction} state={state} setNotice={setNotice} reload={reload} onClose={() => { setEditing(false); setExpanded(false); }} />
+      )}
+      {editing && !isLedgerMove && (
         <TransactionEditSheet
           transaction={transaction}
           draft={draft}
@@ -6503,6 +6686,100 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
         />
       )}
     </>
+  );
+}
+
+function ledgerTransferLine(transaction: Transaction, accountName?: string) {
+  const other = `${transaction.counterpartyHouseholdName ?? "別の家計簿"}${transaction.counterpartyAccountName ? `（${transaction.counterpartyAccountName}）` : ""}`;
+  return transaction.transferDirection === "in"
+    ? `${other} → ${accountName ?? "口座未設定"}`
+    : `${accountName ?? "口座未設定"} → ${other}`;
+}
+
+function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClose }: { transaction: Transaction; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const isIn = transaction.transferDirection === "in";
+  const normalAccounts = state.accounts.filter((item) => item.type !== "credit");
+  const [amount, setAmount] = useState(transaction.amount);
+  const [date, setDate] = useState(transaction.date);
+  const [memo, setMemo] = useState(transaction.memo ?? "");
+  const [accountId, setAccountId] = useState(transaction.accountId);
+  const [categoryId, setCategoryId] = useState(transaction.categoryId ?? "");
+  const [countAsExpense, setCountAsExpense] = useState(transaction.type === "expense");
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const other = `${transaction.counterpartyHouseholdName ?? "別の家計簿"}${transaction.counterpartyAccountName ? `（${transaction.counterpartyAccountName}）` : ""}`;
+  async function save() {
+    if (!amount || amount <= 0) return setNotice("金額を入力してください。");
+    if (!accountId) return setNotice("口座を選択してください。");
+    setSaving(true);
+    try {
+      await updateLedgerTransfer({
+        groupId: transaction.transferGroupId ?? "",
+        householdId: state.householdId ?? "",
+        amount,
+        date,
+        memo,
+        categoryId: categoryId || undefined,
+        accountId,
+        countAsExpense: isIn ? undefined : countAsExpense
+      });
+      await reload();
+      setNotice("資金移動を更新しました。");
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "資金移動の更新に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function remove() {
+    setRemoving(true);
+    try {
+      await deleteLedgerTransfer(transaction.transferGroupId ?? "");
+      await reload();
+      setNotice("資金移動を削除しました（相手の家計簿の記録も削除）。");
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "資金移動の削除に失敗しました。"));
+    } finally {
+      setRemoving(false);
+    }
+  }
+  return createPortal(
+    <div className="sheet-backdrop" style={{ zIndex: 90 }} onClick={onClose}>
+      <form className="bottom-sheet" onClick={(e) => e.stopPropagation()} onSubmit={(e) => { e.preventDefault(); if (!saving) save(); }}>
+        <div className="sheet-handle" />
+        <div className="section-title">
+          <h2>資金移動を編集</h2>
+          <span>{isIn ? "受け取り" : "送った"} · {date}</span>
+        </div>
+        <div className="ledger-transfer-pair">
+          <span>{isIn ? "相手" : "移動先"}</span>
+          <b>{other}</b>
+        </div>
+        <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)", fontWeight: 500 }}>
+          金額
+          <input className="amount-input" style={{ fontSize: 36, padding: "10px 4px 8px" }} inputMode="numeric" type="number" min="1" value={amount === 0 ? "" : amount} onChange={(e) => setAmount(Number(e.target.value || 0))} required />
+        </label>
+        <CategoryPicker categories={state.categories} kind={isIn ? "income" : "expense"} value={categoryId} onChange={setCategoryId} label="この家計簿のカテゴリ" optional />
+        <div className="form-grid">
+          <label>{isIn ? "入ってきた口座" : "移動元の口座"}<AccountSelect value={accountId} onChange={setAccountId} accounts={sortAccountsByType(normalAccounts)} /></label>
+          <label>日付<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+        </div>
+        {!isIn && (
+          <label className="ledger-transfer-toggle">
+            <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
+            <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
+          </label>
+        )}
+        <input placeholder="メモ" value={memo} onChange={(e) => setMemo(e.target.value)} />
+        <p className="settings-note">金額・日付・メモは相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
+        <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
+        <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
+        <button className="template-save danger-text" type="button" disabled={removing} onClick={remove}>{removing ? "削除中…" : "この資金移動を削除（両方の家計簿から）"}</button>
+      </form>
+    </div>,
+    document.body
   );
 }
 

@@ -72,6 +72,7 @@ export function calculateAccountBalance(account: Account, transactions: Transact
   return rows.reduce((balance, transaction) => {
     if (transaction.type === "income" && transaction.accountId === account.id) return balance + transaction.amount;
     if (transaction.type === "expense" && transaction.accountId === account.id && account.type !== "credit") return balance - transaction.amount;
+    if (transaction.type === "transfer" && transaction.transferDirection === "in") return transaction.accountId === account.id ? balance + transaction.amount : balance;
     if (transaction.type === "transfer" && transaction.accountId === account.id) return balance - transaction.amount;
     if (transaction.type === "transfer" && transaction.transferToAccountId === account.id) return balance + transaction.amount;
     return balance;
@@ -153,6 +154,10 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
       return sourceAccount.withdrawalAccountId === account.id ? -transaction.amount : 0;
     }
     return transaction.accountId === account.id && account.type !== "credit" ? -transaction.amount : 0;
+  }
+  if (transaction.type === "transfer" && transaction.transferDirection === "in") {
+    // 別の家計簿から入ってきた資金移動
+    return transaction.accountId === account.id ? transaction.amount : 0;
   }
   if (transaction.type === "transfer" && transaction.accountId === account.id) {
     // クレジットカードへの振替（カード支払い）は除外：クレジット費用は即時控除済みのため二重計上を防ぐ

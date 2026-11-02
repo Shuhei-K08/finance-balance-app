@@ -159,6 +159,13 @@ type DbTransaction = {
   memo: string | null;
   idempotency_key?: string | null;
   created_at?: string | null;
+  transfer_group_id?: string | null;
+  transfer_direction?: "out" | "in" | null;
+  counterparty_household_id?: string | null;
+  counterparty_account_id?: string | null;
+  counterparty_household_name?: string | null;
+  counterparty_account_name?: string | null;
+  transfer_sender_id?: string | null;
 };
 
 type DbFixedCost = {
@@ -672,7 +679,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
-    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -756,6 +763,18 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     categoriesData = fallback.data;
     categoriesError = fallback.error;
   }
+  if (transactionsError && /transfer_group_id|transfer_direction|counterparty_|transfer_sender_id/i.test(transactionsError.message)) {
+    // 資金移動用の列がまだない（add-ledger-transfers.sql 未実行）
+    const fallback = await client
+      .from("transactions")
+      .select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("occurred_on", { ascending: false })
+      .order("created_at", { ascending: false });
+    transactionsData = fallback.data;
+    transactionsError = fallback.error;
+  }
   if (transactionsError && /idempotency_key|does not exist|存在しません/i.test(transactionsError.message)) {
     const fallback = await client
       .from("transactions")
@@ -835,7 +854,14 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
         reflectedDate: transaction.reflected_on ?? undefined,
         memo: transaction.memo ?? undefined,
         creditStatus: transaction.credit_status ?? undefined,
-        createdAt: transaction.created_at ?? undefined
+        createdAt: transaction.created_at ?? undefined,
+        transferGroupId: transaction.transfer_group_id ?? undefined,
+        transferDirection: transaction.transfer_direction ?? undefined,
+        counterpartyHouseholdId: transaction.counterparty_household_id ?? undefined,
+        counterpartyAccountId: transaction.counterparty_account_id ?? undefined,
+        counterpartyHouseholdName: transaction.counterparty_household_name ?? undefined,
+        counterpartyAccountName: transaction.counterparty_account_name ?? undefined,
+        transferSenderId: transaction.transfer_sender_id ?? undefined
       };
     }).sort((a, b) => (b.reflectedDate || b.date).localeCompare(a.reflectedDate || a.date)),
     fixedCosts: ((fixedCostsData ?? []) as DbFixedCost[]).map((cost): FixedCost => ({
@@ -1461,4 +1487,103 @@ export async function updateRemoteHouseholdSpace(householdId: string, activeSpac
   const client = requireSupabase();
   const { error } = await client.from("households").update({ space_type: activeSpace }).eq("id", householdId);
   if (error) throwJapanese(error, "家計簿設定の更新に失敗しました。");
+}
+
+
+// ============================================================
+// 家計簿間の資金移動（個人 ⇄ 共有）
+// ============================================================
+function ledgerTransferSetupError(error: { message?: string; code?: string } | null) {
+  return Boolean(error && /create_ledger_transfer|update_ledger_transfer|delete_ledger_transfer|transfer_group_id|function .* does not exist|Could not find the function/i.test(error.message ?? ""));
+}
+
+export async function loadLedgerAccountsAndCategories(householdId: string) {
+  const client = requireSupabase();
+  const [accountsResult, categoriesResult] = await Promise.all([
+    client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
+    client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at")
+  ]);
+  if (accountsResult.error) throwJapanese(accountsResult.error, "相手の家計簿の口座を読み込めませんでした。");
+  const accounts: Account[] = ((accountsResult.data ?? []) as DbAccount[]).map((account) => ({
+    id: account.id,
+    name: account.name,
+    type: account.account_type,
+    openingBalance: toNumber(account.opening_balance),
+    openingBalanceDate: account.opening_balance_date ?? undefined,
+    color: account.color ?? "#1C2A4A",
+    closingDay: account.closing_day ?? undefined,
+    withdrawalDay: account.withdrawal_day ?? undefined,
+    withdrawalAccountId: account.withdrawal_account_id ?? undefined
+  }));
+  const categories: Category[] = categoriesResult.error ? [] : ((categoriesResult.data ?? []) as DbCategory[]).map((category) => ({
+    id: category.id,
+    name: category.name,
+    parentId: category.parent_id ?? undefined,
+    kind: category.category_kind ?? "expense",
+    color: category.color,
+    sortOrder: category.sort_order ?? 0
+  }));
+  return { accounts, categories };
+}
+
+export async function createLedgerTransfer(input: {
+  fromHouseholdId: string;
+  fromAccountId: string;
+  fromCategoryId?: string;
+  toHouseholdId: string;
+  toAccountId: string;
+  toCategoryId?: string;
+  amount: number;
+  date: string;
+  memo?: string;
+  countAsExpense?: boolean;
+}) {
+  const client = requireSupabase();
+  const { data, error } = await client.rpc("create_ledger_transfer", {
+    from_household_id: input.fromHouseholdId,
+    from_account_id: input.fromAccountId,
+    from_category_id: input.fromCategoryId ?? null,
+    to_household_id: input.toHouseholdId,
+    to_account_id: input.toAccountId,
+    to_category_id: input.toCategoryId ?? null,
+    transfer_amount: input.amount,
+    transfer_date: input.date,
+    transfer_memo: input.memo ?? "",
+    count_as_expense: Boolean(input.countAsExpense)
+  });
+  if (error) {
+    if (ledgerTransferSetupError(error)) throw new Error("家計簿間の資金移動を使うには、Supabase で add-ledger-transfers.sql を実行してください。");
+    throwJapanese(error, "資金移動の登録に失敗しました。");
+  }
+  return data as string;
+}
+
+export async function updateLedgerTransfer(input: {
+  groupId: string;
+  householdId: string;
+  amount: number;
+  date: string;
+  memo?: string;
+  categoryId?: string;
+  accountId?: string;
+  countAsExpense?: boolean;
+}) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("update_ledger_transfer", {
+    target_group_id: input.groupId,
+    editing_household_id: input.householdId,
+    new_amount: input.amount,
+    new_date: input.date,
+    new_memo: input.memo ?? "",
+    new_category_id: input.categoryId ?? null,
+    new_account_id: input.accountId ?? null,
+    new_count_as_expense: input.countAsExpense ?? null
+  });
+  if (error) throwJapanese(error, "資金移動の更新に失敗しました。");
+}
+
+export async function deleteLedgerTransfer(groupId: string) {
+  const client = requireSupabase();
+  const { error } = await client.rpc("delete_ledger_transfer", { target_group_id: groupId });
+  if (error) throwJapanese(error, "資金移動の削除に失敗しました。");
 }
