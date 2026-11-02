@@ -5755,3 +5755,16 @@ button.settings-row:active { background: var(--tint); }
 .withdrawal-block .settings-sec-h { padding-top: 6px; }
 .withdrawal-list { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 12px; }
 .withdrawal-list .transaction-list, .withdrawal-list .tx-list { display: grid; }
+
+/* これから出ていくお金：月ごとの見出し、引落日は2行目に（切れないように） */
+.withdraw-month + .withdraw-month { border-top: 1px solid var(--rule); }
+.withdraw-month-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 8px 14px; background: var(--bg-0); border-bottom: 1px solid var(--line);
+  font-size: 12px; font-weight: 700; color: var(--ink-soft);
+}
+.withdraw-month-head b { font-weight: 600; color: var(--ink); }
+.withdraw-row .settings-row-text small { white-space: normal; overflow: visible; }
+.withdraw-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.withdraw-line .withdraw-date { margin-left: 0; vertical-align: 0; color: var(--ink); white-space: nowrap; }
+.settings-row.total-row .settings-row-text small { white-space: normal; overflow: visible; }

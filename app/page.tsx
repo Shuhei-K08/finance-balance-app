@@ -3278,15 +3278,30 @@ function AnalysisView({
             <>
               <div className="settings-sec-h"><span>これから出ていくお金</span></div>
               <div className="settings-list">
-                {pendingCards.map(({ card, date, amount, fixedCount }) => {
-                  const withdrawal = state.accounts.find((item) => item.id === card.withdrawalAccountId);
+                {Array.from(new Set(pendingCards.map((item) => item.date.slice(0, 7)))).map((month) => {
+                  const items = pendingCards.filter((item) => item.date.startsWith(month));
                   return (
-                    <button type="button" className="settings-row account-item" key={`${card.id}-${date}`} onClick={() => setWithdrawalDetail({ cardId: card.id, date })}>
-                      <AccountMark account={card} size="lg" />
-                      <span className="settings-row-text"><b>{card.name}<em className="withdraw-date">{shortDate(date)} 引落</em></b><small>{withdrawal?.name ?? "引落口座未設定"}から{fixedCount > 0 ? `／定期 ${fixedCount}件を含む` : ""}</small></span>
-                      <span className="settings-amount num">−{plainAmount(amount)}</span>
-                      <ChevronRight size={16} className="settings-chev" />
-                    </button>
+                    <div className="withdraw-month" key={month}>
+                      <div className="withdraw-month-head">
+                        <span>{Number(month.slice(5, 7))}月の引落{month === currentMonthKey ? "" : month === shiftMonthKey(currentMonthKey, 1) ? "（来月）" : ""}</span>
+                        <b className="num">−{plainAmount(items.reduce((sum, item) => sum + item.amount, 0))}</b>
+                      </div>
+                      {items.map(({ card, date, amount, fixedCount }) => {
+                        const withdrawal = state.accounts.find((item) => item.id === card.withdrawalAccountId);
+                        return (
+                          <button type="button" className="settings-row account-item withdraw-row" key={`${card.id}-${date}`} onClick={() => setWithdrawalDetail({ cardId: card.id, date })}>
+                            <AccountMark account={card} size="lg" />
+                            <span className="settings-row-text">
+                              <b>{card.name}</b>
+                              <small className="withdraw-line"><em className="withdraw-date">{shortDate(date)}（{weekdayOf(date)}）引落</em>{withdrawal?.name ?? "引落口座未設定"}から</small>
+                              {fixedCount > 0 && <small>定期 {fixedCount}件を含む</small>}
+                            </span>
+                            <span className="settings-amount num">−{plainAmount(amount)}</span>
+                            <ChevronRight size={16} className="settings-chev" />
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
                 <div className="settings-row account-item no-chev total-row">
