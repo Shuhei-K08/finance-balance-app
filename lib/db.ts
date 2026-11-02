@@ -1560,6 +1560,7 @@ export async function createLedgerTransfer(input: {
   date: string;
   memo?: string;
   countAsExpense?: boolean;
+  countAsIncome?: boolean;
 }) {
   const client = requireSupabase();
   const { data, error } = await client.rpc("create_ledger_transfer", {
@@ -1572,7 +1573,8 @@ export async function createLedgerTransfer(input: {
     transfer_amount: input.amount,
     transfer_date: input.date,
     transfer_memo: input.memo ?? "",
-    count_as_expense: Boolean(input.countAsExpense)
+    count_as_expense: Boolean(input.countAsExpense),
+    count_as_income: Boolean(input.countAsIncome)
   });
   if (error) {
     if (ledgerTransferSetupError(error)) throw new Error("家計簿間の資金移動を使うには、Supabase で add-ledger-transfers.sql を実行してください。");
@@ -1589,6 +1591,7 @@ export async function updateLedgerTransfer(input: {
   memo?: string;
   categoryId?: string;
   accountId?: string;
+  /** 送る側なら支出、受け取る側なら収入として数えるか */
   countAsExpense?: boolean;
 }) {
   const client = requireSupabase();
@@ -1624,6 +1627,7 @@ export async function createLedgerFixedTransfer(input: {
   effectiveFrom?: string;
   effectiveTo?: string;
   countAsExpense?: boolean;
+  countAsIncome?: boolean;
 }) {
   const client = requireSupabase();
   const { error } = await client.rpc("create_ledger_fixed_transfer", {
@@ -1638,7 +1642,8 @@ export async function createLedgerFixedTransfer(input: {
     item_due_day: input.dueDay,
     item_effective_from: input.effectiveFrom ?? null,
     item_effective_to: input.effectiveTo ?? null,
-    count_as_expense: Boolean(input.countAsExpense)
+    count_as_expense: Boolean(input.countAsExpense),
+    count_as_income: Boolean(input.countAsIncome)
   });
   if (error) {
     if (ledgerTransferSetupError(error)) throw new Error("定期の資金移動を使うには、Supabase で最新の add-ledger-transfers.sql を実行してください。");

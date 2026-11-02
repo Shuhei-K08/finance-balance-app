@@ -48,6 +48,8 @@ end $$;
 
 -- 3. 資金移動をつくる（両方の家計簿に1件ずつ、同じ transfer_group_id で）
 --    呼び出した人が「両方の家計簿のメンバー」であることを確認する
+-- 旧版（受け取り側を収入にできない版）を置き換える
+drop function if exists public.create_ledger_transfer(uuid, uuid, uuid, uuid, uuid, uuid, numeric, date, text, boolean);
 create or replace function public.create_ledger_transfer(
   from_household_id uuid,
   from_account_id uuid,
@@ -58,7 +60,8 @@ create or replace function public.create_ledger_transfer(
   transfer_amount numeric,
   transfer_date date,
   transfer_memo text,
-  count_as_expense boolean default false
+  count_as_expense boolean default false,
+  count_as_income boolean default false
 )
 returns uuid
 language plpgsql
@@ -115,7 +118,9 @@ begin
     transfer_group_id, transfer_direction, counterparty_household_id, counterparty_account_id,
     counterparty_household_name, counterparty_account_name, transfer_sender_id
   ) values (
-    to_household_id, 'transfer', transfer_amount, to_category_id, to_account_id, transfer_date, nullif(transfer_memo, ''),
+    to_household_id,
+    case when count_as_income then 'income'::transaction_type else 'transfer'::transaction_type end,
+    transfer_amount, to_category_id, to_account_id, transfer_date, nullif(transfer_memo, ''),
     group_id, 'in', from_household_id, from_account_id, from_name, from_account_name, auth.uid()
   );
 
@@ -124,7 +129,7 @@ end;
 $$;
 
 -- 4. 資金移動を直す：金額・日付・メモは両方に反映。
---    カテゴリ・口座・支出として数えるかは、呼び出した人が見ている家計簿の側だけ変える
+--    カテゴリ・口座・収支に数えるか（送る側は支出／受け取る側は収入）は、呼び出した人が見ている家計簿の側だけ変える
 create or replace function public.update_ledger_transfer(
   target_group_id uuid,
   editing_household_id uuid,
@@ -171,7 +176,8 @@ begin
       account_id = coalesce(new_account_id, account_id),
       transaction_type = case
         when side.transfer_direction = 'out' and new_count_as_expense is true then 'expense'::transaction_type
-        when side.transfer_direction = 'out' and new_count_as_expense is false then 'transfer'::transaction_type
+        when side.transfer_direction = 'in' and new_count_as_expense is true then 'income'::transaction_type
+        when new_count_as_expense is false then 'transfer'::transaction_type
         else transaction_type
       end
   where id = side.id;
@@ -240,7 +246,7 @@ begin
 end;
 $$;
 
-grant execute on function public.create_ledger_transfer(uuid, uuid, uuid, uuid, uuid, uuid, numeric, date, text, boolean) to authenticated;
+grant execute on function public.create_ledger_transfer(uuid, uuid, uuid, uuid, uuid, uuid, numeric, date, text, boolean, boolean) to authenticated;
 grant execute on function public.update_ledger_transfer(uuid, uuid, numeric, date, text, uuid, uuid, boolean) to authenticated;
 grant execute on function public.delete_ledger_transfer(uuid) to authenticated;
 grant execute on function public.delete_transaction_safe(uuid) to authenticated;
@@ -281,6 +287,7 @@ end $$;
 create index if not exists fixed_costs_transfer_group_idx on fixed_costs (transfer_group_id) where transfer_group_id is not null;
 
 -- 8. 定期の資金移動をつくる（両方の家計簿に1件ずつ）
+drop function if exists public.create_ledger_fixed_transfer(uuid, uuid, uuid, uuid, uuid, uuid, text, numeric, int, date, date, boolean);
 create or replace function public.create_ledger_fixed_transfer(
   from_household_id uuid,
   from_account_id uuid,
@@ -293,7 +300,8 @@ create or replace function public.create_ledger_fixed_transfer(
   item_due_day int,
   item_effective_from date,
   item_effective_to date,
-  count_as_expense boolean default false
+  count_as_expense boolean default false,
+  count_as_income boolean default false
 )
 returns uuid
 language plpgsql
@@ -352,7 +360,9 @@ begin
     effective_from, effective_to, transfer_group_id, transfer_direction,
     counterparty_household_id, counterparty_account_id, counterparty_household_name, counterparty_account_name
   ) values (
-    to_household_id, item_name, 'transfer', to_category_id, to_account_id, item_amount, false, item_due_day, 'planned',
+    to_household_id, item_name,
+    case when count_as_income then 'income'::transaction_type else 'transfer'::transaction_type end,
+    to_category_id, to_account_id, item_amount, false, item_due_day, 'planned',
     item_effective_from, item_effective_to, group_id, 'in',
     from_household_id, from_account_id, from_name, from_account_name
   );
@@ -417,7 +427,8 @@ begin
         side.household_id, new_name,
         case
           when side.household_id = editing_household_id and side.transfer_direction = 'out' and new_count_as_expense is true then 'expense'::transaction_type
-          when side.household_id = editing_household_id and side.transfer_direction = 'out' and new_count_as_expense is false then 'transfer'::transaction_type
+          when side.household_id = editing_household_id and side.transfer_direction = 'in' and new_count_as_expense is true then 'income'::transaction_type
+          when side.household_id = editing_household_id and new_count_as_expense is false then 'transfer'::transaction_type
           else side.fixed_type
         end,
         case when side.household_id = editing_household_id then new_category_id else side.category_id end,
@@ -446,7 +457,8 @@ begin
       account_id = coalesce(new_account_id, account_id),
       fixed_type = case
         when transfer_direction = 'out' and new_count_as_expense is true then 'expense'::transaction_type
-        when transfer_direction = 'out' and new_count_as_expense is false then 'transfer'::transaction_type
+        when transfer_direction = 'in' and new_count_as_expense is true then 'income'::transaction_type
+        when new_count_as_expense is false then 'transfer'::transaction_type
         else fixed_type
       end
   where transfer_group_id = target_group_id and household_id = editing_household_id and deleted_at is null;
@@ -531,7 +543,7 @@ begin
 end;
 $$;
 
-grant execute on function public.create_ledger_fixed_transfer(uuid, uuid, uuid, uuid, uuid, uuid, text, numeric, int, date, date, boolean) to authenticated;
+grant execute on function public.create_ledger_fixed_transfer(uuid, uuid, uuid, uuid, uuid, uuid, text, numeric, int, date, date, boolean, boolean) to authenticated;
 grant execute on function public.update_ledger_fixed_transfer(uuid, uuid, text, numeric, int, date, date, uuid, uuid, boolean, text, date) to authenticated;
 grant execute on function public.delete_ledger_fixed_transfer(uuid, text, date) to authenticated;
 grant execute on function public.upsert_ledger_fixed_override(uuid, uuid, date, text, numeric, int, uuid, uuid, boolean) to authenticated;

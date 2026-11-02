@@ -1915,7 +1915,8 @@ function QuickTransactionSheet({
         amount: value,
         date,
         memo,
-        countAsExpense: ledgerTarget.countAsExpense
+        countAsExpense: ledgerTarget.countAsExpense,
+        countAsIncome: ledgerTarget.countAsIncome
       });
       storeLedgerTransferMemory(state.householdId, { ...ledgerTarget, toHouseholdId: targetHouseholdId, toAccountId: targetAccountId, fromAccountId: accountId });
       await onLedgerTransferDone?.();
@@ -2099,6 +2100,10 @@ function QuickTransactionSheet({
               <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(state.themeColor) }} />{state.householdName ?? "この家計簿"}<small>から</small></div>
               <label>移動元の口座<AccountSelect value={accountId} onChange={(nextId: string) => setAccountId(nextId)} accounts={sortAccountsByType(normalAccounts)} placeholder="選択してください" /></label>
               <CategoryPicker categories={state.categories} kind="expense" value={fromCategoryId} onChange={(id) => patchLedgerTarget({ fromCategoryId: id })} label="この家計簿のカテゴリ" optional />
+              <label className="ledger-transfer-toggle">
+                <input type="checkbox" checked={ledgerTarget.countAsExpense} onChange={(event) => patchLedgerTarget({ countAsExpense: event.target.checked })} />
+                <span><b>この家計簿の支出として数える</b><small>{ledgerTarget.countAsExpense ? "移動した金額が、この家計簿の今月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
+              </label>
             </div>
             <div className="ledger-transfer-arrow" aria-hidden="true"><ArrowDown size={16} /></div>
             <div className="ledger-transfer-side">
@@ -2116,11 +2121,11 @@ function QuickTransactionSheet({
               {targetCategories.some((category) => category.kind === "income") && (
                 <CategoryPicker categories={targetCategories} kind="income" value={toCategoryId} onChange={(id) => patchLedgerTarget({ toCategoryId: id })} label={`${targetLedger?.name ?? "相手"}のカテゴリ`} optional />
               )}
+              <label className="ledger-transfer-toggle">
+                <input type="checkbox" checked={ledgerTarget.countAsIncome} onChange={(event) => patchLedgerTarget({ countAsIncome: event.target.checked })} />
+                <span><b>{`${targetLedger?.name ?? "相手の家計簿"}の収入として数える`}</b><small>{ledgerTarget.countAsIncome ? "受け取った金額が、相手の家計簿の収入に入ります。" : "収入には入れず、残高だけが増えます。"}</small></span>
+              </label>
             </div>
-            <label className="ledger-transfer-toggle">
-              <input type="checkbox" checked={ledgerTarget.countAsExpense} onChange={(event) => patchLedgerTarget({ countAsExpense: event.target.checked })} />
-              <span><b>この家計簿の支出として数える</b><small>{ledgerTarget.countAsExpense ? "移動した金額が、この家計簿の今月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
-            </label>
             <label>日付<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
           </div>
         )}
@@ -2197,7 +2202,7 @@ function OverdraftConfirm({ info, busy, onConfirm, onCancel }: { info: Overdraft
   );
 }
 
-type LedgerDestination = { toHouseholdId: string; toAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean };
+type LedgerDestination = { toHouseholdId: string; toAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean; countAsIncome: boolean };
 
 // 別の家計簿への移動先（家計簿・口座・それぞれのカテゴリ・支出として数えるか）
 function LedgerDestinationFields({ state, value, onChange, recurring = false }: { state: LedgerState; value: LedgerDestination; onChange: (next: LedgerDestination) => void; recurring?: boolean }) {
@@ -2241,6 +2246,10 @@ function LedgerDestinationFields({ state, value, onChange, recurring = false }: 
         {categories.some((category) => category.kind === "income") && (
           <CategoryPicker categories={categories} kind="income" value={value.toCategoryId} onChange={(id) => onChange({ ...value, toCategoryId: id })} label={`${targetLedger?.name ?? "相手"}のカテゴリ`} optional />
         )}
+        <label className="ledger-transfer-toggle">
+                <input type="checkbox" checked={value.countAsIncome} onChange={(event) => onChange({ ...value, countAsIncome: event.target.checked })} />
+                <span><b>{`${targetLedger?.name ?? "相手の家計簿"}の収入として数える`}</b><small>{value.countAsIncome ? "受け取った金額が、相手の家計簿の収入に入ります。" : "収入には入れず、残高だけが増えます。"}</small></span>
+              </label>
       </div>
       <CategoryPicker categories={state.categories} kind="expense" value={value.fromCategoryId} onChange={(id) => onChange({ ...value, fromCategoryId: id })} label="この家計簿のカテゴリ" optional />
       <label className="ledger-transfer-toggle">
@@ -2251,10 +2260,10 @@ function LedgerDestinationFields({ state, value, onChange, recurring = false }: 
   );
 }
 
-type LedgerTransferMemory = { toHouseholdId: string; toAccountId: string; fromAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean };
+type LedgerTransferMemory = { toHouseholdId: string; toAccountId: string; fromAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean; countAsIncome: boolean };
 
 function readLedgerTransferMemory(householdId?: string): LedgerTransferMemory {
-  const empty: LedgerTransferMemory = { toHouseholdId: "", toAccountId: "", fromAccountId: "", fromCategoryId: "", toCategoryId: "", countAsExpense: false };
+  const empty: LedgerTransferMemory = { toHouseholdId: "", toAccountId: "", fromAccountId: "", fromCategoryId: "", toCategoryId: "", countAsExpense: true, countAsIncome: true };
   try {
     const raw = window.localStorage.getItem(`mirai-ledger-transfer:${householdId ?? "local"}`);
     return raw ? { ...empty, ...JSON.parse(raw) } : empty;
@@ -3685,7 +3694,7 @@ function AnalysisView({
 
           {ledgerMoves.length > 0 && (
             <>
-              <div className="settings-sec-h"><span>資金移動</span><span>収支には含めていません</span></div>
+              <div className="settings-sec-h"><span>資金移動</span><span>家計簿どうしのやり取り</span></div>
               <div className="settings-list">
                 {ledgerMoves.map((move) => (
                   <div className="settings-row ledger-move-row" key={move.label}>
@@ -3698,7 +3707,7 @@ function AnalysisView({
                   </div>
                 ))}
               </div>
-              <p className="settings-note">{state.activeSpace === "shared" ? "メンバーの家計簿から入ってきたお金と、出ていったお金です。" : "共有の家計簿などへ移したお金です。「支出として数える」にした分は、上の支出にも入っています。"}</p>
+              <p className="settings-note">{state.activeSpace === "shared" ? "メンバーの家計簿から入ってきたお金と、出ていったお金です。「収入として数える」にした分は、上の収入にも入っています。" : "共有の家計簿などとやり取りしたお金です。「支出／収入として数える」にした分は、上の収支にも入っています。"}</p>
             </>
           )}
         </>
@@ -4738,7 +4747,7 @@ function SettingsView({
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
   const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
   const [newFixedScope, setNewFixedScope] = useState<"self" | "ledger">("self");
-  const [newFixedDest, setNewFixedDest] = useState<LedgerDestination>({ toHouseholdId: "", toAccountId: "", fromCategoryId: "", toCategoryId: "", countAsExpense: false });
+  const [newFixedDest, setNewFixedDest] = useState<LedgerDestination>(() => { const memory = readLedgerTransferMemory(state.householdId); return { toHouseholdId: memory.toHouseholdId, toAccountId: memory.toAccountId, fromCategoryId: memory.fromCategoryId, toCategoryId: memory.toCategoryId, countAsExpense: memory.countAsExpense, countAsIncome: memory.countAsIncome }; });
   const [newFixedOverdraft, setNewFixedOverdraft] = useState<OverdraftInfo | null>(null);
   const hasOtherLedgers = (state.households ?? []).some((ledger) => ledger.id !== state.householdId);
   const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined as string | undefined });
@@ -4780,7 +4789,8 @@ function SettingsView({
           dueDay: newFixed.dueDay,
           effectiveFrom: newFixed.effectiveFrom,
           effectiveTo: newFixed.effectiveTo,
-          countAsExpense: newFixedDest.countAsExpense
+          countAsExpense: newFixedDest.countAsExpense,
+          countAsIncome: newFixedDest.countAsIncome
         });
       } else {
         await createFixedCost(state.householdId ?? "", newFixed);
@@ -6621,14 +6631,15 @@ function EditableFixedCostRow(props: { cost: LedgerState["fixedCosts"][number]; 
 function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
   const isIn = cost.transferDirection === "in";
   const [draft, setDraft] = useState(cost);
-  const [countAsExpense, setCountAsExpense] = useState(cost.kind === "expense");
+  // 送る側は「支出」、受け取る側は「収入」として数えるか
+  const [countAsExpense, setCountAsExpense] = useState(cost.transferDirection === "in" ? cost.kind === "income" : cost.kind === "expense");
   const [scope, setScope] = useState<"all" | "future">("all");
   const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
   const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => { setOverdraft(null); }, [draft.amount, draft.dueDay, draft.accountId]);
   const other = `${cost.counterpartyHouseholdName ?? "別の家計簿"}${cost.counterpartyAccountName ? `（${cost.counterpartyAccountName}）` : ""}`;
-  const onlyEndMonthChanged = draft.name === cost.name && draft.amount === cost.amount && draft.categoryId === cost.categoryId && draft.accountId === cost.accountId && draft.dueDay === cost.dueDay && countAsExpense === (cost.kind === "expense") && (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") && (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "");
+  const onlyEndMonthChanged = draft.name === cost.name && draft.amount === cost.amount && draft.categoryId === cost.categoryId && draft.accountId === cost.accountId && draft.dueDay === cost.dueDay && countAsExpense === (cost.transferDirection === "in" ? cost.kind === "income" : cost.kind === "expense") && (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") && (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "");
   async function save(allowOverdraft = false) {
     if (!draft.accountId) return setNotice("口座を選択してください。");
     if (!isIn && !allowOverdraft) {
@@ -6651,7 +6662,7 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
         effectiveTo: draft.effectiveTo,
         categoryId: draft.categoryId || undefined,
         accountId: draft.accountId,
-        countAsExpense: isIn ? undefined : countAsExpense,
+        countAsExpense,
         scope: updateScope,
         fromMonth
       });
@@ -6672,12 +6683,12 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
       <CategoryPicker categories={state.categories} kind={isIn ? "income" : "expense"} value={draft.categoryId ?? ""} onChange={(id) => setDraft({ ...draft, categoryId: id })} label="この家計簿のカテゴリ" optional />
       <label>{isIn ? "入ってくる口座" : "移動元の口座"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId })} accounts={sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"))} /></label>
       <label>移動日<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
-      {!isIn && (
-        <label className="ledger-transfer-toggle">
-          <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
-          <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の毎月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
-        </label>
-      )}
+      <label className="ledger-transfer-toggle">
+        <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
+        {isIn
+          ? <span><b>この家計簿の収入として数える</b><small>{countAsExpense ? "受け取る金額が、この家計簿の毎月の収入に入ります。" : "収入には入れず、残高だけが増えます。"}</small></span>
+          : <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の毎月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>}
+      </label>
       <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
       <InstallmentFields
         startMonth={(draft.effectiveFrom ?? todayIso()).slice(0, 7)}
@@ -6975,7 +6986,8 @@ function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClos
   const [memo, setMemo] = useState(transaction.memo ?? "");
   const [accountId, setAccountId] = useState(transaction.accountId);
   const [categoryId, setCategoryId] = useState(transaction.categoryId ?? "");
-  const [countAsExpense, setCountAsExpense] = useState(transaction.type === "expense");
+  // 送る側は「支出」、受け取る側は「収入」として数えるか
+  const [countAsExpense, setCountAsExpense] = useState(isIn ? transaction.type === "income" : transaction.type === "expense");
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
@@ -6998,7 +7010,7 @@ function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClos
         memo,
         categoryId: categoryId || undefined,
         accountId,
-        countAsExpense: isIn ? undefined : countAsExpense
+        countAsExpense
       });
       await reload();
       setNotice("資金移動を更新しました。");
@@ -7043,12 +7055,12 @@ function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClos
           <label>{isIn ? "入ってきた口座" : "移動元の口座"}<AccountSelect value={accountId} onChange={setAccountId} accounts={sortAccountsByType(normalAccounts)} /></label>
           <label>日付<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         </div>
-        {!isIn && (
-          <label className="ledger-transfer-toggle">
-            <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
-            <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
-          </label>
-        )}
+        <label className="ledger-transfer-toggle">
+          <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
+          {isIn
+            ? <span><b>この家計簿の収入として数える</b><small>{countAsExpense ? "受け取った金額が、この家計簿の収入に入ります。" : "収入には入れず、残高だけが増えます。"}</small></span>
+            : <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>}
+        </label>
         <input placeholder="メモ" value={memo} onChange={(e) => setMemo(e.target.value)} />
         <p className="settings-note">金額・日付・メモは相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
         {overdraft
