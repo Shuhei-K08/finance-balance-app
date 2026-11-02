@@ -5818,3 +5818,17 @@ button.settings-row:active { background: var(--tint); }
 .vtag.move { background: var(--tint); color: var(--cover); }
 .crud-form .ledger-transfer, .edit-row .ledger-transfer { margin: 2px 0; }
 .edit-row .ledger-transfer-pair, .edit-row .settings-note { grid-column: 1 / -1; }
+
+/* ===== カテゴリが多いときは2行で横スクロール ===== */
+.cat-chips.chip-rows { display: block; position: relative; min-width: 0; }
+.chip-rows-scroll { display: grid; grid-template-rows: auto auto; gap: 8px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; -webkit-overflow-scrolling: touch; scrollbar-width: none; padding-bottom: 2px; margin: 0 -2px; padding-left: 2px; padding-right: 28px; }
+.chip-rows-scroll::-webkit-scrollbar { display: none; }
+.chip-rows-line { display: flex; gap: 8px; width: max-content; }
+.chip-rows-line > * { flex: none; scroll-snap-align: start; }
+.cat-chips.sub.chip-rows .chip-rows-scroll, .cat-chips.sub.chip-rows .chip-rows-line { gap: 6px; }
+/* 右端がフェードして「続きがある」ことを示す */
+.cat-chips.chip-rows::after { content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 28px; pointer-events: none; background: linear-gradient(to right, transparent, var(--chip-fade, var(--panel))); }
+.cat-chips.sub.chip-rows { --chip-fade: var(--panel-soft); }
+.cat-chips.sub.chip-rows::after { right: 1px; top: 1px; bottom: 1px; border-radius: 0 11px 11px 0; }
+.ledger-transfer-side .cat-chips.chip-rows:not(.sub) { --chip-fade: var(--paper, var(--panel)); }
+.cat-chips.sub.chip-rows { padding-right: 0; }

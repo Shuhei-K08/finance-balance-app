@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Children, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   Area,
@@ -2599,6 +2599,32 @@ function CategoryOptions({ categories, kind }: { categories: LedgerState["catego
   );
 }
 
+// チップが多いときは最大2行にして横スクロール（少ないときは折り返し）
+function ChipRows({ className, children, activeKey, resetKey }: { className: string; children: React.ReactNode; activeKey?: string; resetKey?: string }) {
+  const items = Children.toArray(children).filter(Boolean);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollable = items.length > 6;
+  useEffect(() => {
+    const box = scrollRef.current;
+    if (!box) return;
+    // 選択中のチップが見えるように（縦にはスクロールさせない）
+    const target = activeKey ? box.querySelector<HTMLElement>(`[data-chip="${CSS.escape(activeKey)}"]`) : null;
+    if (!target) { box.scrollLeft = 0; return; }
+    const left = target.offsetLeft - box.clientWidth / 2 + target.offsetWidth / 2;
+    box.scrollLeft = Math.max(0, left);
+  }, [scrollable, resetKey]);
+  if (!scrollable) return <div className={className}>{items}</div>;
+  const half = Math.ceil(items.length / 2);
+  return (
+    <div className={`${className} chip-rows`}>
+      <div className="chip-rows-scroll" ref={scrollRef}>
+        <div className="chip-rows-line">{items.slice(0, half)}</div>
+        <div className="chip-rows-line">{items.slice(half)}</div>
+      </div>
+    </div>
+  );
+}
+
 function CategoryPicker({
   categories,
   kind,
@@ -2645,13 +2671,14 @@ function CategoryPicker({
   return (
     <div className="category-picker">
       <div className="cat-pick-label">{label}{value ? <span className="cat-selected-text">{selectedParent?.name}{selectedChild ? ` › ${selectedChild.name}` : ""}</span> : optional ? <span className="cat-selected-text muted">なし</span> : null}</div>
-      <div className="cat-chips">
+      <ChipRows className="cat-chips" activeKey={selectedParentId || (optional ? "none" : "")}>
         {optional && (
-          <button type="button" className={`cat-chip none${!selectedParentId ? " active" : ""}`} onClick={() => { setSelectedParentId(""); onChange(""); }}>なし</button>
+          <button key="none" data-chip="none" type="button" className={`cat-chip none${!selectedParentId ? " active" : ""}`} onClick={() => { setSelectedParentId(""); onChange(""); }}>なし</button>
         )}
         {parents.map((parent) => (
           <button
             key={parent.id}
+            data-chip={parent.id}
             type="button"
             className={`cat-chip${selectedParentId === parent.id ? " active" : ""}`}
             style={{ "--cat-color": parent.color } as React.CSSProperties}
@@ -2661,12 +2688,13 @@ function CategoryPicker({
             {parent.name}
           </button>
         ))}
-      </div>
+      </ChipRows>
       {children.length > 0 && (
-        <div className="cat-chips sub">
+        <ChipRows className="cat-chips sub" activeKey={value} resetKey={selectedParentId}>
           {children.map((child) => (
             <button
               key={child.id}
+              data-chip={child.id}
               type="button"
               className={`cat-chip sub${value === child.id ? " active" : ""}`}
               onClick={() => onChange(child.id)}
@@ -2674,7 +2702,7 @@ function CategoryPicker({
               {child.name}
             </button>
           ))}
-        </div>
+        </ChipRows>
       )}
     </div>
   );
