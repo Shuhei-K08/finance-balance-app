@@ -22,6 +22,7 @@ import {
   YAxis
 } from "recharts";
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowDownUp,
   ArrowDownLeft,
@@ -72,6 +73,7 @@ import {
 import {
   balanceTrend,
   calculateAccountBalance,
+  accountBalanceOnDate,
   calculateAccountBalanceInState,
   confirmedAccountBalance,
   categoryExpense,
@@ -132,6 +134,10 @@ import {
   createLedgerTransfer,
   updateLedgerTransfer,
   deleteLedgerTransfer,
+  createLedgerFixedTransfer,
+  updateLedgerFixedTransfer,
+  deleteLedgerFixedTransfer,
+  upsertLedgerFixedOverride,
   loadRemoteState,
   removeSharedLedgerMember,
   renameSharedLedger,
@@ -1847,6 +1853,8 @@ function QuickTransactionSheet({
   const [creditPostingMode, setCreditPostingMode] = useState<"used" | "withdrawal">("used");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
+  useEffect(() => { setOverdraft(null); }, [amount, accountId, date, type]);
   const selectedAccount = state.accounts.find((account) => account.id === accountId);
   const isCreditExpense = type === "expense" && selectedAccount?.type === "credit";
   const accountChoices = type === "income" || type === "transfer" ? normalAccounts : usableAccounts;
@@ -1885,11 +1893,15 @@ function QuickTransactionSheet({
     }
   }, [isLedgerTransfer]);
 
-  async function submitLedgerTransfer(value: number) {
+  async function submitLedgerTransfer(value: number, allowOverdraft: boolean) {
     if (!accountId) return setError("移動元の口座を選択してください。");
     if (!targetHouseholdId) return setError("移動先の家計簿を選択してください。");
     if (!targetAccountId) return setError("移動先の口座を選択してください。");
     setError("");
+    if (!allowOverdraft) {
+      const info = overdraftFor(state, accountId, value, date);
+      if (info) return setOverdraft(info);
+    }
     if (submitting) return;
     setSubmitting(true);
     try {
@@ -1985,14 +1997,14 @@ function QuickTransactionSheet({
     setError("");
   }
 
-  async function submit() {
+  async function submit(allowOverdraft = false) {
     const value = Number(amount);
     if (!value || value <= 0) {
       setError("金額を入力してください。");
       return;
     }
     if (isLedgerTransfer) {
-      await submitLedgerTransfer(value);
+      await submitLedgerTransfer(value, allowOverdraft);
       return;
     }
     if (type !== "transfer" && !categoryId) {
@@ -2016,6 +2028,10 @@ function QuickTransactionSheet({
       return;
     }
     setError("");
+    if (type === "transfer" && !allowOverdraft) {
+      const info = overdraftFor(state, accountId, value, date);
+      if (info) return setOverdraft(info);
+    }
     if (submitting) return;
     setSubmitting(true);
     try {
@@ -2086,7 +2102,7 @@ function QuickTransactionSheet({
             </div>
             <div className="ledger-transfer-arrow" aria-hidden="true"><ArrowDown size={16} /></div>
             <div className="ledger-transfer-side">
-              <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(targetLedger?.themeColor) }} />{targetLedger?.name ?? "相手の家計簿"}<small>へ</small></div>
+              <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(targetLedger?.themeColor) }} />{targetLedger?.name ?? "相手の家計簿"}<small>に入れる</small></div>
               {otherLedgers.length > 1 && (
                 <div className="cat-chips">
                   {otherLedgers.map((ledger) => (
@@ -2127,11 +2143,110 @@ function QuickTransactionSheet({
         )}
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
-        <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中…" : isLedgerTransfer ? "資金移動を登録する" : "登録する"}</button>
+        {overdraft
+          ? <OverdraftConfirm info={overdraft} busy={submitting} onConfirm={() => submit(true)} onCancel={() => setOverdraft(null)} />
+          : <button className="full-primary" type="submit" disabled={submitting}>{submitting ? "登録中…" : isLedgerTransfer ? "資金移動を登録する" : "登録する"}</button>}
         {isLedgerTransfer && <p className="settings-note">両方の家計簿に1件ずつ記録されます。金額・日付・メモはどちらから直しても両方に反映されます。</p>}
         {templateMessage && <p className="form-success" role="status"><Check size={14} /> {templateMessage}</p>}
         {!isLedgerTransfer && <button className="template-save" type="button" onClick={saveCurrentAsTemplate}><Star size={14} /> この内容をテンプレートに保存</button>}
       </form>
+    </div>
+  );
+}
+
+type OverdraftInfo = { accountName: string; balance: number; amount: number; date: string; recurring?: boolean };
+
+// 口座（カード以外）から出ていく額が、その日の残高を超えるかどうか
+function overdraftFor(state: LedgerState, accountId: string, amount: number, date: string, excludeTransactionId?: string, recurring = false): OverdraftInfo | null {
+  const account = state.accounts.find((item) => item.id === accountId);
+  if (!account || account.type === "credit" || !amount || !date) return null;
+  const balance = accountBalanceOnDate(account, state, date, excludeTransactionId);
+  return amount > balance ? { accountName: account.name, balance, amount, date, recurring } : null;
+}
+
+// 定期項目の次の実行日（今日以降、期間内）
+function nextFixedOccurrenceDate(dueDay: number, effectiveFrom?: string, effectiveTo?: string) {
+  const today = todayIso();
+  let month = effectiveFrom && effectiveFrom.slice(0, 7) > today.slice(0, 7) ? effectiveFrom.slice(0, 7) : today.slice(0, 7);
+  for (let i = 0; i < 3; i += 1) {
+    const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+    const date = `${month}-${String(Math.min(Math.max(dueDay, 1), lastDay)).padStart(2, "0")}`;
+    if (effectiveTo && month > effectiveTo.slice(0, 7)) return null;
+    if (date >= today) return date;
+    month = addMonthsKey(month, 1);
+  }
+  return null;
+}
+
+function OverdraftConfirm({ info, busy, onConfirm, onCancel }: { info: OverdraftInfo; busy?: boolean; onConfirm: () => void; onCancel: () => void }) {
+  const after = info.balance - info.amount;
+  return (
+    <div className="overdraft-confirm" role="alertdialog" aria-label="残高がマイナスになります">
+      <div className="overdraft-head"><AlertTriangle size={18} /><b>{info.accountName}の残高がマイナスになります</b></div>
+      <dl className="overdraft-figures">
+        <div><dt>{shortDate(info.date)}{info.recurring ? "（次回）" : ""}時点の残高</dt><dd className="num">{info.balance < 0 ? "−" : ""}{plainAmount(info.balance)}</dd></div>
+        <div><dt>{info.recurring ? "毎月の振替額" : "振替額"}</dt><dd className="num">−{plainAmount(info.amount)}</dd></div>
+        <div className="after"><dt>振替後</dt><dd className="num">−{plainAmount(Math.abs(after))}</dd></div>
+      </dl>
+      <p>予定している定期項目も含めた見込みの残高です。このまま登録しますか？</p>
+      <div className="overdraft-actions">
+        <button type="button" className="google-button" onClick={onCancel}>金額を見直す</button>
+        <button type="button" className="full-primary danger" disabled={busy} onClick={onConfirm}>{busy ? "登録中…" : "このまま登録"}</button>
+      </div>
+    </div>
+  );
+}
+
+type LedgerDestination = { toHouseholdId: string; toAccountId: string; fromCategoryId: string; toCategoryId: string; countAsExpense: boolean };
+
+// 別の家計簿への移動先（家計簿・口座・それぞれのカテゴリ・支出として数えるか）
+function LedgerDestinationFields({ state, value, onChange, recurring = false }: { state: LedgerState; value: LedgerDestination; onChange: (next: LedgerDestination) => void; recurring?: boolean }) {
+  const otherLedgers = (state.households ?? []).filter((ledger) => ledger.id !== state.householdId);
+  const targetHouseholdId = otherLedgers.some((ledger) => ledger.id === value.toHouseholdId) ? value.toHouseholdId : otherLedgers[0]?.id ?? "";
+  const targetLedger = otherLedgers.find((ledger) => ledger.id === targetHouseholdId);
+  const [data, setData] = useState<{ householdId: string; accounts: LedgerState["accounts"]; categories: LedgerState["categories"] } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    if (targetHouseholdId && value.toHouseholdId !== targetHouseholdId) onChange({ ...value, toHouseholdId: targetHouseholdId });
+  }, [targetHouseholdId]);
+  useEffect(() => {
+    if (!targetHouseholdId || data?.householdId === targetHouseholdId) return;
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    loadLedgerAccountsAndCategories(targetHouseholdId)
+      .then((next) => { if (!cancelled) setData({ householdId: targetHouseholdId, ...next }); })
+      .catch((error) => { if (!cancelled) setLoadError(toJapaneseError(error, "相手の家計簿を読み込めませんでした。")); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [targetHouseholdId]);
+  const accounts = data?.householdId === targetHouseholdId ? data.accounts.filter((account) => account.type !== "credit") : [];
+  const categories = data?.householdId === targetHouseholdId ? data.categories : [];
+  return (
+    <div className="ledger-transfer">
+      <div className="ledger-transfer-side">
+        <div className="ledger-transfer-head"><span className="ledger-transfer-badge" style={{ background: coverColor(targetLedger?.themeColor) }} />{targetLedger?.name ?? "相手の家計簿"}<small>に入れる</small></div>
+        {otherLedgers.length > 1 && (
+          <div className="cat-chips">
+            {otherLedgers.map((ledger) => (
+              <button key={ledger.id} type="button" className={`cat-chip${ledger.id === targetHouseholdId ? " active" : ""}`} onClick={() => onChange({ ...value, toHouseholdId: ledger.id, toAccountId: "", toCategoryId: "" })}>
+                <span className="cat-chip-dot" style={{ background: coverColor(ledger.themeColor) }} />{ledger.name}
+              </button>
+            ))}
+          </div>
+        )}
+        <label>移動先の口座{loading ? <span className="account-select-placeholder ledger-loading">読み込み中…</span> : <AccountSelect value={value.toAccountId} onChange={(nextId: string) => onChange({ ...value, toAccountId: nextId })} accounts={sortAccountsByType(accounts)} placeholder="選択してください" />}</label>
+        {loadError && <p className="form-error">{loadError}</p>}
+        {categories.some((category) => category.kind === "income") && (
+          <CategoryPicker categories={categories} kind="income" value={value.toCategoryId} onChange={(id) => onChange({ ...value, toCategoryId: id })} label={`${targetLedger?.name ?? "相手"}のカテゴリ`} optional />
+        )}
+      </div>
+      <CategoryPicker categories={state.categories} kind="expense" value={value.fromCategoryId} onChange={(id) => onChange({ ...value, fromCategoryId: id })} label="この家計簿のカテゴリ" optional />
+      <label className="ledger-transfer-toggle">
+        <input type="checkbox" checked={value.countAsExpense} onChange={(event) => onChange({ ...value, countAsExpense: event.target.checked })} />
+        <span><b>この家計簿の支出として数える</b><small>{value.countAsExpense ? `移動した金額が、この家計簿の${recurring ? "毎月の" : ""}支出に入ります。` : "支出には入れず、残高だけが動きます。"}</small></span>
+      </label>
     </div>
   );
 }
@@ -2968,19 +3083,27 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
-      <em className={meta.className}>{row.kind === "income" ? "+" : ""}{plainAmount(row.amount)}</em>
+      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
+      <em className={row.transferDirection === "in" ? "income" : meta.className}>{row.kind === "income" || row.transferDirection === "in" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
         <div className="fixed-override-form">
           <label>名称<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
           <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
-          {row.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>}
-          <label>{row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit"))} /></label>
-          {row.kind === "transfer" && <label>振替先<AccountSelect value={draft.transferToAccountId} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId)} placeholder="選択してください" /></label>}
+          {row.kind !== "transfer" && !row.transferGroupId && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><CategoryOptions categories={state.categories} kind={row.kind} /></select></label>}
+          {row.transferGroupId && <p className="settings-note">金額と日付は相手の家計簿（{row.counterpartyHouseholdName ?? "別の家計簿"}）にも反映されます。</p>}
+          <label>{row.transferGroupId ? (row.transferDirection === "in" ? "入ってくる口座" : "移動元の口座") : row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit"))} /></label>
+          {row.kind === "transfer" && !row.transferGroupId && <label>振替先<AccountSelect value={draft.transferToAccountId} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId)} placeholder="選択してください" /></label>}
           <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
           <button type="button" onClick={async () => {
             try {
+              if (row.transferGroupId) {
+                await upsertLedgerFixedOverride({ groupId: row.transferGroupId, householdId: state.householdId ?? "", month: row.date.slice(0, 7), name: draft.name, amount: draft.amount, dueDay: draft.dueDay, accountId: draft.accountId, categoryId: row.categoryId || undefined });
+                await reload?.();
+                setEditing(false);
+                setNotice?.("選択月のみ変更しました（相手の家計簿にも反映）。");
+                return;
+              }
               if (row.kind === "transfer" && !draft.transferToAccountId) {
                 setNotice?.("振替先を選択してください。");
                 return;
@@ -3226,17 +3349,23 @@ function AnalysisView({
   }, [section, state.activeSpace, state.householdId]);
   const ledgerMoves = useMemo(() => {
     const groups = new Map<string, { label: string; sub: string; inTotal: number; outTotal: number; count: number }>();
-    monthTransactionsByKey(state.transactions, monthKey).filter((t) => t.transferGroupId).forEach((t) => {
-      const memberName = t.transferDirection === "in" && state.activeSpace === "shared" ? ledgerMembers.find((m) => m.userId === t.transferSenderId)?.displayName : undefined;
-      const key = memberName ? `member:${t.transferSenderId}` : `ledger:${t.counterpartyHouseholdId ?? t.counterpartyHouseholdName ?? ""}`;
-      const current = groups.get(key) ?? { label: memberName ? `${memberName}さん` : t.counterpartyHouseholdName ?? "別の家計簿", sub: memberName ? (t.counterpartyHouseholdName ?? "") : "", inTotal: 0, outTotal: 0, count: 0 };
-      if (t.transferDirection === "in") current.inTotal += t.amount;
+    type MoveRow = { direction?: "out" | "in"; amount: number; householdId?: string; householdName?: string; senderId?: string };
+    const rows: MoveRow[] = [
+      ...monthTransactionsByKey(state.transactions, monthKey).filter((t) => t.transferGroupId).map((t) => ({ direction: t.transferDirection, amount: t.amount, householdId: t.counterpartyHouseholdId, householdName: t.counterpartyHouseholdName, senderId: t.transferSenderId })),
+      ...fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((c) => c.transferGroupId).map((c) => ({ direction: c.transferDirection, amount: c.amount, householdId: c.counterpartyHouseholdId, householdName: c.counterpartyHouseholdName }))
+    ];
+    rows.forEach((t) => {
+      const key = t.householdId ?? t.householdName ?? "";
+      const memberName = t.direction === "in" && state.activeSpace === "shared" ? ledgerMembers.find((m) => m.userId === t.senderId)?.displayName : undefined;
+      const current = groups.get(key) ?? { label: t.householdName ?? "別の家計簿", sub: "", inTotal: 0, outTotal: 0, count: 0 };
+      if (memberName) { current.label = `${memberName}さん`; current.sub = t.householdName ?? ""; }
+      if (t.direction === "in") current.inTotal += t.amount;
       else current.outTotal += t.amount;
       current.count += 1;
       groups.set(key, current);
     });
     return Array.from(groups.values()).sort((a, b) => (b.inTotal + b.outTotal) - (a.inTotal + a.outTotal));
-  }, [state.transactions, state.activeSpace, monthKey, ledgerMembers]);
+  }, [state.transactions, state.fixedCosts, state.fixedCostOverrides, state.activeSpace, monthKey, ledgerMembers]);
   const drillParent = state.categories.find((item) => item.id === drillParentId);
   const drillData = drillParent ? subcategoryExpense(state, drillParent.id, monthKey) : category;
   const totalCategoryExpense = category.reduce((sum, item) => sum + item.value, 0);
@@ -4608,7 +4737,61 @@ function SettingsView({
   const firstIncomeCategoryId = state.categories.find((category) => category.kind === "income" && !category.parentId)?.id ?? state.categories.find((category) => category.kind === "income")?.id ?? "";
   const [newAccount, setNewAccount] = useState({ name: "", type: "bank" as AccountType, openingBalance: 0, openingBalanceDate: todayIso(), color: accountColorForType("bank"), closingDay: 25, withdrawalDay: 10, withdrawalAccountId: firstBankAccountId });
   const [categoryDraft, setCategoryDraft] = useState({ level: "main" as "main" | "sub", name: "", color: "#0f766e", kind: "expense" as "expense" | "income", parentId: firstParentCategoryId });
+  const [newFixedScope, setNewFixedScope] = useState<"self" | "ledger">("self");
+  const [newFixedDest, setNewFixedDest] = useState<LedgerDestination>({ toHouseholdId: "", toAccountId: "", fromCategoryId: "", toCategoryId: "", countAsExpense: false });
+  const [newFixedOverdraft, setNewFixedOverdraft] = useState<OverdraftInfo | null>(null);
+  const hasOtherLedgers = (state.households ?? []).some((ledger) => ledger.id !== state.householdId);
   const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined as string | undefined });
+  useEffect(() => { setNewFixedOverdraft(null); }, [newFixed.amount, newFixed.dueDay, newFixed.accountId, newFixed.effectiveFrom, newFixedScope]);
+  async function submitNewFixed(allowOverdraft: boolean) {
+    const isLedger = newFixed.kind === "transfer" && hasOtherLedgers && newFixedScope === "ledger";
+    try {
+      if (newFixed.kind !== "transfer" && !newFixed.categoryId) {
+        setNotice(newFixed.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。");
+        return;
+      }
+      if (!newFixed.accountId) {
+        setNotice(newFixed.kind === "income" ? "固定収入の入金先を選択してください。" : newFixed.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。");
+        return;
+      }
+      if (isLedger && !newFixedDest.toAccountId) {
+        setNotice("移動先の口座を選択してください。");
+        return;
+      }
+      if (newFixed.kind === "transfer" && !isLedger && !newFixed.transferToAccountId) {
+        setNotice("定期振替の振替先を選択してください。");
+        return;
+      }
+      if (newFixed.kind === "transfer" && !allowOverdraft) {
+        const nextDate = nextFixedOccurrenceDate(newFixed.dueDay, newFixed.effectiveFrom, newFixed.effectiveTo);
+        const info = nextDate ? overdraftFor(state, newFixed.accountId, newFixed.amount, nextDate, undefined, true) : null;
+        if (info) { setNewFixedOverdraft(info); return; }
+      }
+      if (isLedger) {
+        await createLedgerFixedTransfer({
+          fromHouseholdId: state.householdId ?? "",
+          fromAccountId: newFixed.accountId,
+          fromCategoryId: newFixedDest.fromCategoryId || undefined,
+          toHouseholdId: newFixedDest.toHouseholdId,
+          toAccountId: newFixedDest.toAccountId,
+          toCategoryId: newFixedDest.toCategoryId || undefined,
+          name: newFixed.name || "資金移動",
+          amount: newFixed.amount,
+          dueDay: newFixed.dueDay,
+          effectiveFrom: newFixed.effectiveFrom,
+          effectiveTo: newFixed.effectiveTo,
+          countAsExpense: newFixedDest.countAsExpense
+        });
+      } else {
+        await createFixedCost(state.householdId ?? "", newFixed);
+      }
+      await reload();
+      setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined });
+      setNewFixedOverdraft(null);
+      setShowFixedForm(false);
+      setNotice(isLedger ? "定期の資金移動を追加しました。相手の家計簿にも登録されています。" : newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
+    } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
+  }
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showOpeningBalances, setShowOpeningBalances] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
@@ -5049,8 +5232,15 @@ function SettingsView({
           <label>名称<input placeholder={newFixed.kind === "income" ? "例: 給与 / 家賃収入" : newFixed.kind === "transfer" ? "例: 貯金口座へ移動" : "例: 家賃 / Netflix / 電気代"} value={newFixed.name} onChange={(event) => setNewFixed({ ...newFixed, name: event.target.value })} /></label>
           <label>金額<input type="number" min="0" value={numberInputValue(newFixed.amount)} onChange={(event) => setNewFixed({ ...newFixed, amount: Number(event.target.value || 0) })} /></label>
           {newFixed.kind !== "transfer" && <label>カテゴリ<select value={newFixed.categoryId} onChange={(event) => setNewFixed({ ...newFixed, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={newFixed.kind} /></select></label>}
-          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={newFixed.accountId} onChange={(nextId: string) => setNewFixed({ ...newFixed, accountId: nextId, transferToAccountId: nextId === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit"))} /></label>
-          {newFixed.kind === "transfer" && <label>振替先<AccountSelect value={newFixed.transferToAccountId} onChange={(nextId: string) => setNewFixed({ ...newFixed, transferToAccountId: nextId })} accounts={state.accounts.filter((account) => account.type !== "credit" && account.id !== newFixed.accountId)} placeholder="選択してください" /></label>}
+          {newFixed.kind === "transfer" && hasOtherLedgers && (
+            <div className="segmented compact transfer-scope" role="tablist" aria-label="移動先">
+              <button type="button" className={newFixedScope === "self" ? "selected" : ""} onClick={() => setNewFixedScope("self")}>自分の口座間</button>
+              <button type="button" className={newFixedScope === "ledger" ? "selected" : ""} onClick={() => setNewFixedScope("ledger")}>別の家計簿へ</button>
+            </div>
+          )}
+          <label>{newFixed.kind === "income" ? "入金先" : newFixed.kind === "transfer" ? (newFixedScope === "ledger" && hasOtherLedgers ? "移動元の口座" : "振替元") : "支払元"}<AccountSelect value={newFixed.accountId} onChange={(nextId: string) => { setNewFixedOverdraft(null); setNewFixed({ ...newFixed, accountId: nextId, transferToAccountId: nextId === newFixed.transferToAccountId ? "" : newFixed.transferToAccountId }); }} accounts={sortAccountsByType(state.accounts.filter((account) => newFixed.kind === "expense" || account.type !== "credit"))} /></label>
+          {newFixed.kind === "transfer" && hasOtherLedgers && newFixedScope === "ledger" && <LedgerDestinationFields state={state} value={newFixedDest} onChange={setNewFixedDest} recurring />}
+          {newFixed.kind === "transfer" && !(hasOtherLedgers && newFixedScope === "ledger") && <label>振替先<AccountSelect value={newFixed.transferToAccountId} onChange={(nextId: string) => setNewFixed({ ...newFixed, transferToAccountId: nextId })} accounts={state.accounts.filter((account) => account.type !== "credit" && account.id !== newFixed.accountId)} placeholder="選択してください" /></label>}
           <label>{newFixed.kind === "income" ? "入金予定日" : newFixed.kind === "transfer" ? "振替予定日" : "支払予定日"}<input type="number" min="1" max="31" value={numberInputValue(newFixed.dueDay)} onChange={(event) => setNewFixed({ ...newFixed, dueDay: Number(event.target.value || 0) })} /></label>
           <label>{newFixed.effectiveTo ? "初回の月" : "開始月"}<input type="month" value={newFixed.effectiveFrom.slice(0, 7)} onChange={(event) => {
             if (!event.target.value) return;
@@ -5064,27 +5254,7 @@ function SettingsView({
             onChange={(end) => setNewFixed({ ...newFixed, effectiveTo: end ? `${end}-01` : undefined })}
             label="支払いの終わり（ローン・分割払いなら「終わりがある」）"
           />
-          <button className="full-primary" type="button" onClick={async () => {
-            try {
-              if (newFixed.kind !== "transfer" && !newFixed.categoryId) {
-                setNotice(newFixed.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。");
-                return;
-              }
-              if (!newFixed.accountId) {
-                setNotice(newFixed.kind === "income" ? "固定収入の入金先を選択してください。" : "固定費の支払元を選択してください。");
-                return;
-              }
-              if (newFixed.kind === "transfer" && !newFixed.transferToAccountId) {
-                setNotice("定期振替の振替先を選択してください。");
-                return;
-              }
-              await createFixedCost(state.householdId ?? "", newFixed);
-              await reload();
-              setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined });
-              setShowFixedForm(false);
-              setNotice(newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
-            } catch (error) { setNotice(toJapaneseError(error, "定期項目の追加に失敗しました。")); }
-          }}>追加する</button>
+          {newFixedOverdraft ? <OverdraftConfirm info={newFixedOverdraft} onCancel={() => setNewFixedOverdraft(null)} onConfirm={() => { setNewFixedOverdraft(null); submitNewFixed(true); }} /> : <button className="full-primary" type="button" onClick={() => submitNewFixed(false)}>追加する</button>}
         </div></SettingsSheet>}
         {fixedEditId && (() => {
           const cost = state.fixedCosts.find((item) => item.id === fixedEditId);
@@ -5495,12 +5665,12 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
   const row = (cost: LedgerState["fixedCosts"][number], isEnded = false) => {
     const account = state.accounts.find((item) => item.id === cost.accountId);
     const transferTo = state.accounts.find((item) => item.id === cost.transferToAccountId);
-    const sub = cost.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferTo?.name ?? "未設定"}` : `${categoryPathLabel(state, cost.categoryId) || "カテゴリなし"}／${account?.name ?? "未設定"}`;
+    const sub = cost.transferGroupId ? fixedLedgerLine(cost, account?.name) : cost.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferTo?.name ?? "未設定"}` : `${categoryPathLabel(state, cost.categoryId) || "カテゴリなし"}／${account?.name ?? "未設定"}`;
     return (
       <button type="button" className={`settings-row fixed-item${isEnded ? " ended" : ""}`} key={cost.id} onClick={() => onEdit(cost.id)}>
         <span className="fixed-day num">{cost.dueDay}日<small>{isEnded ? "終了" : "毎月"}</small></span>
-        <span className="settings-row-text"><b>{cost.name}{cost.variable && <em className="vtag">変動</em>}</b><small>{sub}</small></span>
-        <span className={`settings-amount num${cost.kind === "income" ? " pos" : ""}`}>{cost.kind === "income" ? "+" : ""}{cost.variable ? "約 " : ""}{plainAmount(cost.amount)}</span>
+        <span className="settings-row-text"><b>{cost.name}{cost.variable && <em className="vtag">変動</em>}{cost.transferGroupId && <em className="vtag move">資金移動</em>}</b><small>{sub}</small></span>
+        <span className={`settings-amount num${cost.kind === "income" || cost.transferDirection === "in" ? " pos" : ""}`}>{cost.kind === "income" || cost.transferDirection === "in" ? "+" : ""}{cost.variable ? "約 " : ""}{plainAmount(cost.amount)}</span>
         <ChevronRight size={16} className="settings-chev" />
       </button>
     );
@@ -6443,8 +6613,93 @@ function EditableFixedCostList({ state, setNotice, reloadHousehold }: { state: L
   );
 }
 
-function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
+function EditableFixedCostRow(props: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
+  if (props.cost.transferGroupId) return <LedgerFixedCostEditor {...props} />;
+  return <PlainFixedCostEditor {...props} />;
+}
+
+function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
+  const isIn = cost.transferDirection === "in";
   const [draft, setDraft] = useState(cost);
+  const [countAsExpense, setCountAsExpense] = useState(cost.kind === "expense");
+  const [scope, setScope] = useState<"all" | "future">("all");
+  const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
+  const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { setOverdraft(null); }, [draft.amount, draft.dueDay, draft.accountId]);
+  const other = `${cost.counterpartyHouseholdName ?? "別の家計簿"}${cost.counterpartyAccountName ? `（${cost.counterpartyAccountName}）` : ""}`;
+  const onlyEndMonthChanged = draft.name === cost.name && draft.amount === cost.amount && draft.categoryId === cost.categoryId && draft.accountId === cost.accountId && draft.dueDay === cost.dueDay && countAsExpense === (cost.kind === "expense") && (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") && (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "");
+  async function save(allowOverdraft = false) {
+    if (!draft.accountId) return setNotice("口座を選択してください。");
+    if (!isIn && !allowOverdraft) {
+      const nextDate = nextFixedOccurrenceDate(draft.dueDay, scope === "future" ? `${fromMonth}-01` : draft.effectiveFrom, draft.effectiveTo);
+      // 編集前の自分の分を除いて計算する
+      const without = { ...state, fixedCosts: state.fixedCosts.filter((item) => item.id !== cost.id) };
+      const info = nextDate ? overdraftFor(without, draft.accountId, draft.amount, nextDate, undefined, true) : null;
+      if (info) return setOverdraft(info);
+    }
+    setBusy(true);
+    try {
+      const updateScope = onlyEndMonthChanged ? "all" : scope;
+      await updateLedgerFixedTransfer({
+        groupId: cost.transferGroupId ?? "",
+        householdId: state.householdId ?? "",
+        name: draft.name,
+        amount: draft.amount,
+        dueDay: draft.dueDay,
+        effectiveFrom: draft.effectiveFrom,
+        effectiveTo: draft.effectiveTo,
+        categoryId: draft.categoryId || undefined,
+        accountId: draft.accountId,
+        countAsExpense: isIn ? undefined : countAsExpense,
+        scope: updateScope,
+        fromMonth
+      });
+      await reloadHousehold(state.householdId ?? "");
+      onDone();
+      setNotice(updateScope === "future" ? "指定月以降の定期の資金移動を更新しました（相手の家計簿にも反映）。" : "定期の資金移動を更新しました（相手の家計簿にも反映）。");
+    } catch (error) {
+      setNotice(toJapaneseError(error, "定期の資金移動の更新に失敗しました。"));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="edit-row">
+      <div className="ledger-transfer-pair"><span>{isIn ? "移動元" : "移動先"}</span><b>{other}</b></div>
+      <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
+      <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
+      <CategoryPicker categories={state.categories} kind={isIn ? "income" : "expense"} value={draft.categoryId ?? ""} onChange={(id) => setDraft({ ...draft, categoryId: id })} label="この家計簿のカテゴリ" optional />
+      <label>{isIn ? "入ってくる口座" : "移動元の口座"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId })} accounts={sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"))} /></label>
+      <label>移動日<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+      {!isIn && (
+        <label className="ledger-transfer-toggle">
+          <input type="checkbox" checked={countAsExpense} onChange={(event) => setCountAsExpense(event.target.checked)} />
+          <span><b>この家計簿の支出として数える</b><small>{countAsExpense ? "移動した金額が、この家計簿の毎月の支出に入ります。" : "支出には入れず、残高だけが動きます。"}</small></span>
+        </label>
+      )}
+      <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
+      <InstallmentFields
+        startMonth={(draft.effectiveFrom ?? todayIso()).slice(0, 7)}
+        endMonth={draft.effectiveTo?.slice(0, 7)}
+        onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
+      />
+      <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
+      {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
+      <p className="settings-note">名称・金額・移動日・期間は相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
+      {overdraft
+        ? <OverdraftConfirm info={overdraft} busy={busy} onCancel={() => setOverdraft(null)} onConfirm={() => save(true)} />
+        : <button type="button" disabled={busy} onClick={() => save(false)}>{busy ? "保存中…" : "変更を保存"}</button>}
+      <button type="button" onClick={async () => { try { await deleteLedgerFixedTransfer(cost.transferGroupId ?? "", scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の定期の資金移動を終了しました（相手の家計簿も）。" : "定期の資金移動を削除しました（相手の家計簿からも）。"); } catch (error) { setNotice(toJapaneseError(error, "定期の資金移動の削除に失敗しました。")); } }}>定期項目を削除（両方の家計簿）</button>
+      <button type="button" onClick={onDone}>編集をやめる</button>
+    </div>
+  );
+}
+
+function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void }) {
+  const [draft, setDraft] = useState(cost);
+  const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
+  useEffect(() => { setOverdraft(null); }, [draft.amount, draft.dueDay, draft.accountId, draft.kind]);
   const [scope, setScope] = useState<"all" | "future">("all");
   const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
   const onlyEndMonthChanged = (
@@ -6458,6 +6713,7 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
     (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") &&
     (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "")
   );
+  async function savePlain(allowOverdraft: boolean) { try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } if (draft.kind === "transfer" && !allowOverdraft) { const nextDate = nextFixedOccurrenceDate(draft.dueDay, scope === "future" ? `${fromMonth}-01` : draft.effectiveFrom, draft.effectiveTo); const info = nextDate ? overdraftFor({ ...state, fixedCosts: state.fixedCosts.filter((item) => item.id !== cost.id) }, draft.accountId, draft.amount, nextDate, undefined, true) : null; if (info) { setOverdraft(info); return; } } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }
   return (
     <div className="edit-row">
       <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
@@ -6474,7 +6730,9 @@ function EditableFixedCostRow({ cost, state, setNotice, reloadHousehold, onDone 
       />
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
-      <button onClick={async () => { try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }}>変更を保存</button>
+      {overdraft
+        ? <OverdraftConfirm info={overdraft} onCancel={() => setOverdraft(null)} onConfirm={() => savePlain(true)} />
+        : <button onClick={() => savePlain(false)}>変更を保存</button>}
       <button onClick={async () => { try { await deleteFixedCost(cost.id, scope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(scope === "future" ? "指定月以降の定期項目を削除しました。" : "定期項目を削除しました。"); } catch (error) { setNotice(toJapaneseError(error, "定期項目の削除に失敗しました。")); } }}>定期項目を削除</button>
       <button type="button" onClick={onDone}>編集をやめる</button>
     </div>
@@ -6599,7 +6857,9 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
   const draftCreditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
   const isDraftCreditExpense = draft.type === "expense" && Boolean(draftCreditAccount);
   const autoWithdrawalDate = isDraftCreditExpense && draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, draft.date) : undefined;
-  async function saveDraft() {
+  const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
+  useEffect(() => { setOverdraft(null); }, [draft.amount, draft.accountId, draft.date, draft.type]);
+  async function saveDraft(allowOverdraft = false) {
     if (draft.type !== "transfer" && !draft.categoryId) {
       setNotice("カテゴリーを選択してください。");
       return;
@@ -6619,6 +6879,10 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
     if (draft.type === "transfer" && draft.accountId === draft.transferToAccountId) {
       setNotice("振替元と振替先は別の口座を選択してください。");
       return;
+    }
+    if (draft.type === "transfer" && !allowOverdraft) {
+      const info = overdraftFor(state, draft.accountId, draft.amount, draft.date, transaction.id);
+      if (info) { setOverdraft(info); return; }
     }
     const creditAccount = state.accounts.find((item) => item.id === draft.accountId && item.type === "credit");
     const withdrawalDate = draft.type === "expense" && creditAccount ? draft.reflectedDate : undefined;
@@ -6683,10 +6947,17 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
           draftCreditAccount={draftCreditAccount}
           autoWithdrawalDate={autoWithdrawalDate}
           normalAccounts={normalAccounts}
+          overdraft={overdraft}
+          clearOverdraft={() => setOverdraft(null)}
         />
       )}
     </>
   );
+}
+
+function fixedLedgerLine(cost: Pick<FixedCost, "transferDirection" | "counterpartyHouseholdName" | "counterpartyAccountName">, accountName?: string) {
+  const other = `${cost.counterpartyHouseholdName ?? "別の家計簿"}${cost.counterpartyAccountName ? `（${cost.counterpartyAccountName}）` : ""}`;
+  return cost.transferDirection === "in" ? `${other} → ${accountName ?? "未設定"}` : `${accountName ?? "未設定"} → ${other}`;
 }
 
 function ledgerTransferLine(transaction: Transaction, accountName?: string) {
@@ -6707,10 +6978,16 @@ function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClos
   const [countAsExpense, setCountAsExpense] = useState(transaction.type === "expense");
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
+  useEffect(() => { setOverdraft(null); }, [amount, accountId, date]);
   const other = `${transaction.counterpartyHouseholdName ?? "別の家計簿"}${transaction.counterpartyAccountName ? `（${transaction.counterpartyAccountName}）` : ""}`;
-  async function save() {
+  async function save(allowOverdraft = false) {
     if (!amount || amount <= 0) return setNotice("金額を入力してください。");
     if (!accountId) return setNotice("口座を選択してください。");
+    if (!isIn && !allowOverdraft) {
+      const info = overdraftFor(state, accountId, amount, date, transaction.id);
+      if (info) return setOverdraft(info);
+    }
     setSaving(true);
     try {
       await updateLedgerTransfer({
@@ -6774,7 +7051,9 @@ function LedgerTransferEditSheet({ transaction, state, setNotice, reload, onClos
         )}
         <input placeholder="メモ" value={memo} onChange={(e) => setMemo(e.target.value)} />
         <p className="settings-note">金額・日付・メモは相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
-        <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
+        {overdraft
+          ? <OverdraftConfirm info={overdraft} busy={saving} onCancel={() => setOverdraft(null)} onConfirm={() => save(true)} />
+          : <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>}
         <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
         <button className="template-save danger-text" type="button" disabled={removing} onClick={remove}>{removing ? "削除中…" : "この資金移動を削除（両方の家計簿から）"}</button>
       </form>
@@ -6794,19 +7073,23 @@ function TransactionEditSheet({
   isDraftCreditExpense,
   draftCreditAccount,
   autoWithdrawalDate,
-  normalAccounts
+  normalAccounts,
+  overdraft,
+  clearOverdraft
 }: {
   transaction: LedgerState["transactions"][number];
   draft: LedgerState["transactions"][number];
   setDraft: (d: LedgerState["transactions"][number]) => void;
   state: LedgerState;
   setNotice: (message: string) => void;
-  saveDraft: () => Promise<void>;
+  saveDraft: (allowOverdraft?: boolean) => Promise<void>;
   onClose: () => void;
   isDraftCreditExpense: boolean;
   draftCreditAccount: LedgerState["accounts"][number] | undefined;
   autoWithdrawalDate: string | undefined;
   normalAccounts: LedgerState["accounts"];
+  overdraft?: OverdraftInfo | null;
+  clearOverdraft?: () => void;
 }) {
   const [saving, setSaving] = useState(false);
   const typeLabel = draft.type === "income" ? "収入" : draft.type === "transfer" ? "振替" : "支出";
@@ -6921,7 +7204,9 @@ function TransactionEditSheet({
           onChange={(e) => setDraft({ ...draft, memo: e.target.value })}
         />
 
-        <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>
+        {overdraft
+          ? <OverdraftConfirm info={overdraft} busy={saving} onCancel={() => clearOverdraft?.()} onConfirm={async () => { setSaving(true); try { await saveDraft(true); } catch (error) { setNotice(toJapaneseError(error, "取引更新に失敗しました。")); } finally { setSaving(false); } }} />
+          : <button className="full-primary" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button>}
         <button className="google-button" type="button" onClick={onClose}>キャンセル</button>
         <button className="template-save" type="button" onClick={() => {
           const { template, duplicate } = saveTransactionAsTemplate(transaction, state);

@@ -63,6 +63,12 @@ export type FixedCost = {
   status: FixedCostStatus;
   effectiveFrom?: string;
   effectiveTo?: string;
+  transferGroupId?: string;
+  transferDirection?: "out" | "in";
+  counterpartyHouseholdId?: string;
+  counterpartyAccountId?: string;
+  counterpartyHouseholdName?: string;
+  counterpartyAccountName?: string;
 };
 
 export type FixedCostOverride = {

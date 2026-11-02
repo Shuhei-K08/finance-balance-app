@@ -5799,3 +5799,22 @@ button.settings-row:active { background: var(--tint); }
 .ledger-move-amounts { display: grid; justify-items: end; gap: 1px; font-size: 14px; white-space: nowrap; }
 .ledger-move-amounts b { font-weight: 600; color: var(--ink); }
 .ledger-move-amounts b.pos { color: var(--income); }
+
+/* ===== 残高がマイナスになる振替の確認 ===== */
+.overdraft-confirm { display: grid; gap: 10px; padding: 14px; border: 1.5px solid var(--stamp); border-radius: 12px; background: color-mix(in srgb, var(--stamp) 7%, var(--panel)); flex-shrink: 0; }
+.overdraft-head { display: flex; align-items: center; gap: 8px; color: var(--stamp); }
+.overdraft-head b { font-size: 14px; color: var(--ink); }
+.overdraft-figures { display: grid; gap: 4px; margin: 0; }
+.overdraft-figures div { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--ink-soft); }
+.overdraft-figures dt { margin: 0; }
+.overdraft-figures dd { margin: 0; font-weight: 600; color: var(--ink); }
+.overdraft-figures .after { padding-top: 6px; border-top: 1px dashed var(--rule); }
+.overdraft-figures .after dt { font-weight: 700; color: var(--ink); }
+.overdraft-figures .after dd { color: var(--stamp); font-size: 16px; }
+.overdraft-confirm p { margin: 0; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.overdraft-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.overdraft-actions button { min-height: 44px; margin: 0; width: 100%; padding: 0 8px; white-space: nowrap; font-size: 14px; }
+.overdraft-actions .full-primary.danger { background: var(--stamp); color: #fff; border-color: var(--stamp); }
+.vtag.move { background: var(--tint); color: var(--cover); }
+.crud-form .ledger-transfer, .edit-row .ledger-transfer { margin: 2px 0; }
+.edit-row .ledger-transfer-pair, .edit-row .settings-note { grid-column: 1 / -1; }

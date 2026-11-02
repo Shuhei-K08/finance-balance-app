@@ -112,6 +112,27 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
     .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
 }
 
+// 指定日の終わり時点の残高（予定の定期項目も含む）。編集中の取引は excludeTransactionId で除外できる
+export function accountBalanceOnDate(account: Account, state: LedgerState, date: string, excludeTransactionId?: string) {
+  const monthKey = date.slice(0, 7);
+  const snapshots = state.assetSnapshots
+    .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < monthKey)
+    .sort((a, b) => b.month.localeCompare(a.month));
+  const latestSnapshot = snapshots[0];
+  const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
+  const transactionBalance = state.transactions
+    .filter((transaction) => {
+      if (transaction.id === excludeTransactionId) return false;
+      const ledgerDate = transactionLedgerDate(transaction);
+      return (!since || ledgerDate > since) && ledgerDate <= date;
+    })
+    .reduce((balance, transaction) => balance + transactionAssetDeltaForAccount(transaction, account, state.accounts), latestSnapshot?.amount ?? account.openingBalance);
+  return monthsBetween(latestSnapshot?.month ?? "", monthKey)
+    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state))
+    .filter((cost) => (!since || cost.date > since) && cost.date <= date)
+    .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
+}
+
 export function confirmedAccountBalance(account: Account, state: LedgerState, monthKey: string) {
   const currentMonth = todayIso().slice(0, 7);
   if (monthKey >= currentMonth) {
@@ -172,6 +193,10 @@ function transactionAssetDeltaForAccount(transaction: Transaction, account: Acco
 function fixedCostAssetDeltaForAccount(cost: FixedCostOccurrence, account: Account, accounts: Account[]) {
   const sourceAccount = accounts.find((item) => item.id === cost.accountId);
   if (cost.kind === "income") return cost.accountId === account.id ? cost.amount : 0;
+  if (cost.kind === "transfer" && cost.transferDirection === "in") {
+    // 別の家計簿から毎月入ってくる資金移動
+    return cost.accountId === account.id ? cost.amount : 0;
+  }
   if (cost.kind === "transfer") {
     if (cost.accountId === account.id) {
       // クレジットカードへの振替（カード支払い）は除外：クレジット費用は即時控除済みのため二重計上を防ぐ
