@@ -3949,37 +3949,20 @@ function AnalysisView({
           .filter((c) => c.kind === "expense" && c.accountId === paymentDrill);
         const total = txs.reduce((s, t) => s + t.amount, 0) + fixedOcc.reduce((s, c) => s + c.amount, 0);
         return (
-          <div className="sheet-backdrop center-backdrop" onClick={() => setPaymentDrill(null)}>
+          <div className="sheet-backdrop center-backdrop" style={{ zIndex: 50 }} onClick={() => setPaymentDrill(null)}>
             <section className="modal-panel" onClick={(e) => e.stopPropagation()} style={{ width: "min(100%, 480px)" }}>
               <div className="section-title">
                 <h2><span style={{ display: "inline-block", width: 10, height: 10, borderRadius: "50%", background: account?.color, marginRight: 6 }} />{account?.name}</h2>
                 <span>{monthLabel} · {yen.format(total)}</span>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6, maxHeight: 400, overflowY: "auto" }}>
-                {fixedOcc.map((c) => {
-                  const cat = state.categories.find((x) => x.id === c.categoryId);
-                  return (
-                    <div key={c.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{c.name}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{c.date} · 定期{cat ? ` · ${cat.name}` : ""}</div>
-                      </div>
-                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(c.amount)}</div>
-                    </div>
-                  );
-                })}
-                {txs.map((t) => {
-                  const cat = state.categories.find((x) => x.id === t.categoryId);
-                  return (
-                    <div key={t.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{t.memo || cat?.name || "支出"}</div>
-                        <div style={{ fontSize: 11, color: "var(--muted)" }}>{t.date}{cat ? ` · ${cat.name}` : ""}</div>
-                      </div>
-                      <div style={{ fontWeight: 700, color: "var(--expense)" }}>{yen.format(t.amount)}</div>
-                    </div>
-                  );
-                })}
+              <p style={{ fontSize: 11, color: "var(--muted)", margin: 0 }}>取引をタップすると編集・削除できます（定期項目はこの月だけ変更）</p>
+              <div className="transaction-list" style={{ maxHeight: 400, overflowY: "auto" }}>
+                {fixedOcc.map((c) => (
+                  <FixedCostOccurrenceRow key={`fixed-${c.id}-${c.date}`} row={c} state={state} setNotice={setNotice} reload={reload} />
+                ))}
+                {txs.map((t) => (
+                  <TransactionRow key={t.id} transaction={t} state={state} setNotice={setNotice} reload={reload} />
+                ))}
                 {txs.length === 0 && fixedOcc.length === 0 && <div className="empty-state">この月の取引はありません。</div>}
               </div>
               <button className="google-button" style={{ marginTop: 12 }} type="button" onClick={() => setPaymentDrill(null)}>閉じる</button>
