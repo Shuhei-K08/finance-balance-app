@@ -369,6 +369,46 @@ export default function App() {
   const [quickDate, setQuickDate] = useState(todayIso());
   const [quickType, setQuickType] = useState<TransactionType>("expense");
   const [calendarMonth, setCalendarMonth] = useState(todayIso().slice(0, 7));
+  // 画面を左右にスワイプして月を移動する
+  const [monthSlide, setMonthSlide] = useState<"next" | "prev" | null>(null);
+  const swipeStart = useRef<{ x: number; y: number; t: number } | null>(null);
+  useEffect(() => {
+    if (!monthSlide) return;
+    const timer = window.setTimeout(() => setMonthSlide(null), 320);
+    return () => window.clearTimeout(timer);
+  }, [monthSlide, calendarMonth]);
+  function onMonthSwipeStart(event: React.TouchEvent) {
+    const target = event.target as HTMLElement;
+    // 横にスクロールする部品や入力欄、開いているシートの上では月を動かさない
+    if (event.touches.length !== 1 || target.closest("input, textarea, select, .bottom-sheet, .sheet-backdrop, .modal-panel, .chip-rows-scroll, .template-strip, .recharts-wrapper, .table-scroll, [data-no-swipe]")) {
+      swipeStart.current = null;
+      return;
+    }
+    // 横スクロールできる場所（表・チップ列など）の上では、その中のスクロールを優先する
+    for (let node: HTMLElement | null = target; node && node !== event.currentTarget; node = node.parentElement) {
+      const overflowX = window.getComputedStyle(node).overflowX;
+      if ((overflowX === "auto" || overflowX === "scroll") && node.scrollWidth > node.clientWidth + 1) {
+        swipeStart.current = null;
+        return;
+      }
+    }
+    const touch = event.touches[0];
+    swipeStart.current = { x: touch.clientX, y: touch.clientY, t: Date.now() };
+  }
+  function onMonthSwipeEnd(event: React.TouchEvent) {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start || tab === "settings" || tab === "admin") return;
+    const touch = event.changedTouches[0];
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.8 || Date.now() - start.t > 700) return;
+    const direction = dx < 0 ? "next" : "prev";
+    const next = shiftMonthKey(calendarMonth, direction === "next" ? 1 : -1);
+    setCalendarMonth(next);
+    setCalendarDate(`${next}-01`);
+    setMonthSlide(direction);
+  }
   const [calendarDate, setCalendarDate] = useState(todayIso());
   const [authReady, setAuthReady] = useState(false);
   const [isAuthed, setIsAuthed] = useState(false);
@@ -626,7 +666,7 @@ export default function App() {
       </aside>
 
       {/* Main column */}
-      <div className="app-main">
+      <div className={`app-main${monthSlide ? ` month-slide-${monthSlide}` : ""}`} onTouchStart={onMonthSwipeStart} onTouchEnd={onMonthSwipeEnd} onAnimationEnd={() => setMonthSlide(null)}>
         <section className="app-topbar">
           <button
             type="button"
@@ -7021,13 +7061,14 @@ function MonthSwitcher({ monthKey, setMonthKey, setSelectedDate }: { monthKey: s
   const isCurrent = monthKey === todayIso().slice(0, 7);
   return (
     <div className="month-switcher" aria-label="表示月">
-      <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, -1))} aria-label="前月"><ChevronLeft size={18} /></button>
+      {/* 「今月」は場所を確保したまま出し入れして、矢印の位置がずれないようにする */}
+      <button type="button" className={`month-switcher-today${isCurrent ? " is-hidden" : ""}`} onClick={() => updateMonth(todayIso().slice(0, 7))} tabIndex={isCurrent ? -1 : 0} aria-hidden={isCurrent}>今月</button>
+      <button type="button" className="month-switcher-arrow" onClick={() => updateMonth(shiftMonthKey(monthKey, -1))} aria-label="前月"><ChevronLeft size={20} /></button>
       <label className="month-switcher-label">
-        {monthKey.replace("-", ".")}
+        <span>{monthKey.replace("-", ".")}</span>
         <input type="month" value={monthKey} onChange={(event) => updateMonth(event.target.value)} aria-label="月を選択" />
       </label>
-      <button type="button" onClick={() => updateMonth(shiftMonthKey(monthKey, 1))} aria-label="翌月"><ChevronRight size={18} /></button>
-      {!isCurrent && <button type="button" className="month-switcher-today" onClick={() => updateMonth(todayIso().slice(0, 7))}>今月</button>}
+      <button type="button" className="month-switcher-arrow" onClick={() => updateMonth(shiftMonthKey(monthKey, 1))} aria-label="翌月"><ChevronRight size={20} /></button>
     </div>
   );
 }

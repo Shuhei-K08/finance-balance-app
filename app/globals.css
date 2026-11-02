@@ -5886,3 +5886,23 @@ button.settings-row:active { background: var(--tint); }
 .future-snapshot-warning p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-soft); }
 .future-snapshot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
 .future-snapshot-row button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--stamp); background: var(--panel); color: var(--stamp); font-weight: 700; font-size: 12px; }
+
+/* ===== 月の切り替え（矢印が押しやすく、位置がずれないように） ===== */
+.month-switcher { display: inline-flex; align-items: center; gap: 0; }
+.month-switcher > button.month-switcher-arrow { width: 40px; height: 40px; border-radius: 50%; color: var(--ink-soft); flex: none; }
+.month-switcher > button.month-switcher-arrow:active { background: var(--tint); }
+.month-switcher-label { position: relative; display: block; overflow: hidden; padding: 6px 2px; border-radius: 8px; }
+.month-switcher-label span { display: block; pointer-events: none; }
+/* 年月の文字の上だけを押したときにカレンダーを開く（矢印に重ならない） */
+.month-switcher-label input { position: absolute; inset: 0; width: 100%; height: 100%; max-width: 100%; min-width: 0; margin: 0; padding: 0; opacity: 0; font-size: 16px; -webkit-appearance: none; appearance: none; }
+.month-switcher > button.month-switcher-today { height: 30px; margin: 0 6px 0 0; padding: 0 10px; flex: none; }
+.month-switcher > button.month-switcher-today.is-hidden { visibility: hidden; pointer-events: none; }
+
+/* スワイプで月を移動したときの小さな動き */
+@keyframes month-slide-next { from { opacity: .35; transform: translateX(28px); } to { opacity: 1; transform: none; } }
+@keyframes month-slide-prev { from { opacity: .35; transform: translateX(-28px); } to { opacity: 1; transform: none; } }
+.app-main.month-slide-next > :not(.page-head):not(.household-pills) { animation: month-slide-next .22s ease-out; }
+.app-main.month-slide-prev > :not(.page-head):not(.household-pills) { animation: month-slide-prev .22s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .app-main.month-slide-next > *, .app-main.month-slide-prev > * { animation: none !important; }
+}
