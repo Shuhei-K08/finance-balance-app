@@ -51,6 +51,15 @@ function previousMonthKey(monthKey: string) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
+// 予定の定期項目を数え始める月（この月は含まない）。
+// 確定した月末資産があればその翌月から。無ければ今月から数える
+// （来月以降の見込みに、今月分の定期項目を入れ忘れないように）
+function fixedCostStartExclusive(snapshotMonth: string | undefined, targetMonth: string) {
+  if (snapshotMonth) return snapshotMonth;
+  const currentMonth = todayIso().slice(0, 7);
+  return targetMonth > currentMonth ? previousMonthKey(currentMonth) : "";
+}
+
 function monthsBetween(startExclusive: string, endInclusive: string) {
   const start = startExclusive
     ? new Date(Number(startExclusive.slice(0, 4)), Number(startExclusive.slice(5, 7)), 1)
@@ -99,7 +108,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
   const latestSnapshot = snapshots[0];
   const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
   const until = monthEndKey(throughMonthKey);
-  const fixedOccurrences = monthsBetween(latestSnapshot?.month ?? "", throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state));
+  const fixedOccurrences = monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, throughMonthKey), throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state));
   const rows = state.transactions.filter((transaction) => {
     const ledgerDate = transactionLedgerDate(transaction);
     return (!since || ledgerDate > since) && ledgerDate <= until;
@@ -127,7 +136,7 @@ export function accountBalanceOnDate(account: Account, state: LedgerState, date:
       return (!since || ledgerDate > since) && ledgerDate <= date;
     })
     .reduce((balance, transaction) => balance + transactionAssetDeltaForAccount(transaction, account, state.accounts), latestSnapshot?.amount ?? account.openingBalance);
-  return monthsBetween(latestSnapshot?.month ?? "", monthKey)
+  return monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, monthKey), monthKey)
     .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state))
     .filter((cost) => (!since || cost.date > since) && cost.date <= date)
     .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
