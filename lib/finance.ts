@@ -121,6 +121,81 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
     .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
 }
 
+export type BalanceBreakdownItem = { date: string; label: string; detail: string; amount: number; source: "transaction" | "fixed" };
+export type BalanceBreakdown = {
+  monthKey: string;
+  baseLabel: string;
+  baseAmount: number;
+  earlierAmount: number;
+  earlierCount: number;
+  items: BalanceBreakdownItem[];
+  total: number;
+  confirmed: boolean;
+};
+
+// 口座の月末残高がどう計算されたかの内訳（confirmedAccountBalance と同じ計算）
+export function accountBalanceBreakdown(account: Account, state: LedgerState, monthKey: string): BalanceBreakdown {
+  const ownSnapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
+  if (ownSnapshot) {
+    return { monthKey, baseLabel: "この月の確定した月末資産", baseAmount: ownSnapshot.amount, earlierAmount: 0, earlierCount: 0, items: [], total: ownSnapshot.amount, confirmed: true };
+  }
+  const latestSnapshot = state.assetSnapshots
+    .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < monthKey)
+    .sort((a, b) => b.month.localeCompare(a.month))[0];
+  const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
+  const until = monthEndKey(monthKey);
+  const monthStart = `${monthKey}-01`;
+  const accountName = (id?: string) => state.accounts.find((item) => item.id === id)?.name ?? "";
+  const categoryName = (id?: string) => state.categories.find((item) => item.id === id)?.name ?? "";
+  const items: BalanceBreakdownItem[] = [];
+  let earlierAmount = 0;
+  let earlierCount = 0;
+  state.transactions.forEach((transaction) => {
+    const ledgerDate = transactionLedgerDate(transaction);
+    if ((since && ledgerDate <= since) || ledgerDate > until) return;
+    const amount = transactionAssetDeltaForAccount(transaction, account, state.accounts);
+    if (!amount) return;
+    if (ledgerDate < monthStart) { earlierAmount += amount; earlierCount += 1; return; }
+    const source = state.accounts.find((item) => item.id === transaction.accountId);
+    items.push({
+      date: ledgerDate,
+      label: transaction.memo || categoryName(transaction.categoryId) || (transaction.type === "transfer" ? "振替" : transaction.type === "income" ? "収入" : "支出"),
+      detail: source && source.id !== account.id ? `${source.name}の${source.type === "credit" ? "引落" : "振替"}` : transaction.type === "transfer" ? (transaction.transferDirection ? "資金移動" : `振替（${accountName(transaction.transferToAccountId) || "相手口座"}）`) : "取引",
+      amount,
+      source: "transaction"
+    });
+  });
+  monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, monthKey), monthKey)
+    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state))
+    .filter((cost) => (!since || cost.date > since) && cost.date <= until)
+    .forEach((cost) => {
+      const amount = fixedCostAssetDeltaForAccount(cost, account, state.accounts);
+      if (!amount) return;
+      if (cost.date < monthStart) { earlierAmount += amount; earlierCount += 1; return; }
+      const source = state.accounts.find((item) => item.id === cost.accountId);
+      items.push({
+        date: cost.date,
+        label: cost.name,
+        detail: source && source.id !== account.id ? `定期・${source.name}${source.type === "credit" ? "の引落" : "から"}` : "定期",
+        amount,
+        source: "fixed"
+      });
+    });
+  items.sort((a, b) => a.date.localeCompare(b.date));
+  const baseAmount = latestSnapshot?.amount ?? account.openingBalance;
+  const total = baseAmount + earlierAmount + items.reduce((sum, item) => sum + item.amount, 0);
+  return {
+    monthKey,
+    baseLabel: latestSnapshot ? `${Number(latestSnapshot.month.slice(5, 7))}月末の確定した月末資産` : "初期残高",
+    baseAmount,
+    earlierAmount,
+    earlierCount,
+    items,
+    total,
+    confirmed: false
+  };
+}
+
 // 指定日の終わり時点の残高（予定の定期項目も含む）。編集中の取引は excludeTransactionId で除外できる
 export function accountBalanceOnDate(account: Account, state: LedgerState, date: string, excludeTransactionId?: string) {
   const monthKey = date.slice(0, 7);

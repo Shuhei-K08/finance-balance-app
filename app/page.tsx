@@ -74,6 +74,7 @@ import {
   balanceTrend,
   calculateAccountBalance,
   accountBalanceOnDate,
+  accountBalanceBreakdown,
   calculateAccountBalanceInState,
   confirmedAccountBalance,
   categoryExpense,
@@ -1495,9 +1496,11 @@ function AllAccountsModal({ state, monthKey, onClose, onSelect }: { state: Ledge
   );
 }
 
-function AccountHistoryModal({ accountId, state, onClose }: { accountId: string; state: LedgerState; onClose: () => void }) {
+function AccountHistoryModal({ accountId, state, onClose, monthKey }: { accountId: string; state: LedgerState; onClose: () => void; monthKey?: string }) {
   const account = state.accounts.find((a) => a.id === accountId);
+  const [breakdownMonth, setBreakdownMonth] = useState(monthKey ?? todayIso().slice(0, 7));
   if (!account) return null;
+  const breakdown = accountBalanceBreakdown(account, state, breakdownMonth);
 
   // Build last 13 months of balance data
   const today = todayIso();
@@ -1549,6 +1552,25 @@ function AccountHistoryModal({ accountId, state, onClose }: { accountId: string;
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        <section className="balance-breakdown" aria-label="月末残高の内訳">
+          <div className="balance-breakdown-head">
+            <button type="button" aria-label="前の月" onClick={() => setBreakdownMonth(addMonthsKey(breakdownMonth, -1))}><ChevronLeft size={16} /></button>
+            <b>{formatMonthLabel(breakdownMonth)}末の残高の内訳</b>
+            <button type="button" aria-label="次の月" onClick={() => setBreakdownMonth(addMonthsKey(breakdownMonth, 1))}><ChevronRight size={16} /></button>
+          </div>
+          <div className="balance-breakdown-list">
+            <div className="bb-row base"><span>{breakdown.baseLabel}</span><b className="num">{breakdown.baseAmount < 0 ? "−" : ""}{plainAmount(breakdown.baseAmount)}</b></div>
+            {breakdown.earlierCount > 0 && <div className="bb-row"><span>{formatMonthLabel(breakdown.monthKey).replace(/^\d+年/, "")}より前の動き（{breakdown.earlierCount}件）</span><b className={`num ${breakdown.earlierAmount >= 0 ? "pos" : ""}`}>{breakdown.earlierAmount >= 0 ? "+" : "−"}{plainAmount(breakdown.earlierAmount)}</b></div>}
+            {breakdown.items.map((item, index) => (
+              <div className="bb-row" key={`${item.date}-${index}`}>
+                <span><small className="num">{shortDate(item.date)}</small>{item.label}<em>{item.detail}</em></span>
+                <b className={`num ${item.amount >= 0 ? "pos" : ""}`}>{item.amount >= 0 ? "+" : "−"}{plainAmount(item.amount)}</b>
+              </div>
+            ))}
+            {!breakdown.confirmed && breakdown.items.length === 0 && <div className="bb-row empty"><span>この月の動きはありません</span></div>}
+            <div className="bb-row total"><span>月末の残高</span><b className="num">{breakdown.total < 0 ? "−" : ""}{plainAmount(breakdown.total)}</b></div>
+          </div>
+        </section>
         <div className="account-history-list">
           {[...chartData].reverse().slice(0, 7).map((row, i) => {
             const prev = [...chartData].reverse()[i + 1];
@@ -3930,6 +3952,7 @@ function AnalysisView({
         <AccountHistoryModal
           accountId={selectedAccountHistoryId}
           state={state}
+          monthKey={monthKey}
           onClose={() => setSelectedAccountHistoryId(null)}
         />
       )}
