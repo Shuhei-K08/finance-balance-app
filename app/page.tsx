@@ -138,6 +138,9 @@ import {
   updateLedgerFixedTransfer,
   deleteLedgerFixedTransfer,
   upsertLedgerFixedOverride,
+  saveFixedMemo,
+  saveLedgerFixedMemo,
+  saveLedgerFixedMemoFromMonth,
   loadRemoteState,
   removeSharedLedgerMember,
   renameSharedLedger,
@@ -3115,12 +3118,12 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   const account = state.accounts.find((item) => item.id === row.accountId);
   const transferToAccount = state.accounts.find((item) => item.id === row.transferToAccountId);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ name: row.name, amount: row.amount, categoryId: row.categoryId, accountId: row.accountId, transferToAccountId: row.transferToAccountId ?? "", dueDay: row.dueDay });
+  const [draft, setDraft] = useState({ name: row.name, amount: row.amount, categoryId: row.categoryId, accountId: row.accountId, transferToAccountId: row.transferToAccountId ?? "", dueDay: row.dueDay, memo: row.overrideMemo ?? "" });
   const meta = fixedKindMeta(row.kind);
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span></div>
+      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
       <em className={row.transferDirection === "in" ? "income" : meta.className}>{row.kind === "income" || row.transferDirection === "in" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
@@ -3132,10 +3135,12 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
           <label>{row.transferGroupId ? (row.transferDirection === "in" ? "入ってくる口座" : "移動元の口座") : row.kind === "income" ? "入金先" : row.kind === "transfer" ? "振替元" : "支払元"}<AccountSelect value={draft.accountId} onChange={(nextId: string) => setDraft({ ...draft, accountId: nextId, transferToAccountId: nextId === draft.transferToAccountId ? "" : draft.transferToAccountId })} accounts={sortAccountsByType(state.accounts.filter((accountItem) => row.kind === "expense" || accountItem.type !== "credit"))} /></label>
           {row.kind === "transfer" && !row.transferGroupId && <label>振替先<AccountSelect value={draft.transferToAccountId} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((accountItem) => accountItem.type !== "credit" && accountItem.id !== draft.accountId)} placeholder="選択してください" /></label>}
           <label>日付<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
+          <label className="fixed-override-memo">この月のメモ<textarea className="memo-input" rows={2} placeholder="例: 今月は電気代が高かった／更新料込み" value={draft.memo} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
           <button type="button" onClick={async () => {
             try {
               if (row.transferGroupId) {
                 await upsertLedgerFixedOverride({ groupId: row.transferGroupId, householdId: state.householdId ?? "", month: row.date.slice(0, 7), name: draft.name, amount: draft.amount, dueDay: draft.dueDay, accountId: draft.accountId, categoryId: row.categoryId || undefined });
+                if (draft.memo.trim() || row.overrideMemo) await saveFixedMemo({ fixedCostId: row.id, month: row.date.slice(0, 7) }, draft.memo.trim());
                 await reload?.();
                 setEditing(false);
                 setNotice?.("選択月のみ変更しました（相手の家計簿にも反映）。");
@@ -3145,7 +3150,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
                 setNotice?.("振替先を選択してください。");
                 return;
               }
-              await upsertFixedCostOverride(state.householdId ?? "", row.id, row.date.slice(0, 7), draft);
+              await upsertFixedCostOverride(state.householdId ?? "", row.id, row.date.slice(0, 7), { ...draft, memo: draft.memo.trim() || row.overrideMemo ? draft.memo.trim() : undefined });
               await reload?.();
               setEditing(false);
               setNotice?.("選択月のみ変更しました。");
@@ -4778,7 +4783,7 @@ function SettingsView({
   const [newFixedDest, setNewFixedDest] = useState<LedgerDestination>(() => { const memory = readLedgerTransferMemory(state.householdId); return { toHouseholdId: memory.toHouseholdId, toAccountId: memory.toAccountId, fromCategoryId: memory.fromCategoryId, toCategoryId: memory.toCategoryId, countAsExpense: memory.countAsExpense, countAsIncome: memory.countAsIncome }; });
   const [newFixedOverdraft, setNewFixedOverdraft] = useState<OverdraftInfo | null>(null);
   const hasOtherLedgers = (state.households ?? []).some((ledger) => ledger.id !== state.householdId);
-  const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined as string | undefined });
+  const [newFixed, setNewFixed] = useState({ name: "", kind: "expense" as TransactionType, categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned" as const, effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined as string | undefined, memo: "" });
   useEffect(() => { setNewFixedOverdraft(null); }, [newFixed.amount, newFixed.dueDay, newFixed.accountId, newFixed.effectiveFrom, newFixedScope]);
   async function submitNewFixed(allowOverdraft: boolean) {
     const isLedger = newFixed.kind === "transfer" && hasOtherLedgers && newFixedScope === "ledger";
@@ -4805,7 +4810,7 @@ function SettingsView({
         if (info) { setNewFixedOverdraft(info); return; }
       }
       if (isLedger) {
-        await createLedgerFixedTransfer({
+        const groupId = await createLedgerFixedTransfer({
           fromHouseholdId: state.householdId ?? "",
           fromAccountId: newFixed.accountId,
           fromCategoryId: newFixedDest.fromCategoryId || undefined,
@@ -4820,11 +4825,12 @@ function SettingsView({
           countAsExpense: newFixedDest.countAsExpense,
           countAsIncome: newFixedDest.countAsIncome
         });
+        if (newFixed.memo.trim() && groupId) await saveLedgerFixedMemo(groupId, state.householdId ?? "", newFixed.memo.trim());
       } else {
-        await createFixedCost(state.householdId ?? "", newFixed);
+        await createFixedCost(state.householdId ?? "", { ...newFixed, memo: newFixed.memo.trim() || undefined });
       }
       await reload();
-      setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined });
+      setNewFixed({ name: "", kind: "expense", categoryId: firstExpenseCategoryId, accountId: firstBankAccountId, transferToAccountId: "", amount: 0, variable: false, dueDay: 1, status: "planned", effectiveFrom: todayIso().slice(0, 7) + "-01", effectiveTo: undefined, memo: "" });
       setNewFixedOverdraft(null);
       setShowFixedForm(false);
       setNotice(isLedger ? "定期の資金移動を追加しました。相手の家計簿にも登録されています。" : newFixed.kind === "income" ? "固定収入を追加しました。" : newFixed.kind === "transfer" ? "定期振替を追加しました。" : "固定費を追加しました。");
@@ -5292,6 +5298,7 @@ function SettingsView({
             onChange={(end) => setNewFixed({ ...newFixed, effectiveTo: end ? `${end}-01` : undefined })}
             label="支払いの終わり（ローン・分割払いなら「終わりがある」）"
           />
+          <label>メモ（任意）<textarea className="memo-input" rows={2} placeholder="例: 年1回の更新料込み／ボーナス月は多め" value={newFixed.memo} onChange={(event) => setNewFixed({ ...newFixed, memo: event.target.value })} /></label>
           {newFixedOverdraft ? <OverdraftConfirm info={newFixedOverdraft} onCancel={() => setNewFixedOverdraft(null)} onConfirm={() => { setNewFixedOverdraft(null); submitNewFixed(true); }} /> : <button className="full-primary" type="button" onClick={() => submitNewFixed(false)}>追加する</button>}
         </div></SettingsSheet>}
         {fixedEditId && (() => {
@@ -6677,6 +6684,7 @@ function FixedCostDetail({ cost, state, setNotice, reloadHousehold, onClose }: {
   }
   rows.push(["期間", `${cost.effectiveFrom ? formatMonthLabel(cost.effectiveFrom.slice(0, 7)) : "開始月なし"} 〜 ${cost.effectiveTo ? formatMonthLabel(cost.effectiveTo.slice(0, 7)) : "ずっと続く"}`]);
   if (info) rows.push(["支払い回数", `残り ${info.remaining}/${info.total}回（残り ${plainAmount(info.remainingAmount)}円）`]);
+  if (cost.memo) rows.push(["メモ", <span className="fixed-detail-memo">{cost.memo}</span>]);
   return (
     <div className="fixed-detail-view">
       <div className="fixed-detail-amount">
@@ -6713,7 +6721,7 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
   const [busy, setBusy] = useState(false);
   useEffect(() => { setOverdraft(null); }, [draft.amount, draft.dueDay, draft.accountId]);
   const other = `${cost.counterpartyHouseholdName ?? "別の家計簿"}${cost.counterpartyAccountName ? `（${cost.counterpartyAccountName}）` : ""}`;
-  const onlyEndMonthChanged = draft.name === cost.name && draft.amount === cost.amount && draft.categoryId === cost.categoryId && draft.accountId === cost.accountId && draft.dueDay === cost.dueDay && countAsExpense === (cost.transferDirection === "in" ? cost.kind === "income" : cost.kind === "expense") && (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") && (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "");
+  const onlyEndMonthChanged = (draft.memo ?? "") === (cost.memo ?? "") && draft.name === cost.name && draft.amount === cost.amount && draft.categoryId === cost.categoryId && draft.accountId === cost.accountId && draft.dueDay === cost.dueDay && countAsExpense === (cost.transferDirection === "in" ? cost.kind === "income" : cost.kind === "expense") && (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") && (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "");
   async function save(allowOverdraft = false) {
     if (!draft.accountId) return setNotice("口座を選択してください。");
     if (!isIn && !allowOverdraft) {
@@ -6740,6 +6748,10 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
         scope: updateScope,
         fromMonth
       });
+      if ((draft.memo ?? "") !== (cost.memo ?? "")) {
+        if (updateScope === "future") await saveLedgerFixedMemoFromMonth(state.householdId ?? "", cost.transferDirection ?? "out", draft.name, fromMonth, (draft.memo ?? "").trim());
+        else await saveLedgerFixedMemo(cost.transferGroupId ?? "", state.householdId ?? "", (draft.memo ?? "").trim());
+      }
       await reloadHousehold(state.householdId ?? "");
       onDone();
       setNotice(updateScope === "future" ? "指定月以降の定期の資金移動を更新しました（相手の家計簿にも反映）。" : "定期の資金移動を更新しました（相手の家計簿にも反映）。");
@@ -6769,6 +6781,7 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
         endMonth={draft.effectiveTo?.slice(0, 7)}
         onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
       />
+      <label className="fixed-memo-field">メモ（この家計簿だけ）<textarea className="memo-input" rows={2} placeholder="例: 2人で月6万円ずつ" value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
       <p className="settings-note">名称・金額・移動日・期間は相手の家計簿にも反映されます。カテゴリと口座はこの家計簿の分だけ変わります。</p>
@@ -6829,7 +6842,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
         if (info) { setOverdraft(info); return; }
       }
       // 先に資金移動を作ってから、元の定期項目を終わらせる（失敗しても元が消えないように）
-      await createLedgerFixedTransfer({
+      const groupId = await createLedgerFixedTransfer({
         fromHouseholdId: state.householdId ?? "",
         fromAccountId: draft.accountId,
         fromCategoryId: dest.fromCategoryId || undefined,
@@ -6844,6 +6857,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
         countAsExpense: dest.countAsExpense,
         countAsIncome: dest.countAsIncome
       });
+      if ((draft.memo ?? "").trim() && groupId) await saveLedgerFixedMemo(groupId, state.householdId ?? "", (draft.memo ?? "").trim());
       await deleteFixedCost(cost.id, scope, fromMonth);
       await reloadHousehold(state.householdId ?? "");
       onDone();
@@ -6881,6 +6895,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
         endMonth={draft.effectiveTo?.slice(0, 7)}
         onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
       />
+      <label className="fixed-memo-field">メモ<textarea className="memo-input" rows={2} placeholder="例: 年1回の更新料込み" value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
       {overdraft

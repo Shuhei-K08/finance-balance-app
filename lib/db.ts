@@ -187,6 +187,7 @@ type DbFixedCost = {
   counterparty_account_id?: string | null;
   counterparty_household_name?: string | null;
   counterparty_account_name?: string | null;
+  memo?: string | null;
 };
 
 type DbFixedCostOverride = {
@@ -200,6 +201,7 @@ type DbFixedCostOverride = {
   amount: number | string | null;
   due_day: number | null;
   skipped: boolean | null;
+  memo?: string | null;
 };
 
 type DbGoal = {
@@ -686,8 +688,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
-    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
-    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
+    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
+    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
     client.from("investment_accounts").select("id,name,account_kind,start_month,initial_amount,initial_principal,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -742,9 +744,20 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   const investmentTableMissing =
     (!!investmentAccountsError && /investment_accounts.*does not exist|relation.*investment_accounts/i.test(investmentAccountsError.message)) ||
     (!!investmentRecordsError && /investment_monthly_records.*does not exist|relation.*investment_monthly_records/i.test(investmentRecordsError.message));
-  const fixedCostOverridesMissing = fixedCostOverridesResult.error && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesResult.error.message);
   let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
   let fixedCostOverridesError = fixedCostOverridesResult.error;
+  if (fixedCostOverridesError && /memo/i.test(fixedCostOverridesError.message)) {
+    // メモ列がまだ無い（add-fixed-cost-memo.sql 未実行）
+    const fallback = await client
+      .from("fixed_cost_overrides")
+      .select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("target_month", { ascending: false });
+    fixedCostOverridesData = fallback.data;
+    fixedCostOverridesError = fallback.error;
+  }
+  const fixedCostOverridesMissing = fixedCostOverridesError && /fixed_cost_overrides|does not exist|存在しません/i.test(fixedCostOverridesError.message);
   if (fixedCostOverridesError && /transfer_to_account_id|does not exist|存在しません/i.test(fixedCostOverridesError.message)) {
     const fallback = await client
       .from("fixed_cost_overrides")
@@ -794,6 +807,17 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   }
   let fixedCostsData: unknown = fixedCostsResult.data;
   let fixedCostsError = fixedCostsResult.error;
+  if (fixedCostsError && /memo/i.test(fixedCostsError.message)) {
+    // メモ列がまだ無い（add-fixed-cost-memo.sql 未実行）
+    const fallback = await client
+      .from("fixed_costs")
+      .select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("due_day");
+    fixedCostsData = fallback.data;
+    fixedCostsError = fallback.error;
+  }
   if (fixedCostsError && /transfer_group_id|transfer_direction|counterparty_/i.test(fixedCostsError.message)) {
     // 家計簿間の定期移動の列がまだ無い（add-ledger-transfers.sql 未実行）
     const fallback = await client
@@ -899,7 +923,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       counterpartyHouseholdId: cost.counterparty_household_id ?? undefined,
       counterpartyAccountId: cost.counterparty_account_id ?? undefined,
       counterpartyHouseholdName: cost.counterparty_household_name ?? undefined,
-      counterpartyAccountName: cost.counterparty_account_name ?? undefined
+      counterpartyAccountName: cost.counterparty_account_name ?? undefined,
+      memo: cost.memo ?? undefined
     })),
     fixedCostOverrides: (fixedCostOverridesMissing ? [] : ((fixedCostOverridesData ?? []) as DbFixedCostOverride[])).map((override): FixedCostOverride => ({
       id: override.id,
@@ -911,7 +936,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       transferToAccountId: override.transfer_to_account_id ?? undefined,
       amount: override.amount == null ? undefined : toNumber(override.amount),
       dueDay: override.due_day ?? undefined,
-      skipped: override.skipped ?? false
+      skipped: override.skipped ?? false,
+      memo: override.memo ?? undefined
     })),
     goals: ((goalsResult.data ?? []) as DbGoal[]).map((goal): Goal => ({
       id: goal.id,
@@ -1347,6 +1373,12 @@ export async function reassignCategoryTransactions(fromCategoryId: string, toCat
   if (error) throwJapanese(error, "カテゴリの移動に失敗しました。");
 }
 
+
+function fixedMemoSetupError(error: { message?: string } | null) {
+  return Boolean(error && /memo/i.test(error.message ?? ""));
+}
+const FIXED_MEMO_SETUP_MESSAGE = "メモを保存するには、Supabase で add-fixed-cost-memo.sql を実行してください。";
+
 export async function createFixedCost(householdId: string, input: Omit<FixedCost, "id">) {
   const client = requireSupabase();
   const { error } = await client.from("fixed_costs").insert({
@@ -1361,8 +1393,10 @@ export async function createFixedCost(householdId: string, input: Omit<FixedCost
     due_day: input.dueDay,
     status: "planned",
     effective_from: input.effectiveFrom ?? null,
-    effective_to: input.effectiveTo ?? null
+    effective_to: input.effectiveTo ?? null,
+    ...(input.memo ? { memo: input.memo } : {})
   });
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
   if (error) throwJapanese(error, "定期項目の追加に失敗しました。");
 }
 
@@ -1390,8 +1424,10 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
       due_day: input.dueDay,
       status: "planned",
       effective_from: effectiveFrom,
-      effective_to: input.effectiveTo ?? null
+      effective_to: input.effectiveTo ?? null,
+      ...(input.memo !== undefined ? { memo: input.memo || null } : {})
     });
+    if (insertError && fixedMemoSetupError(insertError)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
     if (insertError) throwJapanese(insertError, "定期項目の更新に失敗しました。");
     return;
   }
@@ -1406,8 +1442,10 @@ export async function updateFixedCost(fixedCostId: string, input: Omit<FixedCost
     due_day: input.dueDay,
     status: "planned",
     effective_from: input.effectiveFrom ?? null,
-    effective_to: input.effectiveTo ?? null
+    effective_to: input.effectiveTo ?? null,
+    ...(input.memo !== undefined ? { memo: input.memo || null } : {})
   }).eq("id", fixedCostId);
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
   if (error) throwJapanese(error, "定期項目の更新に失敗しました。");
 }
 
@@ -1438,6 +1476,7 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
   amount?: number;
   dueDay?: number;
   skipped?: boolean;
+  memo?: string;
 }) {
   const client = requireSupabase();
   const { error } = await client.from("fixed_cost_overrides").upsert({
@@ -1450,8 +1489,10 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
     transfer_to_account_id: input.transferToAccountId || null,
     amount: input.amount ?? null,
     due_day: input.dueDay ?? null,
-    skipped: input.skipped ?? false
+    skipped: input.skipped ?? false,
+    ...(input.memo !== undefined ? { memo: input.memo || null } : {})
   }, { onConflict: "fixed_cost_id,target_month" });
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
   if (error) throwJapanese(error, "選択月のみの固定費変更に失敗しました。");
 }
 
@@ -1630,7 +1671,7 @@ export async function createLedgerFixedTransfer(input: {
   countAsIncome?: boolean;
 }) {
   const client = requireSupabase();
-  const { error } = await client.rpc("create_ledger_fixed_transfer", {
+  const { data, error } = await client.rpc("create_ledger_fixed_transfer", {
     from_household_id: input.fromHouseholdId,
     from_account_id: input.fromAccountId,
     from_category_id: input.fromCategoryId ?? null,
@@ -1649,6 +1690,7 @@ export async function createLedgerFixedTransfer(input: {
     if (ledgerTransferSetupError(error)) throw new Error("定期の資金移動を使うには、Supabase で最新の add-ledger-transfers.sql を実行してください。");
     throwJapanese(error, "定期の資金移動の追加に失敗しました。");
   }
+  return data as string;
 }
 
 export async function updateLedgerFixedTransfer(input: {
@@ -1717,4 +1759,31 @@ export async function upsertLedgerFixedOverride(input: {
     new_skipped: Boolean(input.skipped)
   });
   if (error) throwJapanese(error, "選択月のみの変更に失敗しました。");
+}
+
+// 家計簿間の定期移動の、自分の側のメモだけを保存する（定期項目そのもの／その月だけ変更）
+export async function saveFixedMemo(target: { fixedCostId: string; month?: string }, memo: string) {
+  const client = requireSupabase();
+  const query = target.month
+    ? client.from("fixed_cost_overrides").update({ memo: memo || null }).eq("fixed_cost_id", target.fixedCostId).eq("target_month", `${target.month}-01`)
+    : client.from("fixed_costs").update({ memo: memo || null }).eq("id", target.fixedCostId);
+  const { error } = await query;
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "メモの保存に失敗しました。");
+}
+
+export async function saveLedgerFixedMemo(groupId: string, householdId: string, memo: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("fixed_costs").update({ memo: memo || null }).eq("transfer_group_id", groupId).eq("household_id", householdId).is("deleted_at", null);
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "メモの保存に失敗しました。");
+}
+
+// 「指定月以降だけ変更」で作り直された自分側の定期移動にメモを付ける
+export async function saveLedgerFixedMemoFromMonth(householdId: string, direction: "out" | "in", name: string, fromMonth: string, memo: string) {
+  const client = requireSupabase();
+  const { error } = await client.from("fixed_costs").update({ memo: memo || null })
+    .eq("household_id", householdId).eq("transfer_direction", direction).eq("name", name).eq("effective_from", `${fromMonth}-01`).is("deleted_at", null);
+  if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "メモの保存に失敗しました。");
 }

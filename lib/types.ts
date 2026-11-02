@@ -69,6 +69,7 @@ export type FixedCost = {
   counterpartyAccountId?: string;
   counterpartyHouseholdName?: string;
   counterpartyAccountName?: string;
+  memo?: string;
 };
 
 export type FixedCostOverride = {
@@ -82,6 +83,7 @@ export type FixedCostOverride = {
   amount?: number;
   dueDay?: number;
   skipped?: boolean;
+  memo?: string;
 };
 
 export type Goal = {

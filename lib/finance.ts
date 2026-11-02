@@ -241,7 +241,7 @@ export function monthlyIncome(transactions: Transaction[]) {
   return transactions.filter((transaction) => transaction.type === "income").reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-export type FixedCostOccurrence = FixedCost & { date: string; overrideId?: string };
+export type FixedCostOccurrence = FixedCost & { date: string; overrideId?: string; overrideMemo?: string };
 
 export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
   const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
@@ -260,6 +260,9 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
         amount: override?.amount ?? cost.amount,
         dueDay,
         overrideId: override?.id,
+        // その月だけのメモがあればそれを、なければ定期項目のメモ
+        memo: override?.memo || cost.memo,
+        overrideMemo: override?.memo,
         date: `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
       };
     });
