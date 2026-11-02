@@ -5832,3 +5832,7 @@ button.settings-row:active { background: var(--tint); }
 .cat-chips.sub.chip-rows::after { right: 1px; top: 1px; bottom: 1px; border-radius: 0 11px 11px 0; }
 .ledger-transfer-side .cat-chips.chip-rows:not(.sub) { --chip-fade: var(--paper, var(--panel)); }
 .cat-chips.sub.chip-rows { padding-right: 0; }
+
+/* 定期項目の編集：種類の切り替え */
+.edit-row .fixed-kind-field { display: grid; gap: 6px; grid-column: 1 / -1; font-size: 12px; color: var(--muted); font-weight: 500; }
+.edit-row .fixed-kind-field small { font-size: 11px; color: var(--stamp); line-height: 1.5; }

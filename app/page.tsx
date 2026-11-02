@@ -6742,6 +6742,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone 
   const [scope, setScope] = useState<"all" | "future">("all");
   const [fromMonth, setFromMonth] = useState(todayIso().slice(0, 7));
   const onlyEndMonthChanged = (
+    draft.kind === cost.kind &&
     draft.name === cost.name &&
     draft.amount === cost.amount &&
     draft.categoryId === cost.categoryId &&
@@ -6752,9 +6753,33 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone 
     (draft.effectiveFrom ?? "") === (cost.effectiveFrom ?? "") &&
     (draft.effectiveTo ?? "") !== (cost.effectiveTo ?? "")
   );
+  function changeKind(kind: TransactionType) {
+    if (kind === draft.kind) return;
+    const normal = state.accounts.filter((account) => account.type !== "credit");
+    const currentAccount = state.accounts.find((account) => account.id === draft.accountId);
+    const accountId = kind !== "expense" && currentAccount?.type === "credit" ? normal[0]?.id ?? "" : draft.accountId;
+    const categoryStillFits = state.categories.find((category) => category.id === draft.categoryId)?.kind === kind;
+    const originalFits = kind === cost.kind;
+    setDraft({
+      ...draft,
+      kind,
+      accountId,
+      categoryId: kind === "transfer" ? "" : originalFits ? cost.categoryId : categoryStillFits ? draft.categoryId : "",
+      transferToAccountId: kind === "transfer" ? (cost.kind === "transfer" && cost.transferToAccountId !== accountId ? cost.transferToAccountId : normal.find((account) => account.id !== accountId)?.id ?? "") : undefined
+    });
+  }
   async function savePlain(allowOverdraft: boolean) { try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } if (draft.kind === "transfer" && !allowOverdraft) { const nextDate = nextFixedOccurrenceDate(draft.dueDay, scope === "future" ? `${fromMonth}-01` : draft.effectiveFrom, draft.effectiveTo); const info = nextDate ? overdraftFor({ ...state, fixedCosts: state.fixedCosts.filter((item) => item.id !== cost.id) }, draft.accountId, draft.amount, nextDate, undefined, true) : null; if (info) { setOverdraft(info); return; } } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }
   return (
     <div className="edit-row">
+      <div className="fixed-kind-field">
+        <span>種類</span>
+        <div className="segmented compact" role="tablist" aria-label="定期項目の種類">
+          {(["expense", "income", "transfer"] as TransactionType[]).map((kind) => (
+            <button key={kind} type="button" className={draft.kind === kind ? "selected" : ""} onClick={() => changeKind(kind)}>{kind === "expense" ? "支出" : kind === "income" ? "収入" : "振替"}</button>
+          ))}
+        </div>
+        {draft.kind !== cost.kind && <small>{cost.kind === "expense" ? "支出" : cost.kind === "income" ? "収入" : "振替"}から{draft.kind === "expense" ? "支出" : draft.kind === "income" ? "収入" : "振替"}に変わります。{draft.kind === "transfer" ? "振替先を選んでください。" : "カテゴリを選び直してください。"}</small>}
+      </div>
       <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       {draft.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>}
