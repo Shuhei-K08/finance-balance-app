@@ -41,6 +41,18 @@ function monthKeyToDate(monthKey?: string) {
   return new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1, 1);
 }
 
+// 確定した月末資産のうち、計算に使えるもの。
+// まだ来ていない月（来月以降）の「確定」は実際の残高ではありえないので使わない
+export function usableSnapshots(state: Pick<LedgerState, "assetSnapshots">) {
+  const currentMonth = todayIso().slice(0, 7);
+  return state.assetSnapshots.filter((snapshot) => snapshot.month <= currentMonth);
+}
+
+export function futureSnapshotMonths(state: Pick<LedgerState, "assetSnapshots">) {
+  const currentMonth = todayIso().slice(0, 7);
+  return Array.from(new Set(state.assetSnapshots.filter((snapshot) => snapshot.month > currentMonth).map((snapshot) => snapshot.month))).sort();
+}
+
 function monthEndKey(monthKey: string) {
   const end = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0);
   return `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
@@ -92,7 +104,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
   if (!throughMonthKey) {
     // 現在月のスナップショットは除外（現在月の取引が無視されるため）
     const currentMonth = todayIso().slice(0, 7);
-    const snapshots = state.assetSnapshots
+    const snapshots = usableSnapshots(state)
       .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < currentMonth)
       .sort((a, b) => b.month.localeCompare(a.month));
     const latestSnapshot = snapshots[0];
@@ -102,7 +114,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
       return balance + transactionAssetDeltaForAccount(transaction, account, state.accounts);
     }, latestSnapshot?.amount ?? account.openingBalance);
   }
-  const snapshots = state.assetSnapshots
+  const snapshots = usableSnapshots(state)
     .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < throughMonthKey)
     .sort((a, b) => b.month.localeCompare(a.month));
   const latestSnapshot = snapshots[0];
@@ -135,11 +147,11 @@ export type BalanceBreakdown = {
 
 // 口座の月末残高がどう計算されたかの内訳（confirmedAccountBalance と同じ計算）
 export function accountBalanceBreakdown(account: Account, state: LedgerState, monthKey: string): BalanceBreakdown {
-  const ownSnapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
+  const ownSnapshot = usableSnapshots(state).find((item) => item.accountId === account.id && item.month === monthKey);
   if (ownSnapshot) {
     return { monthKey, baseLabel: "この月の確定した月末資産", baseAmount: ownSnapshot.amount, earlierAmount: 0, earlierCount: 0, items: [], total: ownSnapshot.amount, confirmed: true };
   }
-  const latestSnapshot = state.assetSnapshots
+  const latestSnapshot = usableSnapshots(state)
     .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < monthKey)
     .sort((a, b) => b.month.localeCompare(a.month))[0];
   const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
@@ -199,7 +211,7 @@ export function accountBalanceBreakdown(account: Account, state: LedgerState, mo
 // 指定日の終わり時点の残高（予定の定期項目も含む）。編集中の取引は excludeTransactionId で除外できる
 export function accountBalanceOnDate(account: Account, state: LedgerState, date: string, excludeTransactionId?: string) {
   const monthKey = date.slice(0, 7);
-  const snapshots = state.assetSnapshots
+  const snapshots = usableSnapshots(state)
     .filter((snapshot) => snapshot.accountId === account.id && snapshot.month < monthKey)
     .sort((a, b) => b.month.localeCompare(a.month));
   const latestSnapshot = snapshots[0];
@@ -222,11 +234,11 @@ export function confirmedAccountBalance(account: Account, state: LedgerState, mo
   if (monthKey >= currentMonth) {
     // ユーザーが当月（以降）の月末資産を確定している場合は、その確定額を最優先する。
     // 確定後にその月へ取引を追加しても確定額は固定され、翌月以降の基準となる。
-    const currentSnapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
+    const currentSnapshot = usableSnapshots(state).find((item) => item.accountId === account.id && item.month === monthKey);
     if (currentSnapshot) return currentSnapshot.amount;
     return calculateAccountBalanceInState(account, state, monthKey);
   }
-  const snapshot = state.assetSnapshots.find((item) => item.accountId === account.id && item.month === monthKey);
+  const snapshot = usableSnapshots(state).find((item) => item.accountId === account.id && item.month === monthKey);
   return snapshot?.amount ?? calculateAccountBalanceInState(account, state, monthKey);
 }
 

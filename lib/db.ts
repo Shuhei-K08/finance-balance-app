@@ -1077,6 +1077,9 @@ export async function updateOpeningBalances(balances: Record<string, { amount: n
 
 export async function upsertAssetSnapshots(householdId: string, month: string, balances: Record<string, number>) {
   const client = requireSupabase();
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  if (month > currentMonth) throw new Error("まだ来ていない月の月末資産は確定できません。");
   const rows = Object.entries(balances).map(([accountId, amount]) => ({
     household_id: householdId,
     account_id: accountId,
@@ -1790,4 +1793,18 @@ export async function saveLedgerFixedMemoFromMonth(householdId: string, directio
   if (error) throwJapanese(error, "メモの保存に失敗しました。");
   const groupId = (data as { transfer_group_id?: string } | null)?.transfer_group_id;
   if (groupId) await saveLedgerFixedMemo(groupId, memo);
+}
+
+// 指定した月の「確定した月末資産」を取り消す（全口座分）
+export async function deleteAssetSnapshotsForMonth(householdId: string, month: string) {
+  const client = requireSupabase();
+  const { error } = await client
+    .from("monthly_asset_snapshots")
+    .update({ deleted_at: new Date().toISOString() })
+    .eq("household_id", householdId)
+    .eq("snapshot_month", `${month}-01`)
+    .is("deleted_at", null);
+  if (!error) return;
+  const { error: hardError } = await client.from("monthly_asset_snapshots").delete().eq("household_id", householdId).eq("snapshot_month", `${month}-01`);
+  if (hardError) throwJapanese(hardError, "月末資産の取り消しに失敗しました。");
 }

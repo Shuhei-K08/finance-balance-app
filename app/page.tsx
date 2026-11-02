@@ -75,6 +75,7 @@ import {
   calculateAccountBalance,
   accountBalanceOnDate,
   accountBalanceBreakdown,
+  futureSnapshotMonths,
   calculateAccountBalanceInState,
   confirmedAccountBalance,
   categoryExpense,
@@ -160,6 +161,7 @@ import {
   upsertInvestmentRecord,
   upsertFixedCostOverride,
   upsertAssetSnapshots,
+  deleteAssetSnapshotsForMonth,
   extractErrorText,
   toJapaneseError
 } from "@/lib/db";
@@ -3572,6 +3574,7 @@ function AnalysisView({
     <div className="view-stack">
       {section === "total" && (
         <>
+          <FutureSnapshotNotice state={state} setNotice={setNotice} reload={reload} />
           <section className="asset-hero">
             {snapshotConfirmed && <div className="hanko small"><b>確定</b><i>{Number(monthKey.slice(5, 7))}.{monthEndDay}</i></div>}
             <div className="asset-hero-label">{snapshotConfirmed ? `${monthLabel}末の総資産` : monthKey === currentMonthKey ? "月末の予定総資産" : `${monthLabel}の総資産`}</div>
@@ -6254,6 +6257,29 @@ function AdminView() {
   );
 }
 
+function FutureSnapshotNotice({ state, setNotice, reload }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const months = futureSnapshotMonths(state);
+  if (months.length === 0) return null;
+  return (
+    <div className="future-snapshot-warning">
+      <b>まだ来ていない月が「確定」になっています</b>
+      <p>来月以降の月末資産は実際の残高ではないので、計算には使っていません。その月が来ると古い金額がそのまま使われてしまうので、取り消してください。</p>
+      {months.map((month) => (
+        <div className="future-snapshot-row" key={month}>
+          <span>{formatMonthLabel(month)}（{yen.format(state.assetSnapshots.filter((snapshot) => snapshot.month === month).reduce((sum, snapshot) => sum + snapshot.amount, 0))}）</span>
+          <button type="button" onClick={async () => {
+            try {
+              await deleteAssetSnapshotsForMonth(state.householdId ?? "", month);
+              await reload();
+              setNotice(`${formatMonthLabel(month)}の確定を取り消しました。`);
+            } catch (error) { setNotice(toJapaneseError(error, "月末資産の取り消しに失敗しました。")); }
+          }}>確定を取り消す</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AssetSnapshotSettings({ state, setNotice, reloadHousehold }: { state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void> }) {
   const defaultMonth = state.assetSnapshots[0]?.month ?? todayIso().slice(0, 7);
   const currentMonth = todayIso().slice(0, 7);
@@ -6268,6 +6294,7 @@ function AssetSnapshotSettings({ state, setNotice, reloadHousehold }: { state: L
       <div className="section-title"><h2>月末資産一覧</h2><span>確定・再変更</span></div>
       <p className="setting-copy">確定済みの月末資産を確認できます。金額を変更すると、その月以降の残高計算にも反映されます。</p>
       <label>追加・変更する月<input type="month" value={targetMonth} max={currentMonth} onChange={(event) => setTargetMonth(event.target.value > currentMonth ? currentMonth : event.target.value)} /></label>
+      <FutureSnapshotNotice state={state} setNotice={setNotice} reload={() => reloadHousehold(state.householdId ?? "")} />
       <div className="snapshot-settings-list">
         {months.map((month) => {
           const count = state.assetSnapshots.filter((snapshot) => snapshot.month === month).length;

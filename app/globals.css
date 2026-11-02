@@ -5879,3 +5879,10 @@ button.settings-row:active { background: var(--tint); }
 .bb-row.total { border-top: 1.5px solid var(--ink) !important; font-weight: 700; }
 .bb-row.total b { font-size: 15px; }
 .bb-row.empty span { color: var(--muted); font-size: 12px; }
+
+/* 来月以降の月末資産が確定されているときの警告 */
+.future-snapshot-warning { display: grid; gap: 8px; padding: 12px 14px; margin: 4px 0 12px; border: 1.5px solid var(--stamp); border-radius: 12px; background: color-mix(in srgb, var(--stamp) 7%, var(--panel)); }
+.future-snapshot-warning b { font-size: 14px; color: var(--stamp); }
+.future-snapshot-warning p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--ink-soft); }
+.future-snapshot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--ink); }
+.future-snapshot-row button { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--stamp); background: var(--panel); color: var(--stamp); font-weight: 700; font-size: 12px; }
