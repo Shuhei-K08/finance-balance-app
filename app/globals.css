@@ -5770,7 +5770,7 @@ button.settings-row:active { background: var(--tint); }
 .settings-row.total-row .settings-row-text small { white-space: normal; overflow: visible; }
 
 /* ===== 家計簿間の資金移動 ===== */
-.bottom-sheet .transfer-scope { margin-top: -2px; }
+.bottom-sheet .transfer-scope { margin-top: -2px; flex-shrink: 0; min-height: 34px; }
 .ledger-transfer { display: grid; gap: 10px; }
 .ledger-transfer-side { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--paper, var(--panel)); }
 .ledger-transfer-side > label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
