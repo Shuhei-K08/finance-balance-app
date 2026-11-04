@@ -379,6 +379,11 @@ export default function App() {
   }, [monthSlide, calendarMonth]);
   function onMonthSwipeStart(event: React.TouchEvent) {
     const target = event.target as HTMLElement;
+    // 登録画面や詳細などのシート・モーダルが開いている間は、後ろの画面の月を動かさない
+    if (document.querySelector(".sheet-backdrop, .settings-sheet, .modal-panel")) {
+      swipeStart.current = null;
+      return;
+    }
     // 横にスクロールする部品や入力欄、開いているシートの上では月を動かさない
     if (event.touches.length !== 1 || target.closest("input, textarea, select, .bottom-sheet, .sheet-backdrop, .modal-panel, .chip-rows-scroll, .template-strip, .recharts-wrapper, .table-scroll, [data-no-swipe]")) {
       swipeStart.current = null;

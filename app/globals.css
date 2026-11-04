@@ -5906,3 +5906,9 @@ button.settings-row:active { background: var(--tint); }
 @media (prefers-reduced-motion: reduce) {
   .app-main.month-slide-next > *, .app-main.month-slide-prev > * { animation: none !important; }
 }
+
+/* ===== シートやモーダルが開いている間は、後ろの画面をスクロールさせない ===== */
+html:has(.sheet-backdrop), html:has(.sheet-backdrop) body,
+html:has(.settings-sheet), html:has(.settings-sheet) body { overflow: hidden; overscroll-behavior: none; }
+.sheet-backdrop { overscroll-behavior: contain; }
+.bottom-sheet, .modal-panel, .settings-sheet, .settings-sheet-body { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
