@@ -1323,6 +1323,33 @@ function HomeView({
         </div>
       </section>
 
+      <section className={`panel asset-link${assetsHidden ? " assets-hidden" : ""}`}>
+        {isSnapshotConfirmed && (
+          <div className="hanko" aria-label={`${monthLabel}の月末資産は確定済み`}>
+            <b>確定</b>
+            <i>{Number(calendarMonth.slice(5, 7))}.{new Date(Number(calendarMonth.slice(0, 4)), Number(calendarMonth.slice(5, 7)), 0).getDate()}</i>
+          </div>
+        )}
+        <div className="panel-title">
+          <h2>{isSnapshotConfirmed ? `${monthLabel}末の総資産` : isCurrentMonth ? "月末の予定総資産" : `${monthLabel}の総資産`}</h2>
+          {!assetsHidden && Math.abs(monthChange) > 0 && (
+            <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
+              {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+              {monthChange > 0 ? "+" : ""}{yen.format(monthChange)}
+            </span>
+          )}
+        </div>
+        <div className="amount asset-link-amount"><span className="yen">¥</span>{balanceAmount(displayAssets)}</div>
+        <div className="asset-link-rows">
+          <button type="button" onClick={() => setShowAllAccounts(true)}>
+            <Wallet size={16} /><span>口座</span><strong className="kpi-value">{balanceAmount(accountAssets)}</strong><ChevronRight size={16} />
+          </button>
+          <button type="button" onClick={() => onNavigate("investments")}>
+            <LineChartIcon size={16} /><span>投資</span><strong className="kpi-value">{balanceAmount(investmentTotal)}</strong><ChevronRight size={16} />
+          </button>
+        </div>
+      </section>
+
       {shouldShowSnapshotPanel && (
         <AssetSnapshotPanel
           state={state}
@@ -1369,32 +1396,6 @@ function HomeView({
         </section>
       )}
 
-      <section className={`panel asset-link${assetsHidden ? " assets-hidden" : ""}`}>
-        {isSnapshotConfirmed && (
-          <div className="hanko" aria-label={`${monthLabel}の月末資産は確定済み`}>
-            <b>確定</b>
-            <i>{Number(calendarMonth.slice(5, 7))}.{new Date(Number(calendarMonth.slice(0, 4)), Number(calendarMonth.slice(5, 7)), 0).getDate()}</i>
-          </div>
-        )}
-        <div className="panel-title">
-          <h2>{isSnapshotConfirmed ? `${monthLabel}末の総資産` : isCurrentMonth ? "月末の予定総資産" : `${monthLabel}の総資産`}</h2>
-          {!assetsHidden && Math.abs(monthChange) > 0 && (
-            <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
-              {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {monthChange > 0 ? "+" : ""}{yen.format(monthChange)}
-            </span>
-          )}
-        </div>
-        <div className="amount asset-link-amount"><span className="yen">¥</span>{plainAmount(displayAssets)}</div>
-        <div className="asset-link-rows">
-          <button type="button" onClick={() => setShowAllAccounts(true)}>
-            <Wallet size={16} /><span>口座</span><strong className="kpi-value">{plainAmount(accountAssets)}</strong><ChevronRight size={16} />
-          </button>
-          <button type="button" onClick={() => onNavigate("investments")}>
-            <LineChartIcon size={16} /><span>投資</span><strong className="kpi-value">{plainAmount(investmentTotal)}</strong><ChevronRight size={16} />
-          </button>
-        </div>
-      </section>
 
       {homeEntryModal && (
         <HomeEntryModal
@@ -1642,6 +1643,11 @@ function accountTypeLabel(type: AccountType) {
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
 
 // 通帳の印字風：¥ を付けない桁区切りの数字
+// 残高や総資産のように、マイナスもありうる金額（マイナスなら「−」を付ける）
+function balanceAmount(value: number) {
+  return `${Math.round(value) < 0 ? "−" : ""}${plainAmount(value)}`;
+}
+
 function plainAmount(value: number) {
   return Math.abs(Math.round(value)).toLocaleString("ja-JP");
 }
@@ -3618,7 +3624,7 @@ function AnalysisView({
           <section className="asset-hero">
             {snapshotConfirmed && <div className="hanko small"><b>確定</b><i>{Number(monthKey.slice(5, 7))}.{monthEndDay}</i></div>}
             <div className="asset-hero-label">{snapshotConfirmed ? `${monthLabel}末の総資産` : monthKey === currentMonthKey ? "月末の予定総資産" : `${monthLabel}の総資産`}</div>
-            <div className="amount asset-hero-amount"><span className="yen">¥</span>{plainAmount(grandTotal)}</div>
+            <div className="amount asset-hero-amount"><span className="yen">¥</span>{balanceAmount(grandTotal)}</div>
             <div className="asset-hero-delta">前月から <b className={totalDelta >= 0 ? "pos" : "neg"}>{totalDelta >= 0 ? "+" : "−"}{plainAmount(totalDelta)}</b>{prevTotal > 0 && <>（{totalDelta >= 0 ? "+" : "−"}{Math.abs((totalDelta / prevTotal) * 100).toFixed(1)}%）</>}</div>
             {grandTotal > 0 && (
               <div className="compo">
@@ -3629,8 +3635,8 @@ function AnalysisView({
                   {investTotal > 0 && <i className="invest" title="投資" style={{ width: `${(investTotal / grandTotal) * 100}%` }} />}
                 </div>
                 <div className="compo-keys">
-                  <span><i style={{ background: "var(--ink)" }} />口座 <b className="num">{plainAmount(accountTotal)}</b></span>
-                  {(state.investmentAccounts ?? []).length > 0 && <span><i className="invest" />投資 <b className="num">{plainAmount(investTotal)}</b></span>}
+                  <span><i style={{ background: "var(--ink)" }} />口座 <b className="num">{balanceAmount(accountTotal)}</b></span>
+                  {(state.investmentAccounts ?? []).length > 0 && <span><i className="invest" />投資 <b className="num">{balanceAmount(investTotal)}</b></span>}
                 </div>
               </div>
             )}
@@ -3652,7 +3658,7 @@ function AnalysisView({
             <div className="chart-legend"><span><i className="box" style={{ background: "var(--chart-acc)" }} />口座</span>{(state.investmentAccounts ?? []).length > 0 && <span><i className="box" style={{ background: "var(--chart-inv)" }} />投資</span>}{showForecast && <span><i className="dash" />来月末の予測</span>}</div>
           </section>
 
-          <div className="settings-sec-h"><span>口座</span><b className="num">{plainAmount(accountTotal)}</b></div>
+          <div className="settings-sec-h"><span>口座</span><b className="num">{balanceAmount(accountTotal)}</b></div>
           <div className="settings-list">
             {accountBalances.map(({ account, balance }) => (
               <button type="button" className="settings-row account-item" key={account.id} onClick={() => setSelectedAccountHistoryId(account.id)}>
@@ -3698,7 +3704,7 @@ function AnalysisView({
                 <div className="settings-row account-item no-chev total-row">
                   <span />
                   <span className="settings-row-text"><b>引落後に使える口座残高</b><small>{pendingNotInBalance > 0 ? "月末の予定残高から、来月以降の引落分を差し引いた額" : "今月の引落は口座の金額に反映済みです"}</small></span>
-                  <span className="settings-amount num">{plainAmount(accountTotal - pendingNotInBalance)}</span>
+                  <span className="settings-amount num">{balanceAmount(accountTotal - pendingNotInBalance)}</span>
                 </div>
               </div>
             </>
@@ -3711,7 +3717,7 @@ function AnalysisView({
                 <button type="button" className="settings-row account-item" onClick={() => onNavigate("investments")}>
                   <span className="passbook-mark" style={{ background: "#5A4386" }}>投</span>
                   <span className="settings-row-text"><b>投資の評価額</b><small>{(state.investmentAccounts ?? []).length}口座／含み益 {investGain >= 0 ? "+" : "−"}{plainAmount(investGain)}</small></span>
-                  <span className="settings-amount num">{plainAmount(investTotal)}</span>
+                  <span className="settings-amount num">{balanceAmount(investTotal)}</span>
                   <ChevronRight size={16} className="settings-chev" />
                 </button>
               </div>
@@ -4260,7 +4266,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
     return (
       <div className="chart-tip">
         <b>{label}</b>
-        {payload.map((item) => <div key={String(item.dataKey)}><span><i style={{ background: item.color }} />{item.name}</span><em className="num">{item.dataKey === "rate" ? `${Number(item.value).toFixed(1)}%` : plainAmount(Number(item.value))}</em></div>)}
+        {payload.map((item) => <div key={String(item.dataKey)}><span><i style={{ background: item.color }} />{item.name}</span><em className="num">{item.dataKey === "rate" ? `${Number(item.value).toFixed(1)}%` : balanceAmount(Number(item.value))}</em></div>)}
       </div>
     );
   };
@@ -4294,7 +4300,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
       {cur && (
         <section className="asset-hero">
           <div className="asset-hero-label">{heroMonthNum}月末の評価額{!fullyRecorded && <span className="hero-tag">{cur.recordedCount > 0 ? "一部見込み" : "見込み"}</span>}</div>
-          <div className="amount asset-hero-amount"><span className="yen">¥</span>{plainAmount(cur.monthEndValue)}</div>
+          <div className="amount asset-hero-amount"><span className="yen">¥</span>{balanceAmount(cur.monthEndValue)}</div>
           <div className="asset-hero-delta">含み益 <b className={cur.unrealizedGain >= 0 ? "pos" : "neg"}>{signedAmount(cur.unrealizedGain)}</b>（{signedRate(gainRate)}）</div>
           <div className="hero-kpis">
             <div><span>投資した元金</span><b className="num">{plainAmount(cur.cumulativePrincipal)}</b></div>
@@ -4363,7 +4369,7 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
                       <td colSpan={3} className="write-cell"><span className="write-chip">記入する</span></td>
                     ) : (
                       <>
-                        <td>{plainAmount(row.monthEndValue)}</td>
+                        <td>{balanceAmount(row.monthEndValue)}</td>
                         <td className={row.profit >= 0 ? "pos" : "neg"}>{signedAmount(row.profit)}</td>
                         <td className={row.monthlyReturnRate >= 0 ? "pos" : "neg"}>{signedRate(row.monthlyReturnRate)}</td>
                       </>
@@ -4410,8 +4416,8 @@ function InvestmentsView({ state, monthKey, setNotice, reload }: { state: Ledger
               {yearRows.map((row) => (
                 <tr key={row.year}>
                   <td>{row.year}</td>
-                  <td>{plainAmount(row.endValue)}</td>
-                  <td>{plainAmount(row.monthlyContribution + row.additionalInvestment - row.saleAmount)}</td>
+                  <td>{balanceAmount(row.endValue)}</td>
+                  <td>{balanceAmount(row.monthlyContribution + row.additionalInvestment - row.saleAmount)}</td>
                   <td className={row.profit >= 0 ? "pos" : "neg"}>{signedAmount(row.profit)}</td>
                   <td className={row.returnRate >= 0 ? "pos" : "neg"}>{signedRate(row.returnRate)}</td>
                 </tr>
