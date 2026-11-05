@@ -769,10 +769,8 @@ create policy "households owner update" on households
 
 create policy "household members select own household" on household_members
   for select using (user_id = auth.uid() or public.is_household_member(household_id) or public.is_admin());
-create policy "household members owner insert" on household_members
-  for insert with check (user_id = auth.uid() and public.owns_household(household_id));
-create policy "household members self join shared" on household_members
-  for insert with check (user_id = auth.uid());
+-- メンバーの追加は招待コードを確かめる関数（join_shared_ledger など）からだけ行う。
+-- 直接追加できるポリシーは置かない（家計簿IDを知っているだけで参加できてしまうため）
 create policy "household members owner update" on household_members
   for update using (public.owns_household(household_id) or public.is_admin())
   with check (public.owns_household(household_id) or public.is_admin());
