@@ -6047,3 +6047,6 @@ div.tax-add select, .pension-sheet select { background: var(--panel); color: var
 .tax-delete-confirm div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .tax-delete-confirm button { min-height: 40px; margin: 0; }
 .tax-delete-confirm .danger-fill { border: 0; border-radius: 10px; background: var(--stamp); color: #fff; font: inherit; font-weight: 700; }
+
+/* 税金・社会保険を追加：一覧の上（サマリーのすぐ下） */
+button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-style: solid; border-width: 1px; background: var(--panel); color: var(--ink); }

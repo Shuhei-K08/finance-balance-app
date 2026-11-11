@@ -6011,6 +6011,7 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
         )}
       </section>
 
+      <button type="button" className="tax-add top" onClick={() => setAdding("resident_tax")}><Plus size={16} /> 税金・社会保険を追加</button>
       <div className="tax-chips" role="tablist" aria-label="税金の種類で絞り込み">
         <button type="button" className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>すべて</button>
         {TAX_KIND_ORDER.map((kind) => (
@@ -6082,7 +6083,6 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
 
       {showPast && pastMonths.length > 0 && <button type="button" className="tax-fold-close" onClick={() => setShowPast(false)}>支払い済みの月をたたむ</button>}
 
-      <button type="button" className="tax-add" onClick={() => setAdding("resident_tax")}><Plus size={16} /> 税金・社会保険を追加</button>
       <p className="settings-note">金額は定期項目と連動していて、口座の残高見込みにも入ります。国保・住民税の金額と回数は、6月ごろ届く通知書の内容に合わせて変えてください。行をタップすると、金額や日付を直せます。</p>
 
       {adding && <TaxAddSheet state={state} startYear={startYear} initialKind={adding} setNotice={setNotice} reload={reload} onClose={() => setAdding(null)} />}
