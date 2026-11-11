@@ -858,6 +858,7 @@ export default function App() {
             setTheme={setTheme}
             onOpenTour={openTour}
             onOpenAdmin={() => setTab("admin")}
+            onOpenTaxes={() => { setTab("taxes"); window.scrollTo(0, 0); }}
             onSignOut={() => signOut().catch((error) => setNotice(toJapaneseError(error)))}
           />
         )}
@@ -4860,6 +4861,7 @@ function SettingsView({
   setTheme,
   onOpenTour,
   onOpenAdmin,
+  onOpenTaxes,
   onSignOut
 }: {
   state: LedgerState;
@@ -4872,8 +4874,11 @@ function SettingsView({
   setTheme: (theme: ThemeMode) => void;
   onOpenTour: () => void;
   onOpenAdmin: () => void;
+  onOpenTaxes?: () => void;
   onSignOut: () => void;
 }) {
+  const [taxAddKind, setTaxAddKind] = useState<TaxKind | null>(null);
+  const isBusinessLedger = state.activeSpace === "shared" && state.ledgerPurpose === "business";
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [showCreateShared, setShowCreateShared] = useState(false);
   const [creatingShared, setCreatingShared] = useState(false);
@@ -5399,8 +5404,22 @@ function SettingsView({
       )}
       {settingsTab === "fixed" && (
       <>
-        <FixedCostsOverview state={state} onEdit={(id) => setFixedEditId(id)} />
+        <FixedCostsOverview state={state} onEdit={(id) => setFixedEditId(id)} onOpenTaxes={onOpenTaxes} />
+        {taxAddKind && <TaxAddSheet state={state} startYear={fiscalStartYear(todayIso().slice(0, 7))} initialKind={taxAddKind} setNotice={setNotice} reload={reload} onClose={() => setTaxAddKind(null)} />}
         {showFixedForm && <SettingsSheet title="定期項目を追加" onClose={() => setShowFixedForm(false)}><div className="crud-form">
+          {isBusinessLedger && (
+            <div className="tax-templates">
+              <span>よく使う税金・社会保険</span>
+              <div>
+                {TAX_KIND_ORDER.map((kind) => (
+                  <button key={kind} type="button" onClick={() => { setShowFixedForm(false); setTaxAddKind(kind); }}>
+                    <i style={{ background: TAX_KIND_META[kind].color }}>{TAX_KIND_META[kind].mark}</i>{TAX_KIND_META[kind].label}
+                  </button>
+                ))}
+              </div>
+              <small>選ぶと、払う月と回数が入った状態で登録画面が開きます。</small>
+            </div>
+          )}
           <label>種類<select value={newFixed.kind} onChange={(event) => {
             const nextKind = event.target.value as TransactionType;
             setNewFixed({ ...newFixed, kind: nextKind, categoryId: nextKind === "income" ? firstIncomeCategoryId : nextKind === "expense" ? firstExpenseCategoryId : "", transferToAccountId: nextKind === "transfer" ? state.accounts.filter((account) => account.type !== "credit").find((account) => account.id !== newFixed.accountId)?.id ?? "" : "" });
@@ -5912,7 +5931,7 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
   const currentMonth = today.slice(0, 7);
   const [filter, setFilter] = useState<TaxKind | "all">("all");
   const [showPast, setShowPast] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<TaxKind | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pensionId, setPensionId] = useState<string | null>(null);
 
@@ -5975,6 +5994,15 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
         <div className="tax-empty">
           <b>まだ税金・社会保険が登録されていません</b>
           <p>住民税・国民健康保険・所得税・国民年金を登録すると、4月から翌3月まで、いつ・いくら払うかが月ごとに並びます。事業用の口座の残高見込みにも入ります。</p>
+          <div className="tax-templates inline">
+            <div>
+              {TAX_KIND_ORDER.map((kind) => (
+                <button key={kind} type="button" onClick={() => setAdding(kind)}>
+                  <i style={{ background: TAX_KIND_META[kind].color }}>{TAX_KIND_META[kind].mark}</i>{TAX_KIND_META[kind].label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -6026,10 +6054,10 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
 
       {showPast && pastMonths.length > 0 && <button type="button" className="tax-fold-close" onClick={() => setShowPast(false)}>支払い済みの月をたたむ</button>}
 
-      <button type="button" className="tax-add" onClick={() => setAdding(true)}><Plus size={16} /> 税金・社会保険を追加</button>
+      <button type="button" className="tax-add" onClick={() => setAdding("resident_tax")}><Plus size={16} /> 税金・社会保険を追加</button>
       <p className="settings-note">金額は定期項目と連動していて、口座の残高見込みにも入ります。国保・住民税の金額と回数は、6月ごろ届く通知書の内容に合わせて変えてください。行をタップすると、金額や日付を直せます。</p>
 
-      {adding && <TaxAddSheet state={state} startYear={startYear} setNotice={setNotice} reload={reload} onClose={() => setAdding(false)} />}
+      {adding && <TaxAddSheet state={state} startYear={startYear} initialKind={adding} setNotice={setNotice} reload={reload} onClose={() => setAdding(null)} />}
       {detailCost && (
         <SettingsSheet title={TAX_KIND_META[detailCost.taxKind as TaxKind]?.label ?? "税金"} onClose={() => setDetailId(null)}>
           <FixedCostDetail key={detailCost.id} cost={detailCost} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onClose={() => setDetailId(null)} />
@@ -6048,9 +6076,9 @@ function splitEvenly(total: number, count: number) {
   return Array.from({ length: count }, (_, index) => (index === 0 ? total - each * (count - 1) : each));
 }
 
-function TaxAddSheet({ state, startYear, setNotice, reload, onClose }: { state: LedgerState; startYear: number; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice, reload, onClose }: { state: LedgerState; startYear: number; initialKind?: TaxKind; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
   const normalAccounts = sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"));
-  const [kind, setKind] = useState<TaxKind>("resident_tax");
+  const [kind, setKind] = useState<TaxKind>(initialKind);
   const [incomeMode, setIncomeMode] = useState<"prepay" | "final">("prepay");
   const [yearTotal, setYearTotal] = useState(0);
   const [items, setItems] = useState<TaxDraftItem[]>([]);
@@ -6305,7 +6333,41 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
   );
 }
 
-function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id: string) => void }) {
+// 定期項目の一覧に出す「税金・社会保険」のまとまり（種類ごとに1行）
+function TaxFixedGroup({ state, onOpenTaxes }: { state: LedgerState; onOpenTaxes?: () => void }) {
+  const today = todayIso();
+  const startYear = fiscalStartYear(today.slice(0, 7));
+  const months = fiscalMonths(startYear);
+  const rows = TAX_KIND_ORDER.map((kind) => {
+    const costs = state.fixedCosts.filter((cost) => cost.taxKind === kind);
+    if (costs.length === 0) return null;
+    const occurrences = months.flatMap((month) => fixedCostOccurrencesForMonth(costs, month, state));
+    const total = occurrences.reduce((sum, item) => sum + item.amount, 0);
+    const next = occurrences.filter((item) => item.date >= today && item.amount > 0).sort((a, b) => a.date.localeCompare(b.date))[0];
+    const monthly = costs.find((cost) => !isTaxInstallment(cost));
+    const sub = monthly && kind === "pension" ? `毎月 ${plainAmount(monthly.amount)}円` : `${startYear}年度 年${occurrences.length}回`;
+    return { kind, total, next, sub };
+  }).filter((row): row is NonNullable<typeof row> => Boolean(row));
+  if (rows.length === 0) return null;
+  return (
+    <div>
+      <div className="settings-sec-h"><span>税金・社会保険</span><span>{startYear}年度 計 {plainAmount(rows.reduce((sum, row) => sum + row.total, 0))}</span></div>
+      <div className="settings-list">
+        {rows.map((row) => (
+          <button key={row.kind} type="button" className="settings-row fixed-item" onClick={() => onOpenTaxes?.()}>
+            <span className="tax-mark" style={{ background: TAX_KIND_META[row.kind].color }}>{TAX_KIND_META[row.kind].mark}</span>
+            <span className="settings-row-text"><b>{TAX_KIND_META[row.kind].label}</b><small>{row.sub}{row.next ? `・次 ${shortDate(row.next.date)}` : ""}</small></span>
+            <span className="settings-amount num">{plainAmount(row.total)}</span>
+            <ChevronRight size={16} className="settings-chev" />
+          </button>
+        ))}
+      </div>
+      <p className="settings-note">タップすると 資産 › 税金 で、1回ごとの支払い日と金額を確認・変更できます。</p>
+    </div>
+  );
+}
+
+function FixedCostsOverview({ state, onEdit, onOpenTaxes }: { state: LedgerState; onEdit: (id: string) => void; onOpenTaxes?: () => void }) {
   const currentMonth = todayIso().slice(0, 7);
   // 税金の1回ごとの納付は「資産 › 税金」で管理するので、ここには出さない
   const listed = state.fixedCosts.filter((cost) => !isTaxInstallment(cost));
@@ -6353,7 +6415,7 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
         <div><span>毎月の支出</span><b className="num">{plainAmount(expense)}</b></div>
         <div><span>差し引き</span><b className={`num ${income - expense >= 0 ? "pos" : "neg"}`}>{income - expense > 0 ? "+" : income - expense < 0 ? "−" : ""}{plainAmount(income - expense)}</b></div>
       </div>
-      {taxInstallmentCount > 0 && <p className="settings-note">税金の納付（{taxInstallmentCount}件）は、資産 › 税金 で管理しています。</p>}
+      <TaxFixedGroup state={state} onOpenTaxes={onOpenTaxes} />
       {installmentList.length > 0 && (
         <div>
           <div className="settings-sec-h"><span>ローン・分割払い</span><span>残り {plainAmount(installmentList.reduce((total, item) => total + item.info.remainingAmount, 0))}</span></div>
@@ -6382,7 +6444,7 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
         </div>
       )}
       {groups.map(({ kind, label }) => {
-        const rows = active.filter((cost) => cost.kind === kind && !installmentIds.has(cost.id)).sort((a, b) => a.dueDay - b.dueDay);
+        const rows = active.filter((cost) => cost.kind === kind && !installmentIds.has(cost.id) && !cost.taxKind).sort((a, b) => a.dueDay - b.dueDay);
         if (rows.length === 0) return null;
         return (
           <div key={kind}>
@@ -7311,12 +7373,14 @@ function FixedCostDetail({ cost, state, setNotice, reloadHousehold, onClose }: {
   const transferTo = state.accounts.find((item) => item.id === cost.transferToAccountId);
   const isLedger = Boolean(cost.transferGroupId);
   const isIn = cost.transferDirection === "in";
-  const kindLabel = isLedger ? (isIn ? "資金移動（受け取り）" : "資金移動") : cost.kind === "income" ? "定期収入" : cost.kind === "transfer" ? "定期振替" : "定期支出";
+  const kindLabel = cost.taxKind ? TAX_KIND_META[cost.taxKind].label : isLedger ? (isIn ? "資金移動（受け取り）" : "資金移動") : cost.kind === "income" ? "定期収入" : cost.kind === "transfer" ? "定期振替" : "定期支出";
   const dayLabel = isLedger ? "移動日" : cost.kind === "income" ? "入金日" : cost.kind === "transfer" ? "振替日" : "支払日";
   const info = cost.kind !== "income" && !isLedger ? installmentInfo(state, cost) : null;
   const rows: Array<[string, React.ReactNode]> = [
     ["種類", kindLabel],
-    [dayLabel, `毎月${cost.dueDay}日`]
+    isTaxInstallment(cost)
+      ? ["支払日", `${(cost.effectiveFrom ?? "").slice(0, 4)}年${Number((cost.effectiveFrom ?? "").slice(5, 7))}月${cost.dueDay}日`]
+      : [dayLabel, `毎月${cost.dueDay}日`]
   ];
   if (cost.categoryId || (cost.kind !== "transfer" && !isLedger)) rows.push(["カテゴリ", categoryPathLabel(state, cost.categoryId) || "なし"]);
   if (isLedger) {
@@ -7327,7 +7391,7 @@ function FixedCostDetail({ cost, state, setNotice, reloadHousehold, onClose }: {
     rows.push([cost.kind === "income" ? "入金先" : cost.kind === "transfer" ? "振替元" : "支払元", account ? <span className="fixed-detail-acct"><AccountMark account={account} size="sm" />{account.name}</span> : "未設定"]);
     if (cost.kind === "transfer") rows.push(["振替先", transferTo ? <span className="fixed-detail-acct"><AccountMark account={transferTo} size="sm" />{transferTo.name}</span> : "未設定"]);
   }
-  rows.push(["期間", `${cost.effectiveFrom ? formatMonthLabel(cost.effectiveFrom.slice(0, 7)) : "開始月なし"} 〜 ${cost.effectiveTo ? formatMonthLabel(cost.effectiveTo.slice(0, 7)) : "ずっと続く"}`]);
+  if (!isTaxInstallment(cost)) rows.push(["期間", `${cost.effectiveFrom ? formatMonthLabel(cost.effectiveFrom.slice(0, 7)) : "開始月なし"} 〜 ${cost.effectiveTo ? formatMonthLabel(cost.effectiveTo.slice(0, 7)) : "ずっと続く"}`]);
   if (info) rows.push(["支払い回数", `残り ${info.remaining}/${info.total}回（残り ${plainAmount(info.remainingAmount)}円）`]);
   if (cost.memo) rows.push(["メモ", <span className="fixed-detail-memo">{cost.memo}</span>]);
   return (
@@ -7441,6 +7505,9 @@ function LedgerFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone
 
 function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone, onCancel }: { cost: LedgerState["fixedCosts"][number]; state: LedgerState; setNotice: (message: string) => void; reloadHousehold: (householdId: string) => Promise<void>; onDone: () => void; onCancel?: () => void }) {
   const [draft, setDraft] = useState(cost);
+  // 税金の1回分（その月だけの項目）は「支払日」を年月日で直す
+  const oneOff = isTaxInstallment(cost);
+  const oneOffDate = `${(draft.effectiveFrom ?? todayIso()).slice(0, 7)}-${String(Math.min(draft.dueDay, lastDayOfMonth((draft.effectiveFrom ?? todayIso()).slice(0, 7)))).padStart(2, "0")}`;
   const hasOtherLedgers = (state.households ?? []).some((ledger) => ledger.id !== state.householdId);
   const [transferScope, setTransferScope] = useState<"self" | "ledger">("self");
   const [dest, setDest] = useState<LedgerDestination>(() => { const memory = readLedgerTransferMemory(state.householdId); return { toHouseholdId: memory.toHouseholdId, toAccountId: memory.toAccountId, fromCategoryId: memory.fromCategoryId, toCategoryId: memory.toCategoryId, countAsExpense: memory.countAsExpense, countAsIncome: memory.countAsIncome }; });
@@ -7509,10 +7576,10 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
       setNotice(scope === "future" ? "指定月以降を家計簿間の資金移動に変更しました（相手の家計簿にも登録）。" : "家計簿間の資金移動に変更しました（相手の家計簿にも登録）。");
     } catch (error) { setNotice(toJapaneseError(error, "資金移動への変更に失敗しました。")); }
   }
-  async function savePlain(allowOverdraft: boolean) { if (toLedger) { await saveAsLedger(allowOverdraft); return; } try { if (draft.kind !== "transfer" && !draft.categoryId) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } if (draft.kind === "transfer" && !allowOverdraft) { const nextDate = nextFixedOccurrenceDate(draft.dueDay, scope === "future" ? `${fromMonth}-01` : draft.effectiveFrom, draft.effectiveTo); const info = nextDate ? overdraftFor({ ...state, fixedCosts: state.fixedCosts.filter((item) => item.id !== cost.id) }, draft.accountId, draft.amount, nextDate, undefined, true) : null; if (info) { setOverdraft(info); return; } } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }
+  async function savePlain(allowOverdraft: boolean) { if (toLedger) { await saveAsLedger(allowOverdraft); return; } try { if (draft.kind !== "transfer" && !draft.categoryId && !draft.taxKind) { setNotice(draft.kind === "income" ? "固定収入のカテゴリを選択してください。" : "固定費のカテゴリを選択してください。"); return; } if (!draft.accountId) { setNotice(draft.kind === "income" ? "固定収入の入金先を選択してください。" : draft.kind === "transfer" ? "定期振替の振替元を選択してください。" : "固定費の支払元を選択してください。"); return; } if (draft.kind === "transfer" && !draft.transferToAccountId) { setNotice("定期振替の振替先を選択してください。"); return; } if (draft.kind === "transfer" && !allowOverdraft) { const nextDate = nextFixedOccurrenceDate(draft.dueDay, scope === "future" ? `${fromMonth}-01` : draft.effectiveFrom, draft.effectiveTo); const info = nextDate ? overdraftFor({ ...state, fixedCosts: state.fixedCosts.filter((item) => item.id !== cost.id) }, draft.accountId, draft.amount, nextDate, undefined, true) : null; if (info) { setOverdraft(info); return; } } const updateScope = onlyEndMonthChanged ? "all" : scope; await updateFixedCost(cost.id, { ...draft, status: "planned" }, updateScope, fromMonth); await reloadHousehold(state.householdId ?? ""); onDone(); setNotice(updateScope === "future" ? "指定月以降の固定項目を更新しました。" : "固定項目を更新しました。"); } catch (error) { setNotice(toJapaneseError(error, "固定項目更新に失敗しました。")); } }
   return (
     <div className="edit-row">
-      <div className="fixed-kind-field">
+      {!oneOff && <div className="fixed-kind-field">
         <span>種類</span>
         <div className="segmented compact" role="tablist" aria-label="定期項目の種類">
           {(["expense", "income", "transfer"] as TransactionType[]).map((kind) => (
@@ -7520,7 +7587,7 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
           ))}
         </div>
         {draft.kind !== cost.kind && <small>{cost.kind === "expense" ? "支出" : cost.kind === "income" ? "収入" : "振替"}から{draft.kind === "expense" ? "支出" : draft.kind === "income" ? "収入" : "振替"}に変わります。{draft.kind === "transfer" ? "振替先を選んでください。" : "カテゴリを選び直してください。"}</small>}
-      </div>
+      </div>}
       <label>項目名<input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} /></label>
       <label>金額<input type="number" value={numberInputValue(draft.amount)} onChange={(event) => setDraft({ ...draft, amount: Number(event.target.value || 0) })} /></label>
       {draft.kind !== "transfer" && <label>カテゴリ<select value={draft.categoryId} onChange={(event) => setDraft({ ...draft, categoryId: event.target.value })}><option value="">選択してください</option><CategoryOptions categories={state.categories} kind={draft.kind} /></select></label>}
@@ -7533,6 +7600,9 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
       )}
       {toLedger && <div className="fixed-ledger-dest"><LedgerDestinationFields state={state} value={dest} onChange={setDest} recurring /></div>}
       {draft.kind === "transfer" && !toLedger && <label>振替先<AccountSelect value={draft.transferToAccountId ?? ""} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={state.accounts.filter((account) => account.type !== "credit" && account.id !== draft.accountId)} placeholder="選択してください" /></label>}
+      {oneOff ? (
+        <label>支払日<input type="date" value={oneOffDate} onChange={(event) => { const value = event.target.value; if (!value) return; setDraft({ ...draft, effectiveFrom: `${value.slice(0, 7)}-01`, effectiveTo: `${value.slice(0, 7)}-01`, dueDay: Number(value.slice(8, 10)) }); }} /></label>
+      ) : (<>
       <label>{draft.kind === "income" ? "入金日" : draft.kind === "transfer" ? "振替日" : "支払日"}<input type="number" min="1" max="31" value={numberInputValue(draft.dueDay)} onChange={(event) => setDraft({ ...draft, dueDay: Number(event.target.value || 0) })} /></label>
       <label>開始月<input type="month" value={(draft.effectiveFrom ?? todayIso()).slice(0, 7)} onChange={(event) => setDraft({ ...draft, effectiveFrom: `${event.target.value}-01` })} /></label>
       <InstallmentFields
@@ -7540,9 +7610,12 @@ function PlainFixedCostEditor({ cost, state, setNotice, reloadHousehold, onDone,
         endMonth={draft.effectiveTo?.slice(0, 7)}
         onChange={(end) => setDraft({ ...draft, effectiveTo: end ? `${end}-01` : undefined })}
       />
+      </>)}
       <label className="fixed-memo-field">メモ<textarea className="memo-input" rows={2} placeholder="例: 年1回の更新料込み" value={draft.memo ?? ""} onChange={(event) => setDraft({ ...draft, memo: event.target.value })} /></label>
+      {!oneOff && <>
       <label>削除・変更の範囲<select value={scope} onChange={(event) => setScope(event.target.value as "all" | "future")}><option value="all">過去分も含めてすべてに反映</option><option value="future">指定した月以降だけに反映</option></select></label>
       {scope === "future" && <label>指定月<input type="month" value={fromMonth} onChange={(event) => setFromMonth(event.target.value)} /></label>}
+      </>}
       {overdraft
         ? <OverdraftConfirm info={overdraft} onCancel={() => setOverdraft(null)} onConfirm={() => savePlain(true)} />
         : <button onClick={() => savePlain(false)}>変更を保存</button>}
