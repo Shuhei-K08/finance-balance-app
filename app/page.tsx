@@ -5890,7 +5890,7 @@ function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "st
     const base = state.fixedCosts.find((cost) => cost.id === occurrence.id) ?? occurrence;
     const isLump = Boolean(occurrence.overrideMemo && /まとめ払い|前納/.test(occurrence.overrideMemo));
     const sub = kind === "pension"
-      ? (isLump ? occurrence.overrideMemo!.replace(/\s*(まとめ払い|前納).*$/, "") : `${monthNumber(addMonthsKey(monthKey, -1))}月分`)
+      ? (isLump ? occurrence.overrideMemo!.replace(/\s*(まとめ払い|前納)$/, "") : "")
       : occurrence.name.replace(meta.label, "").replace(meta.short, "").trim();
     return {
       key: `${occurrence.id}-${monthKey}`,
@@ -5914,7 +5914,7 @@ function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "st
       cost,
       kind,
       title: TAX_KIND_META[kind].label,
-      sub: kind === "pension" ? `${monthNumber(addMonthsKey(monthKey, -1))}月分` : cost.name,
+      sub: kind === "pension" ? "" : cost.name,
       date: `${monthKey}-${String(Math.min(cost.dueDay, lastDayOfMonth(monthKey))).padStart(2, "0")}`,
       amount: 0,
       note: override.memo || "まとめ払い済み",
@@ -6276,48 +6276,62 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
 
 // 国民年金：毎月／まとめて払う／前納
 function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEdit }: { cost: FixedCost; state: LedgerState; startYear: number; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onEdit: () => void }) {
+  // ここでの「月」はすべて「引き落とされる月」で考える（◯月分ではない）
   const s = String(startYear);
   const [mode, setMode] = useState<"lump" | "prepay">("lump");
   const nowMonth = todayIso().slice(0, 7);
-  const firstCover = nowMonth > `${s}-03` ? addMonthsKey(nowMonth, -1) : `${s}-04`;
-  const [fromMonth, setFromMonth] = useState(firstCover);
-  const [toMonth, setToMonth] = useState(addMonthsKey(firstCover, 2));
-  const [payDate, setPayDate] = useState(monthEndDate(addMonthsKey(firstCover, 1)));
+  const firstMonth = nowMonth > `${s}-03` && nowMonth <= `${startYear + 1}-03` ? nowMonth : `${s}-04`;
+  // すでにまとめ払いを設定していれば、その内容を最初から表示する
+  const saved = (() => {
+    const mine = (state.fixedCostOverrides ?? []).filter((item) => item.fixedCostId === cost.id && fiscalMonths(startYear).includes(item.month));
+    const pay = mine.find((item) => !item.skipped && /まとめ払い/.test(item.memo ?? ""));
+    if (!pay) return null;
+    const months = [pay.month, ...mine.filter((item) => item.skipped && (item.memo ?? "").startsWith(`${monthNumber(pay.month)}月にまとめて`)).map((item) => item.month)].sort();
+    return { from: months[0], to: months[months.length - 1], date: `${pay.month}-${String(Math.min(pay.dueDay ?? cost.dueDay, lastDayOfMonth(pay.month))).padStart(2, "0")}` };
+  })();
+  const [fromMonth, setFromMonth] = useState(saved?.from ?? firstMonth);
+  const [toMonth, setToMonth] = useState(saved?.to ?? addMonthsKey(firstMonth, 2));
+  const [payDateEdit, setPayDateEdit] = useState<string | null>(saved?.date ?? null);
   const [prepay, setPrepay] = useState<"half1" | "half2" | "year" | "two">("year");
+  // 前納：4月末（後期は10月末）に払うと、その先の毎月の引き落としがなくなる
   const prepayPlan = {
-    half1: { from: `${s}-04`, to: `${s}-09`, date: `${s}-04-30`, label: "6か月前納（4月〜9月分）" },
-    half2: { from: `${s}-10`, to: `${startYear + 1}-03`, date: `${s}-10-31`, label: "6か月前納（10月〜3月分）" },
-    year: { from: `${s}-04`, to: `${startYear + 1}-03`, date: `${s}-04-30`, label: "1年前納" },
-    two: { from: `${s}-04`, to: `${startYear + 2}-03`, date: `${s}-04-30`, label: "2年前納" }
+    half1: { from: `${s}-05`, to: `${s}-10`, date: `${s}-04-30`, label: "6か月分（4月〜9月分）" },
+    half2: { from: `${s}-11`, to: `${startYear + 1}-04`, date: `${s}-10-31`, label: "6か月分（10月〜翌3月分）" },
+    year: { from: `${s}-05`, to: `${startYear + 1}-04`, date: `${s}-04-30`, label: "1年分（4月〜翌3月分）" },
+    two: { from: `${s}-05`, to: `${startYear + 2}-04`, date: `${s}-04-30`, label: "2年分" }
   }[prepay];
   const from = mode === "lump" ? fromMonth : prepayPlan.from;
   const to = mode === "lump" ? toMonth : prepayPlan.to;
   const count = to >= from ? Number(to.slice(0, 4)) * 12 + Number(to.slice(5, 7)) - (Number(from.slice(0, 4)) * 12 + Number(from.slice(5, 7))) + 1 : 0;
   const [amountEdit, setAmountEdit] = useState<number | null>(null);
   const amount = amountEdit ?? cost.amount * count;
-  const date = mode === "lump" ? payDate : prepayPlan.date;
+  const lumpDate = payDateEdit ?? `${toMonth}-${String(Math.min(cost.dueDay, lastDayOfMonth(toMonth))).padStart(2, "0")}`;
+  const date = mode === "lump" ? lumpDate : prepayPlan.date;
+  const payMonth = date.slice(0, 7);
+  const payInRange = payMonth >= from && payMonth <= to;
   const [saving, setSaving] = useState(false);
-  const monthOptions = Array.from({ length: 30 }, (_, index) => addMonthsKey(`${startYear - 1}-10`, index));
-  const label = (month: string) => `${month.slice(0, 4)}年${monthNumber(month)}月分`;
+  const monthOptions = Array.from({ length: 24 }, (_, index) => addMonthsKey(`${s}-04`, index));
+  const label = (month: string) => `${month.slice(0, 4)}年${monthNumber(month)}月`;
+  const isLumpOverride = (item: { skipped?: boolean; memo?: string }) => Boolean(item.skipped || /まとめ払い|前納/.test(item.memo ?? ""));
 
   async function save() {
-    if (count <= 0) return setNotice("対象の月を正しく選んでください。");
+    if (count <= 0) return setNotice("まとめる月を正しく選んでください（はじめ ≦ おわり）。");
     if (!amount) return setNotice("金額を入力してください。");
     setSaving(true);
     try {
-      const payMonth = date.slice(0, 7);
-      const memo = mode === "lump" ? `${monthNumber(from)}月分〜${monthNumber(to)}月分 まとめ払い` : `${monthNumber(from)}月分〜${monthNumber(to)}月分 ${prepayPlan.label.replace(/（.*）/, "")}`;
-      let includesPayMonth = false;
+      // 前に設定したまとめ払い・前納は、いったん毎月払いに戻してから設定し直す
+      const touched = new Set<string>([...fiscalMonths(startYear), ...Array.from({ length: count }, (_, index) => addMonthsKey(from, index)), payMonth]);
+      const resets = (state.fixedCostOverrides ?? []).filter((item) => item.fixedCostId === cost.id && touched.has(item.month) && isLumpOverride(item));
+      await Promise.all(resets.map((item) => upsertFixedCostOverride(state.householdId ?? "", cost.id, item.month, { amount: cost.amount, dueDay: cost.dueDay, skipped: false, memo: "" })));
+      const memo = mode === "lump" ? `${monthNumber(from)}月〜${monthNumber(to)}月の${count}か月分 まとめ払い` : `${prepayPlan.label} 前納`;
       const jobs: Promise<void>[] = [];
       for (let index = 0; index < count; index += 1) {
-        const covered = addMonthsKey(from, index);
-        const normalPay = addMonthsKey(covered, 1);
-        if (normalPay === payMonth) { includesPayMonth = true; continue; }
-        if (!isFixedCostActiveInMonth(cost, normalPay)) continue;
-        jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, normalPay, { amount: cost.amount, dueDay: cost.dueDay, skipped: true, memo: `${monthNumber(payMonth)}月にまとめ払い済み` }));
+        const month = addMonthsKey(from, index);
+        if (month === payMonth || !isFixedCostActiveInMonth(cost, month)) continue;
+        jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, month, { amount: cost.amount, dueDay: cost.dueDay, skipped: true, memo: `${monthNumber(payMonth)}月にまとめて支払い` }));
       }
-      // 支払う月：まとめ払いの額（その月のふだんの分が対象外なら足す）
-      jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, payMonth, { amount: amount + (includesPayMonth ? 0 : cost.amount), dueDay: Number(date.slice(8, 10)), skipped: false, memo }));
+      // 支払う月：まとめた額（支払う月がまとめる月に入っていなければ、その月のふだんの分も足す）
+      jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, payMonth, { amount: amount + (payInRange ? 0 : cost.amount), dueDay: Number(date.slice(8, 10)), skipped: false, memo }));
       await Promise.all(jobs);
       await reload();
       setNotice(`国民年金を「${memo}」にしました。`);
@@ -6333,7 +6347,7 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
     setSaving(true);
     try {
       const months = fiscalMonths(startYear);
-      const targets = (state.fixedCostOverrides ?? []).filter((item) => item.fixedCostId === cost.id && months.includes(item.month) && (item.skipped || /まとめ払い|前納/.test(item.memo ?? "")));
+      const targets = (state.fixedCostOverrides ?? []).filter((item) => item.fixedCostId === cost.id && months.includes(item.month) && isLumpOverride(item));
       await Promise.all(targets.map((item) => upsertFixedCostOverride(state.householdId ?? "", cost.id, item.month, { amount: cost.amount, dueDay: cost.dueDay, skipped: false, memo: "" })));
       await reload();
       setNotice(`${startYear}年度の国民年金を毎月払いに戻しました。`);
@@ -6344,7 +6358,7 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
       setSaving(false);
     }
   }
-  const hasLump = (state.fixedCostOverrides ?? []).some((item) => item.fixedCostId === cost.id && fiscalMonths(startYear).includes(item.month) && (item.skipped || /まとめ払い|前納/.test(item.memo ?? "")));
+  const hasLump = (state.fixedCostOverrides ?? []).some((item) => item.fixedCostId === cost.id && fiscalMonths(startYear).includes(item.month) && isLumpOverride(item));
 
   return (
     <SettingsSheet title="国民年金の払い方" onClose={onClose}>
@@ -6356,16 +6370,17 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
         </div>
         {mode === "lump" ? (
           <>
+            <p className="pension-hint">ふだんは毎月{cost.dueDay >= 28 ? "末" : `${cost.dueDay}日`}に引き落とされる年金を、何か月分かまとめて1回で払います。</p>
             <div className="form-grid">
-              <label>いつの分から<select value={fromMonth} onChange={(event) => { setFromMonth(event.target.value); setAmountEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
-              <label>いつの分まで<select value={toMonth} onChange={(event) => { setToMonth(event.target.value); setAmountEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
+              <label>まとめる月（はじめ）<select value={fromMonth} onChange={(event) => { setFromMonth(event.target.value); setAmountEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
+              <label>まとめる月（おわり）<select value={toMonth} onChange={(event) => { setToMonth(event.target.value); setAmountEdit(null); setPayDateEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
             </div>
-            <label>支払日<input type="date" value={payDate} onChange={(event) => setPayDate(event.target.value)} /></label>
+            <label>まとめて払う日<input type="date" value={lumpDate} onChange={(event) => setPayDateEdit(event.target.value)} /></label>
           </>
         ) : (
           <div className="pension-options">
             {(["half1", "half2", "year", "two"] as const).map((value) => {
-              const plan = { half1: ["6か月前納（前期）", "4月末に4月〜9月分"], half2: ["6か月前納（後期）", "10月末に10月〜翌3月分"], year: ["1年前納", "4月末に1年分"], two: ["2年前納", "4月末に2年分"] }[value];
+              const plan = { half1: ["6か月前納（前期）", "4月末に4月〜9月分を払う"], half2: ["6か月前納（後期）", "10月末に10月〜翌3月分を払う"], year: ["1年前納", "4月末に1年分を払う"], two: ["2年前納", "4月末に2年分を払う"] }[value];
               return (
                 <button key={value} type="button" className={`pension-option${prepay === value ? " selected" : ""}`} onClick={() => { setPrepay(value); setAmountEdit(null); }}>
                   <span className="ledger-purpose-radio" aria-hidden="true" /><span><b>{plan[0]}</b><small>{plan[1]}</small></span>
@@ -6377,10 +6392,11 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
         <label>支払う金額{mode === "prepay" ? "（割引後の額に直してください）" : ""}<input type="number" inputMode="numeric" value={numberInputValue(amount)} onChange={(event) => setAmountEdit(Number(event.target.value || 0))} /></label>
         <div className="pension-calc">
           <div><span>{plainAmount(cost.amount)}円 × {count}か月</span><b className="num">{plainAmount(cost.amount * count)}</b></div>
-          <div><span>支払う日</span><b className="num">{date.replace(/-/g, "/")}</b></div>
-          <div><span>対象の月のふだんの支払い</span><b>なし（まとめ払い済み）</b></div>
+          <div><span>{date.replace(/-/g, "/")} に払う額</span><b className="num">{plainAmount(amount + (payInRange ? 0 : cost.amount))}</b></div>
+          <div><span>{count > 1 ? `${label(from).replace(/^\d+年/, "")}〜${label(to).replace(/^\d+年/, "")}の` : ""}ほかの月の引き落とし</span><b>なし</b></div>
+          {!payInRange && <div><span>（{monthNumber(payMonth)}月のふだんの分 {plainAmount(cost.amount)}円を含む）</span><b /></div>}
         </div>
-        <p className="settings-note">保存すると、毎月の「{cost.name}」の定期項目が、対象の月だけこの払い方に合わせて変わります。残高見込みにもそのまま入ります。</p>
+        <p className="settings-note">前にまとめ払いや前納を設定していた場合は、いったん毎月払いに戻してから、この内容で設定し直します。残高の見込みにもそのまま入ります。</p>
         <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存する"}</button>
         {hasLump && <button className="google-button" type="button" disabled={saving} onClick={resetYear}>{startYear}年度を毎月払いに戻す</button>}
         <button className="template-save" type="button" onClick={onEdit}>月額や口座を変える</button>
