@@ -6119,3 +6119,24 @@ button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-styl
 .fixed-tax-state { display: block; font-size: 11.5px; font-weight: 700; color: var(--ink-soft); }
 .fixed-tax-state.paid { color: var(--income); }
 .fixed-tax-state.overdue { color: var(--danger); }
+
+/* 定期項目：種類のタブとカテゴリごとのまとまり */
+.fixed-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.fixed-tabs::-webkit-scrollbar { display: none; }
+.fixed-tabs button { flex-shrink: 0; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink-soft); font: inherit; font-size: 13px; font-weight: 700; }
+.fixed-tabs button small { font-size: 11px; font-weight: 700; color: var(--muted); font-family: var(--font-num); }
+.fixed-tabs button.on { background: var(--ink); border-color: var(--ink); color: var(--panel); }
+.fixed-tabs button.on small { color: inherit; opacity: .75; }
+.fixed-groups { display: grid; gap: 8px; }
+.fixed-group { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.fixed-group > .settings-list { border: 0; border-radius: 0; border-top: 1px solid var(--rule); }
+.fixed-group-h { width: 100%; display: flex; align-items: center; gap: 8px; padding: 12px 14px; border: 0; background: transparent; color: var(--ink); font: inherit; text-align: left; }
+.fixed-group-h:disabled { cursor: default; opacity: 1; }
+.fixed-group-h > i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.fixed-group-h > b { font-size: 14px; }
+.fixed-group-h > small { font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.fixed-group-h > span { margin-left: auto; font-size: 14px; font-weight: 700; }
+.fixed-group-h > span.pos { color: var(--income); }
+.fixed-group-chev { color: var(--muted); transition: transform .2s var(--easing, ease); flex-shrink: 0; }
+.fixed-group.open .fixed-group-chev { transform: rotate(180deg); }
+.fixed-groups-all { justify-self: center; padding: 6px 12px; border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: 12.5px; font-weight: 700; }

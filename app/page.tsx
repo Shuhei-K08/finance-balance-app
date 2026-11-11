@@ -6776,6 +6776,84 @@ function FixedCostsOverview({ state, onEdit, onOpenTaxes }: { state: LedgerState
     { kind: "transfer", label: "振替" }
   ];
   const installmentList = Array.from(installments.values()).sort((x, y) => x.info.remaining - y.info.remaining);
+  const plainRows = (kind: TransactionType) => active.filter((cost) => cost.kind === kind && !installmentIds.has(cost.id) && !cost.taxKind).sort((a, b) => a.dueDay - b.dueDay);
+  const hasTax = state.fixedCosts.some((cost) => cost.taxKind);
+  type FixedTab = "expense" | "income" | "transfer" | "loan" | "tax" | "ended";
+  const tabs: { id: FixedTab; label: string; count: number }[] = [
+    { id: "expense" as const, label: "支出", count: plainRows("expense").length },
+    { id: "income" as const, label: "収入", count: plainRows("income").length },
+    { id: "transfer" as const, label: "振替", count: plainRows("transfer").length },
+    { id: "loan" as const, label: "ローン・分割", count: installmentList.length },
+    { id: "tax" as const, label: "税金", count: hasTax ? TAX_KIND_ORDER.filter((kind) => state.fixedCosts.some((cost) => cost.taxKind === kind)).length : 0 },
+    { id: "ended" as const, label: "終了", count: ended.length }
+  ].filter((tab) => tab.count > 0 || tab.id === "expense");
+  const [tab, setTab] = useState<FixedTab>(() => {
+    try { const saved = localStorage.getItem("mirai-fixed-tab") as FixedTab | null; if (saved) return saved; } catch { /* 保存できない環境 */ }
+    return "expense";
+  });
+  const currentTab = tabs.some((item) => item.id === tab) ? tab : "expense";
+  const chooseTab = (next: FixedTab) => { setTab(next); try { localStorage.setItem("mirai-fixed-tab", next); } catch { /* 保存できない環境 */ } };
+  const [openGroups, setOpenGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) => setOpenGroups((prev) => { const next = new Set(prev); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+
+  // 支出・収入はカテゴリ（親カテゴリ）ごと、振替は出金元の口座ごとにまとめる
+  const grouped = (kind: TransactionType) => {
+    const map = new Map<string, { key: string; label: string; color?: string; costs: LedgerState["fixedCosts"] }>();
+    plainRows(kind).forEach((cost) => {
+      let key = "none";
+      let label = "カテゴリなし";
+      let color: string | undefined;
+      if (kind === "transfer" || cost.transferGroupId) {
+        const account = state.accounts.find((item) => item.id === cost.accountId);
+        key = `acc-${cost.accountId}`;
+        label = cost.transferGroupId ? "家計簿間の資金移動" : `${account?.name ?? "口座未設定"} から`;
+        if (cost.transferGroupId) key = "ledger-move";
+      } else {
+        const category = state.categories.find((item) => item.id === cost.categoryId);
+        const parent = category?.parentId ? state.categories.find((item) => item.id === category.parentId) : category;
+        if (parent) { key = parent.id; label = parent.name; color = parent.color; }
+      }
+      const entry = map.get(key) ?? { key, label, color, costs: [] };
+      entry.costs.push(cost);
+      map.set(key, entry);
+    });
+    return Array.from(map.values()).sort((x, y) => y.costs.reduce((t, c) => t + c.amount, 0) - x.costs.reduce((t, c) => t + c.amount, 0));
+  };
+
+  const groupList = (kind: TransactionType) => {
+    const groupsOfKind = grouped(kind);
+    if (groupsOfKind.length === 0) return <div className="settings-list"><div className="empty-state">まだありません。右上の「追加」から登録できます。</div></div>;
+    // 1つしかないときや件数が少ないときは、たたまずに出す
+    const total = groupsOfKind.reduce((t, g) => t + g.costs.length, 0);
+    const collapsible = groupsOfKind.length > 1 && total > 6;
+    return (
+      <div className="fixed-groups">
+        {groupsOfKind.map((group) => {
+          const key = `${kind}-${group.key}`;
+          const open = !collapsible || openGroups.has(key);
+          const subtotal = group.costs.reduce((t, c) => t + c.amount, 0);
+          return (
+            <div key={key} className={`fixed-group${open ? " open" : ""}`}>
+              <button type="button" className="fixed-group-h" onClick={() => collapsible && toggleGroup(key)} aria-expanded={open} disabled={!collapsible}>
+                <i style={{ background: group.color ?? "var(--muted)" }} aria-hidden="true" />
+                <b>{group.label}</b>
+                <small>{group.costs.length}件</small>
+                <span className={`num${kind === "income" ? " pos" : ""}`}>{kind === "income" ? "+" : ""}{plainAmount(subtotal)}</span>
+                {collapsible && <ChevronDown size={16} className="fixed-group-chev" />}
+              </button>
+              {open && <div className="settings-list">{group.costs.map((cost) => row(cost))}</div>}
+            </div>
+          );
+        })}
+        {collapsible && (
+          <button type="button" className="fixed-groups-all" onClick={() => setOpenGroups(groupsOfKind.every((g) => openGroups.has(`${kind}-${g.key}`)) ? new Set() : new Set(groupsOfKind.map((g) => `${kind}-${g.key}`)))}>
+            {groupsOfKind.every((g) => openGroups.has(`${kind}-${g.key}`)) ? "すべてたたむ" : "すべて開く"}
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
       <div className="fixed-summary">
@@ -6783,8 +6861,15 @@ function FixedCostsOverview({ state, onEdit, onOpenTaxes }: { state: LedgerState
         <div><span>毎月の支出</span><b className="num">{plainAmount(expense)}</b></div>
         <div><span>差し引き</span><b className={`num ${income - expense >= 0 ? "pos" : "neg"}`}>{income - expense > 0 ? "+" : income - expense < 0 ? "−" : ""}{plainAmount(income - expense)}</b></div>
       </div>
-      <TaxFixedGroup state={state} onOpenTaxes={onOpenTaxes} />
-      {installmentList.length > 0 && (
+      <div className="fixed-tabs" role="tablist" aria-label="定期項目の種類">
+        {tabs.map((item) => (
+          <button key={item.id} type="button" role="tab" aria-selected={currentTab === item.id} className={currentTab === item.id ? "on" : ""} onClick={() => chooseTab(item.id)}>
+            {item.label}<small>{item.count}</small>
+          </button>
+        ))}
+      </div>
+      {currentTab === "tax" && <TaxFixedGroup state={state} onOpenTaxes={onOpenTaxes} />}
+      {currentTab === "loan" && installmentList.length > 0 && (
         <div>
           <div className="settings-sec-h"><span>ローン・分割払い</span><span>残り {plainAmount(installmentList.reduce((total, item) => total + item.info.remainingAmount, 0))}</span></div>
           <div className="settings-list">
@@ -6811,23 +6896,9 @@ function FixedCostsOverview({ state, onEdit, onOpenTaxes }: { state: LedgerState
           </div>
         </div>
       )}
-      {groups.map(({ kind, label }) => {
-        const rows = active.filter((cost) => cost.kind === kind && !installmentIds.has(cost.id) && !cost.taxKind).sort((a, b) => a.dueDay - b.dueDay);
-        if (rows.length === 0) return null;
-        return (
-          <div key={kind}>
-            <div className="settings-sec-h"><span>{label}</span></div>
-            <div className="settings-list">{rows.map((cost) => row(cost))}</div>
-          </div>
-        );
-      })}
-      {active.length === 0 && <div className="settings-list"><div className="empty-state">定期項目はまだありません。家賃や給与など、毎月の予定を右上の「追加」から登録できます。</div></div>}
-      {ended.length > 0 && (
-        <>
-          <div className="settings-sec-h"><span>終了した項目</span></div>
-          <div className="settings-list">{ended.map((cost) => row(cost, true))}</div>
-        </>
-      )}
+      {(currentTab === "expense" || currentTab === "income" || currentTab === "transfer") && groupList(currentTab)}
+      {currentTab === "ended" && ended.length > 0 && <div className="settings-list">{ended.map((cost) => row(cost, true))}</div>}
+      {active.length === 0 && currentTab === "expense" && <p className="settings-note">家賃や給与など、毎月の予定を右上の「追加」から登録できます。</p>}
     </>
   );
 }
