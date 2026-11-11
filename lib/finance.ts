@@ -120,7 +120,7 @@ export function calculateAccountBalanceInState(account: Account, state: LedgerSt
   const latestSnapshot = snapshots[0];
   const since = latestSnapshot ? monthEndKey(latestSnapshot.month) : "";
   const until = monthEndKey(throughMonthKey);
-  const fixedOccurrences = monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, throughMonthKey), throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state));
+  const fixedOccurrences = monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, throughMonthKey), throughMonthKey).flatMap((monthKey) => fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state, { carryOverdue: true }));
   const rows = state.transactions.filter((transaction) => {
     const ledgerDate = transactionLedgerDate(transaction);
     return (!since || ledgerDate > since) && ledgerDate <= until;
@@ -178,7 +178,7 @@ export function accountBalanceBreakdown(account: Account, state: LedgerState, mo
     });
   });
   monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, monthKey), monthKey)
-    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state))
+    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state, { carryOverdue: true }))
     .filter((cost) => (!since || cost.date > since) && cost.date <= until)
     .forEach((cost) => {
       const amount = fixedCostAssetDeltaForAccount(cost, account, state.accounts);
@@ -224,7 +224,7 @@ export function accountBalanceOnDate(account: Account, state: LedgerState, date:
     })
     .reduce((balance, transaction) => balance + transactionAssetDeltaForAccount(transaction, account, state.accounts), latestSnapshot?.amount ?? account.openingBalance);
   return monthsBetween(fixedCostStartExclusive(latestSnapshot?.month, monthKey), monthKey)
-    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state))
+    .flatMap((key) => fixedCostOccurrencesForMonth(state.fixedCosts, key, state, { carryOverdue: true }))
     .filter((cost) => (!since || cost.date > since) && cost.date <= date)
     .reduce((balance, cost) => balance + fixedCostAssetDeltaForAccount(cost, account, state.accounts), transactionBalance);
 }
@@ -315,7 +315,7 @@ function monthlyAssetMovement(state: LedgerState, monthKey: string) {
   const transactionMovement = monthTransactionsByKey(state.transactions, monthKey).reduce((sum, transaction) => {
     return sum + assetAccounts.reduce((accountSum, account) => accountSum + transactionAssetDeltaForAccount(transaction, account, state.accounts), 0);
   }, 0);
-  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).reduce((sum, cost) => {
+  return fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state, { carryOverdue: true }).reduce((sum, cost) => {
     return sum + assetAccounts.reduce((accountSum, account) => accountSum + fixedCostAssetDeltaForAccount(cost, account, state.accounts), 0);
   }, transactionMovement);
 }
@@ -338,9 +338,52 @@ export function monthlyIncome(transactions: Transaction[]) {
 }
 
 // occurrenceMonth: もともとの支払い月。支払日を別の月に変えたときは date の月と異なる
-export type FixedCostOccurrence = FixedCost & { date: string; occurrenceMonth: string; overrideId?: string; overrideMemo?: string; payDateMoved?: boolean };
+// overdue: 税金・年金で期日を過ぎたのに「支払った」が押されていないもの。dueDate はもとの期日
+export type FixedCostOccurrence = FixedCost & { date: string; occurrenceMonth: string; overrideId?: string; overrideMemo?: string; payDateMoved?: boolean; paidOn?: string; overdue?: boolean; dueDate?: string };
 
-export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
+function isOverdueOccurrence(occurrence: FixedCostOccurrence, today: string) {
+  return Boolean(occurrence.taxKind && !occurrence.paidOn && occurrence.amount > 0 && occurrence.date < today);
+}
+
+// 期日を過ぎた未払いは、まだ口座から出ていないお金として「明日」に出ていく扱いにする
+// （今日の残高からは引かず、これからの見込みでは必ず引く。月末日なら今日）
+function overdueCarryDate(today: string) {
+  const next = new Date(`${today}T00:00:00`);
+  next.setDate(next.getDate() + 1);
+  const key = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+  return key.slice(0, 7) === today.slice(0, 7) ? key : today;
+}
+
+// 期日を過ぎた未払いには overdue の印を付ける（収支ではもとの月のまま数える）。
+// options.carryOverdue: 残高の計算用。未払いをもとの日から外し、今月の「明日」にまとめて載せる
+export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">, options?: { carryOverdue?: boolean }): FixedCostOccurrence[] {
+  const today = todayIso();
+  const raw = rawFixedCostOccurrencesForMonth(fixedCosts, monthKey, state).map((occurrence) => (isOverdueOccurrence(occurrence, today) ? { ...occurrence, overdue: true, dueDate: occurrence.date } : occurrence));
+  const currentMonth = today.slice(0, 7);
+  if (!options?.carryOverdue || monthKey > currentMonth || !fixedCosts.some((cost) => cost.taxKind)) return raw;
+  const rows = raw.filter((occurrence) => !occurrence.overdue);
+  if (monthKey < currentMonth) return rows;
+  // 今月：これまでの未払いをまとめて載せる
+  const carry = overdueCarryDate(today);
+  const overdue: FixedCostOccurrence[] = [];
+  fixedCosts.filter((cost) => cost.taxKind).forEach((cost) => {
+    const start = (cost.effectiveFrom ?? `${currentMonth}-01`).slice(0, 7);
+    const end = cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth ? cost.effectiveTo.slice(0, 7) : currentMonth;
+    for (let month = start; month <= end; month = addMonths(month, 1)) {
+      rawFixedCostOccurrencesForMonth([cost], month, state)
+        .filter((occurrence) => isOverdueOccurrence(occurrence, today))
+        .forEach((occurrence) => overdue.push({ ...occurrence, overdue: true, dueDate: occurrence.date, date: carry }));
+    }
+  });
+  return [...overdue.sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")), ...rows];
+}
+
+function addMonths(monthKey: string, diff: number) {
+  const date = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)) - 1 + diff, 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function rawFixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
   const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
   const rows: Array<FixedCostOccurrence | null> = fixedCosts
     .filter((cost) => isFixedCostActiveInMonth(cost, monthKey))
@@ -363,6 +406,7 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
         memo: override?.memo || cost.memo,
         overrideMemo: override?.memo,
         occurrenceMonth: monthKey,
+        paidOn: override?.paidOn,
         date: override?.payDate ?? `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
       };
     });
@@ -385,6 +429,7 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
       overrideMemo: override.memo,
       occurrenceMonth: override.month,
       payDateMoved: true,
+      paidOn: override.paidOn,
       date: override.payDate
     });
   });

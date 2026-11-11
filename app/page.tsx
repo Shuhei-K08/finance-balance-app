@@ -136,6 +136,7 @@ import {
   loadHouseholdMembers,
   updateLedgerPurpose,
   setFixedCostTaxKind,
+  setFixedCostPaid,
   createTaxInstallments,
   loadLedgerAccountsAndCategories,
   createLedgerTransfer,
@@ -1365,6 +1366,7 @@ function HomeView({
 
   return (
     <div className="view-stack">
+      <OverduePanel state={state} setNotice={setNotice} reload={reload} />
       <section className={`home-summary${assetsHidden ? " assets-hidden" : ""}`}>
         <div className="home-summary-head">
           <span>{monthLabel}の支出</span>
@@ -1717,6 +1719,10 @@ function balanceAmount(value: number) {
   return `${Math.round(value) < 0 ? "−" : ""}${plainAmount(value)}`;
 }
 
+function signedPlain(value: number) {
+  return `${value < 0 ? "−" : ""}${plainAmount(Math.abs(value))}`;
+}
+
 function plainAmount(value: number) {
   return Math.abs(Math.round(value)).toLocaleString("ja-JP");
 }
@@ -1853,7 +1859,7 @@ function upcomingBills(state: LedgerState, days: number) {
   const months = fromMonth === toMonth ? [fromMonth] : [fromMonth, toMonth];
   const occurrences = months.flatMap((month) => fixedCostOccurrencesForMonth(state.fixedCosts, month, state));
   return occurrences
-    .filter((cost) => cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
+    .filter((cost) => !cost.overdue && cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
     .map((cost) => ({
       id: cost.id,
       installment: fixedRowTag(state, cost),
@@ -3094,7 +3100,7 @@ function HomeCalendar({
   // weekStart=0: Sun始まり, weekStart=1: Mon始まり
   const blankCount = weekStart === 1 ? (rawFirstDay - 1 + 7) % 7 : rawFirstDay;
   const monthRows = state.transactions.filter((transaction) => transactionLedgerDate(transaction).startsWith(monthKey));
-  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((row) => !row.overdue);
   const monthIncome = monthlyIncome(monthRows) + fixedRows.filter((row) => row.kind === "income").reduce((sum, row) => sum + row.amount, 0);
   const fixedExpense = fixedRows.filter((row) => row.kind === "expense").reduce((sum, row) => sum + row.amount, 0);
   const monthExpense = monthlyExpense(monthRows) + fixedExpense;
@@ -3228,7 +3234,7 @@ function CreditCardTotals({ state, monthKey }: { state: LedgerState; monthKey: s
 
 function CalendarDayModal({ date, state, setNotice, reload, onClose, onQuick }: { date: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onQuick: (date: string) => void }) {
   const rows = state.transactions.filter((transaction) => transactionLedgerDate(transaction) === date);
-  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, date.slice(0, 7), state).filter((row) => row.date === date);
+  const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, date.slice(0, 7), state).filter((row) => row.date === date && !row.overdue);
   const count = rows.length + fixedRows.length;
   return (
     <div className="sheet-backdrop center-backdrop" onClick={onClose}>
@@ -3411,6 +3417,8 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
       map.set(date, entry);
     });
     filteredFixed.forEach((fc) => {
+      // 期日を過ぎた未払いは日付の中には入れず、上の「未払い」に出す
+      if (fc.overdue) return;
       const date = fc.date;
       const entry = map.get(date) ?? { tx: [], fixed: [] };
       entry.fixed.push(fc);
@@ -3480,6 +3488,8 @@ function TransactionsView({ state, monthKey, setNotice, reload, onQuick }: { sta
               <span>支出 <b>{plainAmount(totalExpense)}</b></span>
             </div>
           </section>
+
+          {filteredFixed.some((fc) => fc.overdue) && <OverduePanel state={state} setNotice={setNotice} reload={reload} />}
 
           {grouped.length === 0 ? (
             <section className="panel">
@@ -5904,7 +5914,8 @@ type TaxRow = {
   note?: string;
   covered: boolean;
   sourceMonth?: string;
-  status: "done" | "next" | "plan" | "covered";
+  paidOn?: string;
+  status: "done" | "unpaid" | "next" | "plan" | "covered";
 };
 
 function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "status">[] {
@@ -5922,6 +5933,7 @@ function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "st
     return {
       key: `${occurrence.id}-${occurrence.occurrenceMonth}`,
       sourceMonth: occurrence.occurrenceMonth,
+      paidOn: occurrence.paidOn,
       cost: base,
       kind,
       title: meta.label,
@@ -5964,14 +5976,30 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
   const [pensionId, setPensionId] = useState<string | null>(null);
 
   const allRows = months.map((month) => ({ month, rows: taxRowsForMonth(state, month) }));
-  const upcoming = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && row.amount > 0 && row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0 && row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
   const nextDate = upcoming[0]?.date;
   const withStatus = allRows.map(({ month, rows }) => ({
     month,
     rows: rows
       .filter((row) => filter === "all" || row.kind === filter)
-      .map((row): TaxRow => ({ ...row, status: row.covered ? "covered" : row.date < today ? "done" : row.date === nextDate ? "next" : "plan" }))
+      .map((row): TaxRow => ({ ...row, status: row.covered ? "covered" : row.paidOn ? "done" : row.date < today ? "unpaid" : row.date === nextDate ? "next" : "plan" }))
   }));
+  // 期日を過ぎたのに「支払った」を押していないもの（フィルターに関係なく全部）
+  const overdue = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0 && row.date < today);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [payRow, setPayRow] = useState<TaxRow | null>(null);
+  async function markOverdueAsPaid() {
+    setBulkBusy(true);
+    try {
+      await Promise.all(overdue.map((row) => setFixedCostPaid(state.householdId ?? "", row.cost.id, row.sourceMonth ?? row.date.slice(0, 7), row.date, { hasOverride: Boolean(state.fixedCostOverrides?.some((item) => item.fixedCostId === row.cost.id && item.month === (row.sourceMonth ?? row.date.slice(0, 7)))) })));
+      await reload();
+      setNotice(`${overdue.length}件を期日に支払い済みにしました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "支払い済みにできませんでした。"));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
   const counted = withStatus.flatMap(({ rows }) => rows).filter((row) => !row.covered);
   const total = counted.reduce((sum, row) => sum + row.amount, 0);
   const paid = counted.filter((row) => row.status === "done").reduce((sum, row) => sum + row.amount, 0);
@@ -5987,7 +6015,45 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
   const pensionCost = pensionId ? state.fixedCosts.find((cost) => cost.id === pensionId) : undefined;
   const daysLeft = nextDate ? Math.round((new Date(`${nextDate}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000) : 0;
 
+  // 支払いの見通し：払う口座ごとに、期日に残高が足りるか
+  const outlook = useMemo(() => {
+    const pending = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0);
+    const accountIds = Array.from(new Set(pending.map((row) => row.cost.accountId).filter(Boolean)));
+    const tomorrow = (() => { const next = new Date(`${today}T00:00:00`); next.setDate(next.getDate() + 1); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`; })();
+    const shortKeys = new Set<string>();
+    const accounts = accountIds.map((accountId) => {
+      const account = state.accounts.find((item) => item.id === accountId);
+      if (!account || account.type === "credit") return null;
+      const mine = pending.filter((row) => row.cost.accountId === accountId);
+      const overdueRows = mine.filter((row) => row.date < today);
+      const futureRows = mine.filter((row) => row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+      const now = accountBalanceOnDate(account, state, today);
+      // 未払いは明日出ていく扱い。それぞれの期日の時点で残高がマイナスにならないか
+      const checks = [...(overdueRows.length ? [{ date: tomorrow.slice(0, 7) === today.slice(0, 7) ? tomorrow : today, rows: overdueRows }] : []), ...Array.from(new Set(futureRows.map((row) => row.date))).map((date) => ({ date, rows: futureRows.filter((row) => row.date === date) }))];
+      let shortage: { date: string; amount: number } | null = null;
+      checks.forEach((check) => {
+        const balance = accountBalanceOnDate(account, state, check.date);
+        if (balance < 0) {
+          check.rows.forEach((row) => shortKeys.add(row.key));
+          if (!shortage) shortage = { date: check.date, amount: -balance };
+        }
+      });
+      const lastDate = checks.length ? checks[checks.length - 1].date : today;
+      const end = accountBalanceOnDate(account, state, lastDate);
+      const overdueSum = overdueRows.reduce((sum, row) => sum + row.amount, 0);
+      const futureSum = futureRows.reduce((sum, row) => sum + row.amount, 0);
+      return { account, now, overdueSum, futureSum, other: end - (now - overdueSum - futureSum), lastDate, end, shortage: shortage as { date: string; amount: number } | null };
+    }).filter((item): item is NonNullable<typeof item> => Boolean(item));
+    return { accounts, shortKeys };
+  }, [state, startYear, today]);
+
   function openRow(row: TaxRow) {
+    // 前納で払わない月は払い方の画面、それ以外は「支払った」の画面
+    if (row.covered) setPensionId(row.cost.id);
+    else setPayRow(row);
+  }
+  function openEdit(row: TaxRow) {
+    setPayRow(null);
     if (row.kind === "pension" && !isTaxInstallment(row.cost)) setPensionId(row.cost.id);
     else setDetailId(row.cost.id);
   }
@@ -6012,6 +6078,30 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
       </section>
 
       <button type="button" className="tax-add top" onClick={() => setAdding("resident_tax")}><Plus size={16} /> 税金・社会保険を追加</button>
+      {overdue.length > 0 && (
+        <div className="tax-overdue">
+          <span><b>期日を過ぎた未払いが {overdue.length}件</b><small>払ったものは行をタップして「支払った」を押してください。</small></span>
+          <button type="button" disabled={bulkBusy} onClick={markOverdueAsPaid}>{bulkBusy ? "記録中…" : "すべて期日どおりに払った"}</button>
+        </div>
+      )}
+      {outlook.accounts.length > 0 && (
+        <section className="tax-outlook">
+          <div className="tax-outlook-h"><b>支払いの見通し</b><small>{startYear}年度のこれからの支払いに、口座の残高が足りるか</small></div>
+          {outlook.accounts.map((item) => (
+            <div key={item.account.id} className={`tax-outlook-card${item.shortage ? " short" : ""}`}>
+              <div className="tax-outlook-name"><b>{item.account.name}</b>{item.shortage ? <em className="bad">足りません</em> : <em className="ok">足ります</em>}</div>
+              <dl>
+                <div><dt>今の残高</dt><dd className="num">{signedPlain(item.now)}</dd></div>
+                {item.overdueSum > 0 && <div><dt>未払い（期日超過）</dt><dd className="num">−{plainAmount(item.overdueSum)}</dd></div>}
+                {item.futureSum > 0 && <div><dt>{shortDate(item.lastDate)} までの税金・年金</dt><dd className="num">−{plainAmount(item.futureSum)}</dd></div>}
+                {item.other !== 0 && <div><dt>ほかの入出金の見込み</dt><dd className="num">{item.other > 0 ? "+" : "−"}{plainAmount(Math.abs(item.other))}</dd></div>}
+                <div className="total"><dt>{shortDate(item.lastDate)} 時点の残高見込み</dt><dd className="num">{signedPlain(item.end)}</dd></div>
+              </dl>
+              {item.shortage && <p className="tax-outlook-alert">{shortDate(item.shortage.date)} に {plainAmount(item.shortage.amount)}円 足りなくなります。入金や振替を予定に入れてください。</p>}
+            </div>
+          ))}
+        </section>
+      )}
       <div className="tax-chips" role="tablist" aria-label="税金の種類で絞り込み">
         <button type="button" className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>すべて</button>
         {TAX_KIND_ORDER.map((kind) => (
@@ -6057,20 +6147,22 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
             <div className={`tax-month-h${isPast ? " past" : ""}`}><b>{monthNumber(month)}月</b>{isNow && <em>今月</em>}<span className="num">{plainAmount(rows.reduce((sum, row) => sum + row.amount, 0))}</span></div>
             <div className={`tax-list${isNow ? " now" : ""}${isPast ? " past" : ""}`}>
               {rows.map((row) => (
-                <button type="button" key={row.key} className={`tax-row ${row.status}`} onClick={() => openRow(row)}>
+                <button type="button" key={row.key} className={`tax-row ${row.status}${outlook.shortKeys.has(row.key) ? " short" : ""}`} onClick={() => openRow(row)}>
                   <span className="tax-mark" style={{ background: TAX_KIND_META[row.kind].color }}>{TAX_KIND_META[row.kind].mark}</span>
                   <span className="tax-row-text">
                     <b>{row.title}{row.sub && <small>{row.sub}</small>}</b>
                     <small>
-                      {!row.covered && <span className="num">{shortDate(row.date)}</span>}
+                      {!row.covered && <span className="num">{shortDate(row.date)}{row.paidOn ? " 支払い済み" : row.status === "unpaid" ? " 期日" : ""}</span>}
                       {!row.covered && row.note && " ・ "}
                       {row.note && <u className={row.covered ? "" : "lump"}>{row.note}</u>}
                       {row.cost.memo && !row.covered && !row.note && <> ・ {row.cost.memo}</>}
                     </small>
                   </span>
                   <span className="tax-row-amount num">{row.covered ? "—" : plainAmount(row.amount)}</span>
-                  <span className="tax-row-status" aria-label={row.status === "done" ? "支払い済み" : row.status === "next" ? "次の支払い" : row.status === "covered" ? "まとめ払い済み" : "予定"}>
+                  <span className="tax-row-status" aria-label={row.status === "done" ? "支払い済み" : row.status === "unpaid" ? "未払い" : row.status === "next" ? "次の支払い" : row.status === "covered" ? "前納済み" : "予定"}>
                     {row.status === "done" && <i className="st done">済</i>}
+                    {row.status === "unpaid" && <i className="st unpaid">未払い</i>}
+                    {row.status !== "unpaid" && row.status !== "done" && outlook.shortKeys.has(row.key) && <i className="st short">不足</i>}
                     {row.status === "next" && <i className="st next">次</i>}
                     {row.status === "covered" && <i className="st cov">前</i>}
                   </span>
@@ -6092,8 +6184,152 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
           <TaxDeleteActions cost={detailCost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onDone={() => setDetailId(null)} />
         </SettingsSheet>
       )}
+      {payRow && (
+        <TaxPaySheet
+          row={payRow}
+          siblings={allRows.flatMap(({ rows }) => rows).filter((row) => row.key !== payRow.key && !row.covered && !row.paidOn && row.amount > 0 && row.date === payRow.date)}
+          state={state}
+          setNotice={setNotice}
+          reload={reload}
+          onClose={() => setPayRow(null)}
+          onEdit={() => openEdit(payRow)}
+        />
+      )}
       {pensionCost && <PensionSheet cost={pensionCost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onClose={() => setPensionId(null)} onEdit={() => { setPensionId(null); setDetailId(pensionCost.id); }} />}
     </div>
+  );
+}
+
+// 期日を過ぎたのに「支払った」が押されていない税金・年金（ホームと取引一覧の上に出す）
+function OverduePanel({ state, setNotice, reload }: { state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const today = todayIso();
+  const rows = fixedCostOccurrencesForMonth(state.fixedCosts, today.slice(0, 7), state, { carryOverdue: true }).filter((row) => row.overdue);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const [paidDate, setPaidDate] = useState(today);
+  const [busy, setBusy] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  if (rows.length === 0) return null;
+  const visible = showAll ? rows : rows.slice(0, 3);
+  const keyOf = (row: FixedCostOccurrence) => `${row.id}-${row.occurrenceMonth}`;
+  const label = (row: FixedCostOccurrence) => `${row.name}${row.taxKind === "pension" ? ` ${monthNumber(row.occurrenceMonth)}月分` : ""}`;
+
+  async function pay(targets: FixedCostOccurrence[], date: string | null) {
+    setBusy(true);
+    try {
+      // date: 払った日（取引の日付にもする）。null なら「期日に払った」
+      await Promise.all(targets.map((row) => setFixedCostPaid(state.householdId ?? "", row.id, row.occurrenceMonth, date ?? row.dueDate ?? row.date, { payDate: date ?? undefined, hasOverride: Boolean(row.overrideId) })));
+      await reload();
+      setOpenKey(null);
+      setNotice(targets.length > 1 ? `${targets.length}件を期日に支払い済みにしました。` : `${label(targets[0])}を支払い済みにしました。`);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "支払い済みにできませんでした。"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="panel overdue-panel">
+      <div className="panel-title"><h2>未払い</h2><span className="panel-meta">期日を過ぎています ・ {rows.length}件 {plainAmount(rows.reduce((sum, row) => sum + row.amount, 0))}円</span></div>
+      {rows.length > 1 && <button type="button" className="overdue-all" disabled={busy} onClick={() => pay(rows, null)}>{rows.length}件とも期日どおりに払った</button>}
+      <div className="overdue-list">
+        {visible.map((row) => {
+          const key = keyOf(row);
+          const open = openKey === key;
+          return (
+            <div key={key} className={`overdue-row${open ? " open" : ""}`}>
+              <button type="button" className="overdue-main" onClick={() => { setOpenKey(open ? null : key); setPaidDate(today); }}>
+                <span><b>{label(row)}</b><small>期日 {shortDate(row.dueDate ?? row.date)}</small></span>
+                <b className="num">{plainAmount(row.amount)}</b>
+                <em>{open ? "閉じる" : "支払った"}</em>
+              </button>
+              {open && (
+                <div className="overdue-form">
+                  <label>支払った日<input type="date" value={paidDate} max={today} onChange={(event) => setPaidDate(event.target.value)} /></label>
+                  <button type="button" className="primary-btn" disabled={busy || !paidDate} onClick={() => pay([row], paidDate)}>{busy ? "記録中…" : "支払い済みにする"}</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {rows.length > 3 && <button type="button" className="overdue-more" onClick={() => setShowAll(!showAll)}>{showAll ? "たたむ" : `ほか ${rows.length - 3}件を表示`}</button>}
+      <p className="overdue-note">払っていないお金は、今日の残高からは引かず、明日以降の残高見込みから引いています。</p>
+    </section>
+  );
+}
+
+// 税金・年金の1件：支払った日を記録する
+function TaxPaySheet({ row, siblings, state, setNotice, reload, onClose, onEdit }: { row: TaxRow; siblings: Omit<TaxRow, "status">[]; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onEdit: () => void }) {
+  const today = todayIso();
+  const [paidDate, setPaidDate] = useState(today);
+  const [together, setTogether] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const meta = TAX_KIND_META[row.kind];
+  const monthOf = (item: Omit<TaxRow, "status">) => item.sourceMonth ?? item.date.slice(0, 7);
+  const hasOverride = (item: Omit<TaxRow, "status">) => Boolean(state.fixedCostOverrides?.some((o) => o.fixedCostId === item.cost.id && o.month === monthOf(item)));
+  const targets = [row, ...(together ? siblings : [])];
+  const overdue = !row.paidOn && row.date < today;
+
+  async function markPaid() {
+    if (!paidDate) return setNotice("支払った日を入れてください。");
+    setBusy(true);
+    try {
+      // 払った日を支払日にもする（残高の見込みも払った日で計算）
+      await Promise.all(targets.map((item) => setFixedCostPaid(state.householdId ?? "", item.cost.id, monthOf(item), paidDate, { payDate: paidDate, hasOverride: hasOverride(item) })));
+      await reload();
+      setNotice(`${targets.length > 1 ? `${targets.length}件を` : `${meta.label}${row.sub ? ` ${row.sub}` : ""}を`}${paidDate.slice(5).replace("-", "/")}に支払い済みにしました。`);
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "支払い済みにできませんでした。"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unmark() {
+    setBusy(true);
+    try {
+      await setFixedCostPaid(state.householdId ?? "", row.cost.id, monthOf(row), null, { hasOverride: true });
+      await reload();
+      setNotice("支払い済みを取り消しました。");
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "取り消せませんでした。"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingsSheet title={meta.label} onClose={onClose}>
+      <div className="tax-pay-sheet">
+        <div className="tax-pay-head">
+          <span className="tax-mark" style={{ background: meta.color }}>{meta.mark}</span>
+          <span><b>{meta.label}{row.sub && <small>{row.sub}</small>}</b><small>{row.paidOn ? `${shortDate(row.paidOn)} に支払い済み` : `期日 ${shortDate(row.date)}`}{overdue && <em>未払い</em>}</small></span>
+          <b className="num">{plainAmount(row.amount)}</b>
+        </div>
+        {row.paidOn ? (
+          <>
+            <p className="settings-note">支払い済みです。日付を間違えたときは、取り消してからもう一度記録してください。</p>
+            <button className="google-button" type="button" disabled={busy} onClick={unmark}>{busy ? "取り消し中…" : "支払い済みを取り消す"}</button>
+          </>
+        ) : (
+          <>
+            <label>支払った日<input type="date" value={paidDate} max={today} onChange={(event) => setPaidDate(event.target.value)} /></label>
+            {siblings.length > 0 && (
+              <label className="tax-pay-together">
+                <input type="checkbox" checked={together} onChange={(event) => setTogether(event.target.checked)} />
+                <span>同じ期日の{siblings.length}件もまとめて支払い済みにする<small>{siblings.map((item) => `${TAX_KIND_META[item.kind].short}${item.sub ? ` ${item.sub}` : ""}`).join("・")}</small></span>
+              </label>
+            )}
+            {targets.length > 1 && <div className="pension-calc"><div><span>{targets.length}件の合計</span><b className="num">{plainAmount(targets.reduce((sum, item) => sum + item.amount, 0))}</b></div></div>}
+            <button className="full-primary" type="button" disabled={busy} onClick={markPaid}>{busy ? "記録中…" : targets.length > 1 ? `${targets.length}件を支払った` : "支払った"}</button>
+          </>
+        )}
+        <button className="template-save" type="button" onClick={onEdit}>{row.kind === "pension" && !isTaxInstallment(row.cost) ? "払い方・金額を変える" : "金額・期日を直す"}</button>
+      </div>
+    </SettingsSheet>
   );
 }
 

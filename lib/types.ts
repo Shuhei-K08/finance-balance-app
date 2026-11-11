@@ -88,6 +88,8 @@ export type FixedCostOverride = {
   memo?: string;
   // この月の分を別の日（別の月でもよい）に払うとき、その日付 YYYY-MM-DD
   payDate?: string;
+  // 支払い済みにした日 YYYY-MM-DD（未払いなら undefined）
+  paidOn?: string;
 };
 
 export type Goal = {

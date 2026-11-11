@@ -6050,3 +6050,63 @@ div.tax-add select, .pension-sheet select { background: var(--panel); color: var
 
 /* 税金・社会保険を追加：一覧の上（サマリーのすぐ下） */
 button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-style: solid; border-width: 1px; background: var(--panel); color: var(--ink); }
+
+/* 税金：支払った・未払い */
+.tax-row .st.unpaid { width: auto; height: auto; padding: 3px 7px; border-radius: 6px; background: var(--danger); color: #fff; font-size: 10.5px; white-space: nowrap; }
+.tax-row.unpaid { box-shadow: inset 3px 0 0 var(--danger); }
+.tax-overdue { display: flex; align-items: center; gap: 12px; margin: 4px 0 10px; padding: 12px 14px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+.tax-overdue > span { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.tax-overdue b { color: var(--danger); font-size: 13.5px; }
+.tax-overdue small { color: var(--ink-soft); font-size: 11.5px; line-height: 1.5; }
+.tax-overdue button { flex-shrink: 0; max-width: 46%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); font: inherit; font-size: 12px; font-weight: 700; line-height: 1.4; }
+.tax-pay-sheet { display: grid; gap: 14px; }
+.tax-pay-sheet > label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500; }
+.tax-pay-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; background: var(--tint); }
+.tax-pay-head > span:nth-child(2) { flex: 1; display: grid; gap: 3px; min-width: 0; }
+.tax-pay-head b small { margin-left: 6px; font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+.tax-pay-head > span small { font-size: 12px; color: var(--ink-soft); }
+.tax-pay-head em { margin-left: 8px; font-style: normal; font-weight: 800; color: var(--danger); }
+.tax-pay-head > b.num { font-size: 18px; }
+.tax-pay-together { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; font-size: 13px; color: var(--ink); }
+.tax-pay-together input { width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0; accent-color: var(--ink); }
+.tax-pay-together span { display: grid; gap: 2px; }
+.tax-pay-together small { color: var(--muted); font-size: 11.5px; }
+
+/* 未払い（ホーム・取引） */
+.overdue-panel { border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--rule)); }
+.overdue-panel .panel-title h2 { color: var(--danger); }
+.overdue-list { display: grid; }
+.overdue-row + .overdue-row { border-top: 1px solid var(--rule); }
+.overdue-main { width: 100%; display: flex; align-items: center; gap: 10px; padding: 10px 0; background: none; border: 0; color: var(--ink); font: inherit; text-align: left; }
+.overdue-main > span { flex: 1; display: grid; gap: 2px; min-width: 0; }
+.overdue-main > span b { font-size: 14px; }
+.overdue-main > span small { font-size: 12px; color: var(--danger); font-weight: 700; }
+.overdue-main > b.num { font-size: 15px; }
+.overdue-main > em { flex-shrink: 0; font-style: normal; font-size: 12px; font-weight: 800; padding: 5px 10px; border-radius: 999px; border: 1px solid var(--rule); color: var(--ink); }
+.overdue-form { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: end; padding: 0 0 12px; }
+.overdue-form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.overdue-note { margin: 6px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.6; }
+.overdue-all { margin: 0 0 4px; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--rule); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; font-weight: 700; }
+
+/* 税金：支払いの見通し */
+.tax-outlook { display: grid; gap: 8px; margin: 4px 0 12px; }
+.tax-outlook-h { display: grid; gap: 2px; }
+.tax-outlook-h b { font-size: 14px; color: var(--ink); }
+.tax-outlook-h small { font-size: 11.5px; color: var(--muted); }
+.tax-outlook-card { padding: 12px 14px; border-radius: 12px; border: 1px solid var(--rule); background: var(--panel); }
+.tax-outlook-card.short { border-color: color-mix(in srgb, var(--danger) 55%, var(--rule)); }
+.tax-outlook-name { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.tax-outlook-name b { font-size: 14px; }
+.tax-outlook-name em { font-style: normal; font-size: 11.5px; font-weight: 800; padding: 3px 8px; border-radius: 999px; }
+.tax-outlook-name em.ok { color: var(--income); border: 1px solid currentColor; }
+.tax-outlook-name em.bad { color: #fff; background: var(--danger); }
+.tax-outlook-card dl { margin: 0; display: grid; gap: 3px; }
+.tax-outlook-card dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--ink-soft); }
+.tax-outlook-card dd { margin: 0; color: var(--ink); }
+.tax-outlook-card dl > div.total { margin-top: 4px; padding-top: 6px; border-top: 1px dashed var(--rule); font-weight: 800; color: var(--ink); }
+.tax-outlook-card dl > div.total dd { font-size: 15px; }
+.tax-outlook-card.short dl > div.total dd { color: var(--danger); }
+.tax-outlook-alert { margin: 8px 0 0; font-size: 12px; font-weight: 700; color: var(--danger); line-height: 1.6; }
+.tax-row .st.short { width: auto; height: auto; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--danger); color: var(--danger); font-size: 10.5px; white-space: nowrap; }
+.overdue-more { width: 100%; padding: 8px; border: 0; border-top: 1px solid var(--rule); background: none; color: var(--ink-soft); font: inherit; font-size: 12.5px; font-weight: 700; }
+.tax-row { grid-template-columns: 30px minmax(0, 1fr) auto minmax(22px, auto); }
