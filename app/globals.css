@@ -6140,3 +6140,26 @@ button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-styl
 .fixed-group-chev { color: var(--muted); transition: transform .2s var(--easing, ease); flex-shrink: 0; }
 .fixed-group.open .fixed-group-chev { transform: rotate(180deg); }
 .fixed-groups-all { justify-self: center; padding: 6px 12px; border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: 12.5px; font-weight: 700; }
+
+/* スマホ：家計簿の切り替え（下のメニューのすぐ上） */
+.ledger-dock { position: fixed; left: 12px; right: 12px; bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 6px); z-index: 24; display: flex; pointer-events: none; }
+.ledger-dock > * { pointer-events: auto; }
+.ledger-dock-bar { flex: 1; display: flex; gap: 4px; padding: 5px; border-radius: 16px; background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--rule); box-shadow: 0 6px 18px rgba(20, 30, 50, .14); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); overflow-x: auto; scrollbar-width: none; animation: dock-in .18s ease-out; }
+.ledger-dock-bar::-webkit-scrollbar { display: none; }
+.ledger-dock-bar button { flex: 1 0 0; min-width: 84px; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 4px; border: 0; border-radius: 11px; background: transparent; color: var(--ink-soft); font: inherit; font-size: 12px; font-weight: 800; }
+.ledger-dock-bar button span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-dock-bar button.on { background: var(--ink); color: var(--panel); }
+.ledger-dock-bar button.on .ledger-kind-tag.personal { color: var(--panel); border-color: color-mix(in srgb, var(--panel) 55%, transparent); }
+.ledger-dock-bar button.on .ledger-kind-tag.shared { color: #7FE0C8; border-color: #7FE0C8; }
+[data-theme="dark"] .ledger-dock-bar button.on .ledger-kind-tag.shared { color: #0F6B62; border-color: #0F6B62; }
+.ledger-dock-bar button.loading { opacity: .5; }
+.ledger-dock-mini { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; border: 1px solid var(--rule); background: color-mix(in srgb, var(--panel) 97%, transparent); box-shadow: 0 6px 18px rgba(20, 30, 50, .16); color: var(--ink); font: inherit; font-size: 13px; animation: dock-in .18s ease-out; touch-action: pan-y; }
+.ledger-dock-mini > i { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-style: normal; font-size: 12.5px; font-weight: 900; flex-shrink: 0; }
+.ledger-dock-mini > b { font-weight: 800; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-dock-dots { display: inline-flex; gap: 4px; align-items: center; }
+.ledger-dock-dots em { width: 6px; height: 6px; border-radius: 3px; background: var(--rule); }
+.ledger-dock-dots em.on { width: 14px; background: var(--ink); }
+@keyframes dock-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ledger-dock-bar, .ledger-dock-mini { animation: none; } }
+.app-shell.has-ledger-dock { padding-bottom: calc(var(--tab-h) + 104px + env(safe-area-inset-bottom)); }
+@media (min-width: 1100px) { .app-shell.has-ledger-dock { padding-bottom: 60px; } }

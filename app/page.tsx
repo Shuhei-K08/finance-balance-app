@@ -256,6 +256,66 @@ function LedgerPurposeChoice({ ledger, onChanged, setNotice }: { ledger: Househo
   );
 }
 
+// スマホ：下のメニューのすぐ上で家計簿を切り替える。下にスクロール中は小さくたたむ
+function LedgerDock({ households, activeId, switching, onSwitch }: { households: HouseholdSummary[]; activeId?: string; switching: boolean; onSwitch: (id: string) => void }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const touch = useRef<{ x: number; y: number; swiped: boolean } | null>(null);
+  useEffect(() => {
+    let lastY = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      if (y < 40) setCollapsed(false);
+      else if (y > lastY + 8) setCollapsed(true);
+      else if (y < lastY - 12) setCollapsed(false);
+      if (Math.abs(y - lastY) > 8 || y < 40) lastY = y;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+  if (households.length < 2) return null;
+  const index = Math.max(0, households.findIndex((item) => item.id === activeId));
+  const active = households[index];
+  const pick = (id: string) => { if (id !== activeId && !switching) onSwitch(id); };
+  return (
+    <div className={`ledger-dock mobile-only${collapsed ? " collapsed" : ""}`} aria-label="家計簿を切り替え">
+      {collapsed ? (
+        <button
+          type="button"
+          className="ledger-dock-mini"
+          aria-label={`${active?.name ?? "家計簿"}（タップで家計簿の一覧、左右にスワイプで切り替え）`}
+          onTouchStart={(event) => { event.stopPropagation(); touch.current = { x: event.touches[0].clientX, y: event.touches[0].clientY, swiped: false }; }}
+          onTouchEnd={(event) => {
+            event.stopPropagation();
+            const start = touch.current;
+            if (!start) return;
+            const dx = event.changedTouches[0].clientX - start.x;
+            const dy = event.changedTouches[0].clientY - start.y;
+            if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy)) {
+              start.swiped = true;
+              const next = households[index + (dx < 0 ? 1 : -1)];
+              if (next) pick(next.id);
+            }
+          }}
+          onClick={() => { if (touch.current?.swiped) { touch.current = null; return; } setCollapsed(false); }}
+        >
+          <i style={{ background: coverColor(active?.themeColor) }}>{(active?.name ?? "家").slice(0, 1)}</i>
+          <b>{active?.name}</b>
+          <span className="ledger-dock-dots" aria-hidden="true">{households.map((item, i) => <em key={item.id} className={i === index ? "on" : ""} />)}</span>
+        </button>
+      ) : (
+        <div className="ledger-dock-bar" onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}>
+          {households.map((household) => (
+            <button key={household.id} type="button" className={`${household.id === activeId ? "on" : ""}${switching && household.id !== activeId ? " loading" : ""}`} disabled={switching} onClick={() => pick(household.id)} aria-pressed={household.id === activeId}>
+              <LedgerKindTag kind={ledgerKindOf(household)} />
+              <span>{household.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LedgerKindTag({ kind, className = "" }: { kind: LedgerKind; className?: string }) {
   return (
     <span className={`ledger-kind-tag ${kind} ${className}`}>
@@ -692,7 +752,7 @@ export default function App() {
 
   return (
     <main
-      className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}`}
+      className={`app-shell ${state.activeSpace === "shared" ? "shared-ledger" : ""}${(state.households ?? []).length > 1 ? " has-ledger-dock" : ""}`}
     >
       {/* Desktop sidebar */}
       <aside className="app-sidebar" aria-label="メインメニュー">
@@ -903,6 +963,13 @@ export default function App() {
           })}
         </div>
       </nav>
+
+      <LedgerDock
+        households={state.households ?? []}
+        activeId={state.householdId}
+        switching={isSwitchingHousehold}
+        onSwitch={(id) => switchHousehold(id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
+      />
 
       {quickOpen && <QuickTransactionSheet state={state} initialDate={quickDate} initialType={quickType} onClose={() => setQuickOpen(false)} onSubmit={addTransaction} onLedgerTransferDone={async () => { setQuickOpen(false); await refreshRemoteState(); setNotice("資金移動を登録しました。相手の家計簿にも記録されています。"); }} />}
       {showTour && <GuidedTour isAdmin={state.profileRole === "admin"} setTab={setTab} onClose={closeTour} />}
