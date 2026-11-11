@@ -305,8 +305,6 @@ function LedgerDock({ households, activeId, switching, onSwitch }: { households:
             onClick={() => { if (touch.current?.swiped) { touch.current = null; return; } setOpen(true); }}
           >
             <i style={{ background: coverColor(active?.themeColor) }}>{(active?.name ?? "家").slice(0, 1)}</i>
-            <b>{active?.name}</b>
-            <span className="ledger-dock-dots" aria-hidden="true">{households.map((item, i) => <em key={item.id} className={i === index ? "on" : ""} />)}</span>
           </button>
         )}
       </div>

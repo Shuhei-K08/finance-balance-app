@@ -6165,3 +6165,6 @@ button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-styl
 @media (min-width: 1100px) { .app-shell.has-ledger-dock { padding-bottom: 60px; } }
 .ledger-dock-backdrop { position: fixed; inset: 0; z-index: 23; background: transparent; }
 .ledger-dock-mini.loading { opacity: .6; }
+/* 小さいボタンはアイコンだけ */
+.ledger-dock-mini { padding: 3px; gap: 0; border-width: 1px; }
+.ledger-dock-mini > i { width: 40px; height: 40px; font-size: 16px; }
