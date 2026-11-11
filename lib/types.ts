@@ -70,6 +70,8 @@ export type FixedCost = {
   counterpartyHouseholdName?: string;
   counterpartyAccountName?: string;
   memo?: string;
+  /** 税金・社会保険として「税金」タブに出す項目 */
+  taxKind?: TaxKind;
 };
 
 export type FixedCostOverride = {
@@ -141,7 +143,12 @@ export type HouseholdSummary = {
   inviteCode?: string;
   memberRole?: "owner" | "member";
   themeColor?: string;
+  /** 家計簿の使い方：ふだんの生活費か、事業用か */
+  purpose?: LedgerPurpose;
 };
+
+export type LedgerPurpose = "household" | "business";
+export type TaxKind = "income_tax" | "resident_tax" | "health_insurance" | "pension";
 
 export type HouseholdMember = {
   userId: string;
@@ -171,6 +178,7 @@ export type AdminDashboard = {
 export type LedgerState = {
   householdId?: string;
   householdName?: string;
+  ledgerPurpose?: LedgerPurpose;
   themeColor?: string;
   inviteCode?: string;
   profileRole?: "user" | "admin";

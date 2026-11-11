@@ -80,6 +80,7 @@ type DbHousehold = {
   space_type: SpaceType;
   mode: LedgerMode;
   invite_code: string | null;
+  ledger_purpose?: "household" | "business" | null;
 };
 
 type DbHouseholdSummary = DbHousehold & {
@@ -188,6 +189,7 @@ type DbFixedCost = {
   counterparty_household_name?: string | null;
   counterparty_account_name?: string | null;
   memo?: string | null;
+  tax_kind?: string | null;
 };
 
 type DbFixedCostOverride = {
@@ -626,20 +628,26 @@ async function loadHouseholds(): Promise<HouseholdSummary[]> {
   const userId = userData.user?.id;
   if (!userId) throw new Error("ログインが必要です。");
 
-  const { data, error } = await client
+  const selectHouseholds = (columns: string) => client
     .from("households")
-    .select("id,name,space_type,mode,invite_code,household_members!inner(member_role)")
+    .select(columns)
     .eq("household_members.user_id", userId)
     .is("deleted_at", null)
     .order("created_at");
+  let { data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,ledger_purpose,household_members!inner(member_role)");
+  if (error && /ledger_purpose/i.test(error.message)) {
+    // 事業用の列がまだ無い（add-business-ledger.sql 未実行）
+    ({ data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,household_members!inner(member_role)"));
+  }
   if (error) throwJapanese(error, "家計簿一覧の取得に失敗しました。");
-  return ((data ?? []) as DbHouseholdSummary[]).map((household) => ({
+  return ((data ?? []) as unknown as DbHouseholdSummary[]).map((household) => ({
     id: household.id,
     name: household.name,
     spaceType: household.space_type,
     mode: household.mode,
     inviteCode: household.invite_code ?? undefined,
     memberRole: household.household_members?.[0]?.member_role ?? "member",
+    purpose: household.space_type === "shared" && household.ledger_purpose === "business" ? "business" : "household",
     themeColor: typeof window !== "undefined" ? window.localStorage.getItem(`mirai-ledger-color-${household.id}`) ?? undefined : undefined
   }));
 }
@@ -688,7 +696,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
-    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
+    client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo,tax_kind").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
@@ -807,6 +815,17 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   }
   let fixedCostsData: unknown = fixedCostsResult.data;
   let fixedCostsError = fixedCostsResult.error;
+  if (fixedCostsError && /tax_kind/i.test(fixedCostsError.message)) {
+    // 税金の列がまだ無い（add-business-ledger.sql 未実行）
+    const fallback = await client
+      .from("fixed_costs")
+      .select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("due_day");
+    fixedCostsData = fallback.data;
+    fixedCostsError = fallback.error;
+  }
   if (fixedCostsError && /memo/i.test(fixedCostsError.message)) {
     // メモ列がまだ無い（add-fixed-cost-memo.sql 未実行）
     const fallback = await client
@@ -855,6 +874,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
   return {
     householdId,
     householdName: household.name,
+    ledgerPurpose: households.find((item) => item.id === householdId)?.purpose ?? "household",
     themeColor: getHouseholdThemeColor(householdId),
     inviteCode: household.invite_code ?? undefined,
     profileRole: (profileResult.data as DbProfile | null)?.role ?? "user",
@@ -924,7 +944,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       counterpartyAccountId: cost.counterparty_account_id ?? undefined,
       counterpartyHouseholdName: cost.counterparty_household_name ?? undefined,
       counterpartyAccountName: cost.counterparty_account_name ?? undefined,
-      memo: cost.memo ?? undefined
+      memo: cost.memo ?? undefined,
+      taxKind: (cost.tax_kind ?? undefined) as FixedCost["taxKind"]
     })),
     fixedCostOverrides: (fixedCostOverridesMissing ? [] : ((fixedCostOverridesData ?? []) as DbFixedCostOverride[])).map((override): FixedCostOverride => ({
       id: override.id,
@@ -1397,7 +1418,8 @@ export async function createFixedCost(householdId: string, input: Omit<FixedCost
     status: "planned",
     effective_from: input.effectiveFrom ?? null,
     effective_to: input.effectiveTo ?? null,
-    ...(input.memo ? { memo: input.memo } : {})
+    ...(input.memo ? { memo: input.memo } : {}),
+    ...(input.taxKind ? { tax_kind: input.taxKind } : {})
   });
   if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
   if (error) throwJapanese(error, "定期項目の追加に失敗しました。");
@@ -1807,4 +1829,46 @@ export async function deleteAssetSnapshotsForMonth(householdId: string, month: s
   if (!error) return;
   const { error: hardError } = await client.from("monthly_asset_snapshots").delete().eq("household_id", householdId).eq("snapshot_month", `${month}-01`);
   if (hardError) throwJapanese(hardError, "月末資産の取り消しに失敗しました。");
+}
+
+const BUSINESS_SETUP_MESSAGE = "事業用・税金の機能を使うには、Supabase で add-business-ledger.sql を実行してください。";
+
+// 家計簿の使い方（生活費／事業用）を変える
+export async function updateLedgerPurpose(householdId: string, purpose: "household" | "business") {
+  const client = requireSupabase();
+  const { error } = await client.from("households").update({ ledger_purpose: purpose }).eq("id", householdId);
+  if (error && /ledger_purpose/i.test(error.message)) throw new Error(BUSINESS_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "家計簿の使い方の変更に失敗しました。");
+}
+
+// 既存の定期項目を「税金」として印を付ける／外す
+export async function setFixedCostTaxKind(fixedCostId: string, taxKind: string | null) {
+  const client = requireSupabase();
+  const { error } = await client.from("fixed_costs").update({ tax_kind: taxKind }).eq("id", fixedCostId);
+  if (error && /tax_kind/i.test(error.message)) throw new Error(BUSINESS_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "税金の設定に失敗しました。");
+}
+
+// 税金の納付を1回分ずつまとめて登録する（その月だけの定期項目として）
+export async function createTaxInstallments(householdId: string, items: Array<{ name: string; taxKind: string; amount: number; date: string; accountId: string; categoryId?: string; memo?: string }>) {
+  const client = requireSupabase();
+  const rows = items.map((item) => ({
+    household_id: householdId,
+    name: item.name,
+    fixed_type: "expense",
+    category_id: item.categoryId || null,
+    account_id: item.accountId,
+    transfer_to_account_id: null,
+    amount: item.amount,
+    is_variable: false,
+    due_day: Number(item.date.slice(8, 10)),
+    status: "planned",
+    effective_from: `${item.date.slice(0, 7)}-01`,
+    effective_to: `${item.date.slice(0, 7)}-01`,
+    tax_kind: item.taxKind,
+    ...(item.memo ? { memo: item.memo } : {})
+  }));
+  const { error } = await client.from("fixed_costs").insert(rows);
+  if (error && /tax_kind/i.test(error.message)) throw new Error(BUSINESS_SETUP_MESSAGE);
+  if (error) throwJapanese(error, "税金の登録に失敗しました。");
 }

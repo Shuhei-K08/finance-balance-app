@@ -28,6 +28,7 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   BarChart3,
+  Briefcase,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
@@ -75,6 +76,7 @@ import {
   calculateAccountBalance,
   accountBalanceOnDate,
   accountBalanceBreakdown,
+  isFixedCostActiveInMonth,
   futureSnapshotMonths,
   calculateAccountBalanceInState,
   confirmedAccountBalance,
@@ -132,6 +134,9 @@ import {
   leaveSharedLedger,
   loadAdminDashboard,
   loadHouseholdMembers,
+  updateLedgerPurpose,
+  setFixedCostTaxKind,
+  createTaxInstallments,
   loadLedgerAccountsAndCategories,
   createLedgerTransfer,
   updateLedgerTransfer,
@@ -166,9 +171,9 @@ import {
   toJapaneseError
 } from "@/lib/db";
 import { AccountType } from "@/lib/types";
-import type { HouseholdMember } from "@/lib/types";
+import type { HouseholdMember, HouseholdSummary, LedgerPurpose, TaxKind } from "@/lib/types";
 
-type Tab = "home" | "transactions" | "analysis" | "cashflow" | "investments" | "settings" | "admin";
+type Tab = "home" | "transactions" | "analysis" | "cashflow" | "investments" | "taxes" | "settings" | "admin";
 type SettingsPage = "top" | "ledger" | "accounts" | "categories" | "fixed" | "templates" | "snapshots" | "investment" | "cover" | "export";
 
 const SETTINGS_PAGE_TITLES: Record<SettingsPage, string> = {
@@ -209,6 +214,56 @@ const LEGACY_COVER_COLORS: Record<string, string> = {
   "#64748b": "#3B3F45",
 };
 
+// 家計簿の種類（個人／共有／事業）
+type LedgerKind = "personal" | "shared" | "business";
+function ledgerKindOf(ledger: { spaceType?: string; purpose?: string } | undefined): LedgerKind {
+  if (!ledger || ledger.spaceType !== "shared") return "personal";
+  return ledger.purpose === "business" ? "business" : "shared";
+}
+const LEDGER_KIND_LABEL: Record<LedgerKind, string> = { personal: "個人", shared: "共有", business: "事業" };
+
+function LedgerPurposeChoice({ ledger, onChanged, setNotice }: { ledger: HouseholdSummary; onChanged: (purpose: LedgerPurpose) => Promise<void>; setNotice: (message: string) => void }) {
+  const current: LedgerPurpose = ledger.purpose === "business" ? "business" : "household";
+  const [saving, setSaving] = useState(false);
+  const isOwner = ledger.memberRole === "owner";
+  async function choose(purpose: LedgerPurpose) {
+    if (purpose === current || !isOwner || saving) return;
+    setSaving(true);
+    try {
+      await updateLedgerPurpose(ledger.id, purpose);
+      await onChanged(purpose);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "家計簿の使い方の変更に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="ledger-purpose">
+      <div className="ledger-purpose-h">家計簿の使い方</div>
+      {([
+        ["household", "生活費", "shared", "ふだんの家計簿。食費や日用品などの支出を管理します。"],
+        ["business", "事業用", "business", "事業口座とプール金を管理します。資産に「税金」タブが出て、納税の予定が残高見込みに入ります。"]
+      ] as const).map(([value, label, kind, text]) => (
+        <button key={value} type="button" className={`ledger-purpose-option ${value}${current === value ? " selected" : ""}`} disabled={!isOwner || saving} onClick={() => choose(value)} aria-pressed={current === value}>
+          <span className="ledger-purpose-radio" aria-hidden="true" />
+          <span><b>{label}<LedgerKindTag kind={kind} /></b><small>{text}</small></span>
+        </button>
+      ))}
+      <p className="settings-note">{isOwner ? "あとから何度でも切り替えられます。取引やカテゴリはそのまま残ります。" : "使い方を変えられるのは、この家計簿のオーナーだけです。"}</p>
+    </div>
+  );
+}
+
+function LedgerKindTag({ kind, className = "" }: { kind: LedgerKind; className?: string }) {
+  return (
+    <span className={`ledger-kind-tag ${kind} ${className}`}>
+      {kind === "business" && <Briefcase size={11} strokeWidth={2.4} aria-hidden="true" />}
+      {LEDGER_KIND_LABEL[kind]}
+    </span>
+  );
+}
+
 function coverColor(themeColor?: string | null) {
   if (!themeColor) return DEFAULT_COVER_COLOR;
   return LEGACY_COVER_COLORS[themeColor.toLowerCase()] ?? themeColor;
@@ -223,7 +278,7 @@ const baseTabs: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "settings", label: "設定", icon: Settings }
 ];
 
-const ASSET_TABS: Tab[] = ["analysis", "cashflow", "investments"];
+const ASSET_TABS: Tab[] = ["analysis", "cashflow", "investments", "taxes"];
 
 const TAB_TITLES: Record<Tab, string> = {
   home: "ホーム",
@@ -231,6 +286,7 @@ const TAB_TITLES: Record<Tab, string> = {
   analysis: "資産",
   cashflow: "資産",
   investments: "資産",
+  taxes: "資産",
   settings: "設定",
   admin: "管理"
 };
@@ -537,6 +593,8 @@ export default function App() {
     try {
       rememberHouseholdId(householdId);
       const next = await loadRemoteState(householdId);
+      // 税金タブは事業用の家計簿だけにあるので、そうでない家計簿では総資産へ
+      if (!(next.activeSpace === "shared" && next.ledgerPurpose === "business")) setTab((current) => (current === "taxes" ? "analysis" : current));
       rememberHouseholdId(next.householdId);
       setState(next);
     } finally {
@@ -565,9 +623,14 @@ export default function App() {
     fixed: fixedCostForecast(state.fixedCosts, calendarMonth),
     credit: monthlyCreditWithdrawalsByKey(state, calendarMonth)
   };
-  const visibleTabs = state.profileRole === "admin"
-    ? [...baseTabs, { id: "admin" as const, label: "管理", icon: UserPlus }]
+  const isBusinessLedger = state.activeSpace === "shared" && state.ledgerPurpose === "business";
+  const ledgerTabs = isBusinessLedger
+    ? [...baseTabs.slice(0, 5), { id: "taxes" as const, label: "税金", icon: Receipt }, ...baseTabs.slice(5)]
     : baseTabs;
+  const visibleTabs = state.profileRole === "admin"
+    ? [...ledgerTabs, { id: "admin" as const, label: "管理", icon: UserPlus }]
+    : ledgerTabs;
+
 
   function openQuick(date = todayIso(), type: TransactionType = "expense") {
     setQuickDate(date);
@@ -681,9 +744,7 @@ export default function App() {
           >
             <span className="ledger-mark" aria-hidden="true">{(state.householdName ?? "家").slice(0, 1)}</span>
             <span className="ledger-switch-name">{state.householdName ?? "家計簿"}</span>
-            <span className={`space-type-badge ${state.activeSpace === "shared" ? "shared" : "personal"}`}>
-              {state.activeSpace === "shared" ? "共有" : "個人"}
-            </span>
+            <LedgerKindTag kind={ledgerKindOf({ spaceType: state.activeSpace, purpose: state.ledgerPurpose })} />
             <ChevronDown size={16} />
           </button>
           {ledgerMenuOpen && (
@@ -701,7 +762,7 @@ export default function App() {
                     switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")));
                   }}
                 >
-                  <span className="pill-tag">{household.spaceType === "shared" ? "共有" : "個人"}</span>
+                  <LedgerKindTag kind={ledgerKindOf(household)} />
                   <span className="popover-item-label">{household.name}</span>
                   {household.id === state.householdId && <Check size={16} />}
                 </button>
@@ -724,7 +785,7 @@ export default function App() {
                 disabled={isSwitchingHousehold}
                 onClick={() => switchHousehold(household.id).catch((error) => setNotice(toJapaneseError(error, "家計簿の切替に失敗しました。")))}
               >
-                <span className="pill-tag">{household.spaceType === "shared" ? "共有" : "個人"}</span>
+                <LedgerKindTag kind={ledgerKindOf(household)} />
                 {household.name}
               </button>
             ))}
@@ -740,7 +801,7 @@ export default function App() {
 
         {ASSET_TABS.includes(tab) && (
           <nav className="segment-tabs mobile-only" aria-label="資産メニュー">
-            {([["analysis", "総資産"], ["cashflow", "収支"], ["investments", "投資"]] as const).map(([id, label]) => (
+            {([["analysis", "総資産"], ["cashflow", "収支"], ["investments", "投資"], ...(isBusinessLedger ? [["taxes", "税金"]] as const : [])] as const).map(([id, label]) => (
               <button key={id} type="button" className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>
             ))}
           </nav>
@@ -783,6 +844,8 @@ export default function App() {
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
+        {tab === "taxes" && !isBusinessLedger && <p className="settings-note">この家計簿は事業用ではないため、税金タブはありません。設定 › 家計簿を管理 で「事業用」にすると使えます。</p>}
+        {tab === "taxes" && isBusinessLedger && <TaxesView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
         {tab === "settings" && (
           <SettingsView
             state={state}
@@ -4976,7 +5039,7 @@ function SettingsView({
               onClick={() => setLedgerModalId(household.id)}
             >
               <i className="cover-swatch" style={{ background: coverColor(household.themeColor) }} />
-              <span className="settings-row-text"><b>{household.name}</b><small>{household.spaceType === "personal" ? "個人" : "共有"}／{household.memberRole === "owner" ? "オーナー" : "メンバー"}</small></span>
+              <span className="settings-row-text"><b>{household.name}</b><small><LedgerKindTag kind={ledgerKindOf(household)} className="inline" />{household.memberRole === "owner" ? "オーナー" : "メンバー"}</small></span>
               {household.id === state.householdId ? <span className="now-tag">表示中</span> : <span />}
               <ChevronRight size={16} className="settings-chev" />
             </button>
@@ -5008,8 +5071,18 @@ function SettingsView({
               <div>
                 <span>家計簿名</span>
                 <strong>{modalLedger.name}</strong>
-                <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
+                <em>{modalLedger.spaceType === "personal" ? "個人家計簿" : ledgerKindOf(modalLedger) === "business" ? "事業用の家計簿" : "共有家計簿"} / {modalLedger.memberRole === "owner" ? "所有者" : "メンバー"}</em>
               </div>
+              {modalLedger.spaceType === "shared" && (
+                <LedgerPurposeChoice
+                  ledger={modalLedger}
+                  onChanged={async (purpose) => {
+                    await reload();
+                    setNotice(purpose === "business" ? `${modalLedger.name}を事業用にしました。資産に「税金」タブが出ます。` : `${modalLedger.name}を生活費の家計簿にしました。`);
+                  }}
+                  setNotice={setNotice}
+                />
+              )}
               <LedgerColorPicker
                 householdId={modalLedger.id}
                 currentColor={modalLedger.themeColor}
@@ -5747,10 +5820,479 @@ function AccountSheet({ account, state, setNotice, reload, onClose }: { account?
   );
 }
 
+// ===================== 税金タブ（事業用の家計簿） =====================
+const TAX_KIND_META: Record<TaxKind, { label: string; short: string; color: string; mark: string }> = {
+  income_tax: { label: "所得税", short: "所得税", color: "#1C2A4A", mark: "所" },
+  resident_tax: { label: "住民税", short: "住民税", color: "#0F6B62", mark: "住" },
+  health_insurance: { label: "国民健康保険", short: "国保", color: "#9A6F12", mark: "保" },
+  pension: { label: "国民年金", short: "年金", color: "#7A3A48", mark: "年" }
+};
+const TAX_KIND_ORDER: TaxKind[] = ["income_tax", "resident_tax", "health_insurance", "pension"];
+
+function lastDayOfMonth(monthKey: string) {
+  return new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
+}
+function monthEndDate(monthKey: string) {
+  return `${monthKey}-${String(lastDayOfMonth(monthKey)).padStart(2, "0")}`;
+}
+function fiscalStartYear(monthKey: string) {
+  const year = Number(monthKey.slice(0, 4));
+  return Number(monthKey.slice(5, 7)) >= 4 ? year : year - 1;
+}
+function fiscalMonths(startYear: number) {
+  return Array.from({ length: 12 }, (_, index) => addMonthsKey(`${startYear}-04`, index));
+}
+function monthNumber(monthKey: string) {
+  return Number(monthKey.slice(5, 7));
+}
+function isTaxInstallment(cost: FixedCost) {
+  return Boolean(cost.taxKind && cost.effectiveFrom && cost.effectiveTo && cost.effectiveFrom.slice(0, 7) === cost.effectiveTo.slice(0, 7));
+}
+
+type TaxRow = {
+  key: string;
+  cost: FixedCost;
+  kind: TaxKind;
+  title: string;
+  sub: string;
+  date: string;
+  amount: number;
+  note?: string;
+  covered: boolean;
+  status: "done" | "next" | "plan" | "covered";
+};
+
+function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "status">[] {
+  const taxCosts = state.fixedCosts.filter((cost) => cost.taxKind);
+  const occurrences = fixedCostOccurrencesForMonth(taxCosts, monthKey, state);
+  const rows: Omit<TaxRow, "status">[] = occurrences.map((occurrence) => {
+    const kind = occurrence.taxKind as TaxKind;
+    const meta = TAX_KIND_META[kind];
+    const base = state.fixedCosts.find((cost) => cost.id === occurrence.id) ?? occurrence;
+    const isLump = Boolean(occurrence.overrideMemo && /まとめ払い|前納/.test(occurrence.overrideMemo));
+    const sub = kind === "pension"
+      ? (isLump ? occurrence.overrideMemo!.replace(/\s*(まとめ払い|前納).*$/, "") : `${monthNumber(addMonthsKey(monthKey, -1))}月分`)
+      : occurrence.name.replace(meta.label, "").replace(meta.short, "").trim();
+    return {
+      key: `${occurrence.id}-${monthKey}`,
+      cost: base,
+      kind,
+      title: meta.label,
+      sub,
+      date: occurrence.date,
+      amount: occurrence.amount,
+      note: isLump ? (occurrence.overrideMemo!.includes("前納") ? "前納" : "まとめ払い") : undefined,
+      covered: false
+    };
+  });
+  // まとめ払い・前納で、この月は払わない年金
+  taxCosts.filter((cost) => isFixedCostActiveInMonth(cost, monthKey)).forEach((cost) => {
+    const override = state.fixedCostOverrides?.find((item) => item.fixedCostId === cost.id && item.month === monthKey);
+    if (!override?.skipped) return;
+    const kind = cost.taxKind as TaxKind;
+    rows.push({
+      key: `${cost.id}-${monthKey}-covered`,
+      cost,
+      kind,
+      title: TAX_KIND_META[kind].label,
+      sub: kind === "pension" ? `${monthNumber(addMonthsKey(monthKey, -1))}月分` : cost.name,
+      date: `${monthKey}-${String(Math.min(cost.dueDay, lastDayOfMonth(monthKey))).padStart(2, "0")}`,
+      amount: 0,
+      note: override.memo || "まとめ払い済み",
+      covered: true
+    });
+  });
+  return rows.sort((a, b) => a.date.localeCompare(b.date) || TAX_KIND_ORDER.indexOf(a.kind) - TAX_KIND_ORDER.indexOf(b.kind));
+}
+
+function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void> }) {
+  const startYear = fiscalStartYear(monthKey);
+  const months = fiscalMonths(startYear);
+  const today = todayIso();
+  const currentMonth = today.slice(0, 7);
+  const [filter, setFilter] = useState<TaxKind | "all">("all");
+  const [showPast, setShowPast] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [pensionId, setPensionId] = useState<string | null>(null);
+
+  const allRows = months.map((month) => ({ month, rows: taxRowsForMonth(state, month) }));
+  const upcoming = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && row.amount > 0 && row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  const nextDate = upcoming[0]?.date;
+  const withStatus = allRows.map(({ month, rows }) => ({
+    month,
+    rows: rows
+      .filter((row) => filter === "all" || row.kind === filter)
+      .map((row): TaxRow => ({ ...row, status: row.covered ? "covered" : row.date < today ? "done" : row.date === nextDate ? "next" : "plan" }))
+  }));
+  const counted = withStatus.flatMap(({ rows }) => rows).filter((row) => !row.covered);
+  const total = counted.reduce((sum, row) => sum + row.amount, 0);
+  const paid = counted.filter((row) => row.status === "done").reduce((sum, row) => sum + row.amount, 0);
+  const rest = total - paid;
+  const nextRows = upcoming.filter((row) => row.date === nextDate && (filter === "all" || row.kind === filter));
+  const pastMonths = withStatus.filter(({ month, rows }) => month < currentMonth && rows.length > 0 && rows.every((row) => row.status === "done" || row.status === "covered"));
+  const pastTotal = pastMonths.flatMap(({ rows }) => rows).reduce((sum, row) => sum + row.amount, 0);
+  const pastCount = pastMonths.flatMap(({ rows }) => rows).filter((row) => !row.covered).length;
+  const pastKinds = Array.from(new Set(pastMonths.flatMap(({ rows }) => rows.map((row) => TAX_KIND_META[row.kind].short))));
+  const visibleMonths = withStatus.filter(({ month, rows }) => rows.length > 0 && (showPast || !pastMonths.some((item) => item.month === month)));
+  const hasAny = state.fixedCosts.some((cost) => cost.taxKind);
+  const detailCost = detailId ? state.fixedCosts.find((cost) => cost.id === detailId) : undefined;
+  const pensionCost = pensionId ? state.fixedCosts.find((cost) => cost.id === pensionId) : undefined;
+  const daysLeft = nextDate ? Math.round((new Date(`${nextDate}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000) : 0;
+
+  function openRow(row: TaxRow) {
+    if (row.kind === "pension" && !isTaxInstallment(row.cost)) setPensionId(row.cost.id);
+    else setDetailId(row.cost.id);
+  }
+
+  return (
+    <div className="taxes-view">
+      <section className="asset-hero tax-hero">
+        <div className="asset-hero-label tax-hero-label"><span>{startYear}年度の税金・社会保険</span><span className="num">4月〜翌3月</span></div>
+        <div className="amount asset-hero-amount"><span className="yen">¥</span>{plainAmount(total)}</div>
+        <div className="tax-progress" aria-hidden="true">
+          <i style={{ width: `${total ? (paid / total) * 100 : 0}%` }} className="paid" />
+          <i style={{ width: `${total ? (rest / total) * 100 : 0}%` }} className="rest" />
+        </div>
+        <div className="tax-progress-legend"><span>支払い済み<b className="num">{plainAmount(paid)}</b></span><span>これから<b className="num">{plainAmount(rest)}</b></span></div>
+        {nextRows.length > 0 && nextDate && (
+          <div className="tax-next">
+            <span className="tax-next-date num">{shortDate(nextDate)}<small>{daysLeft === 0 ? "今日" : `あと${daysLeft}日`}</small></span>
+            <span className="tax-next-text"><b>{shortDate(nextDate)} の支払い {nextRows.length}件</b><small>{nextRows.map((row) => `${TAX_KIND_META[row.kind].short}${row.note ? `（${row.note}）` : ""}`).join("・")}</small></span>
+            <b className="num">{plainAmount(nextRows.reduce((sum, row) => sum + row.amount, 0))}</b>
+          </div>
+        )}
+      </section>
+
+      <div className="tax-chips" role="tablist" aria-label="税金の種類で絞り込み">
+        <button type="button" className={filter === "all" ? "on" : ""} onClick={() => setFilter("all")}>すべて</button>
+        {TAX_KIND_ORDER.map((kind) => (
+          <button key={kind} type="button" className={filter === kind ? "on" : ""} onClick={() => setFilter(kind)}><i style={{ background: TAX_KIND_META[kind].color }} />{TAX_KIND_META[kind].short}</button>
+        ))}
+      </div>
+
+      {!hasAny && (
+        <div className="tax-empty">
+          <b>まだ税金・社会保険が登録されていません</b>
+          <p>住民税・国民健康保険・所得税・国民年金を登録すると、4月から翌3月まで、いつ・いくら払うかが月ごとに並びます。事業用の口座の残高見込みにも入ります。</p>
+        </div>
+      )}
+
+      {pastMonths.length > 0 && !showPast && (
+        <>
+          <div className="tax-month-h past"><b>{monthNumber(pastMonths[0].month)}月〜{monthNumber(pastMonths[pastMonths.length - 1].month)}月</b><span className="num">{plainAmount(pastTotal)}</span></div>
+          <div className="tax-list past">
+            <button type="button" className="tax-row fold" onClick={() => setShowPast(true)}>
+              <span className="tax-mark done">済</span>
+              <span className="tax-row-text"><b>支払い済み {pastCount}件<small>{pastKinds.join("・")}</small></b><small>タップで月ごとに表示</small></span>
+              <span className="tax-row-amount num">{plainAmount(pastTotal)}</span>
+              <ChevronDown size={16} className="tax-row-status" />
+            </button>
+          </div>
+        </>
+      )}
+
+      {visibleMonths.map(({ month, rows }) => {
+        const isNow = month === currentMonth;
+        const isPast = pastMonths.some((item) => item.month === month);
+        return (
+          <div key={month} className="tax-month">
+            <div className={`tax-month-h${isPast ? " past" : ""}`}><b>{monthNumber(month)}月</b>{isNow && <em>今月</em>}<span className="num">{plainAmount(rows.reduce((sum, row) => sum + row.amount, 0))}</span></div>
+            <div className={`tax-list${isNow ? " now" : ""}${isPast ? " past" : ""}`}>
+              {rows.map((row) => (
+                <button type="button" key={row.key} className={`tax-row ${row.status}`} onClick={() => openRow(row)}>
+                  <span className="tax-mark" style={{ background: TAX_KIND_META[row.kind].color }}>{TAX_KIND_META[row.kind].mark}</span>
+                  <span className="tax-row-text">
+                    <b>{row.title}{row.sub && <small>{row.sub}</small>}</b>
+                    <small>
+                      {!row.covered && <span className="num">{shortDate(row.date)}</span>}
+                      {!row.covered && row.note && " ・ "}
+                      {row.note && <u className={row.covered ? "" : "lump"}>{row.note}</u>}
+                      {row.cost.memo && !row.covered && !row.note && <> ・ {row.cost.memo}</>}
+                    </small>
+                  </span>
+                  <span className="tax-row-amount num">{row.covered ? "—" : plainAmount(row.amount)}</span>
+                  <span className="tax-row-status" aria-label={row.status === "done" ? "支払い済み" : row.status === "next" ? "次の支払い" : row.status === "covered" ? "まとめ払い済み" : "予定"}>
+                    {row.status === "done" && <i className="st done">済</i>}
+                    {row.status === "next" && <i className="st next">次</i>}
+                    {row.status === "covered" && <i className="st cov">前</i>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      {showPast && pastMonths.length > 0 && <button type="button" className="tax-fold-close" onClick={() => setShowPast(false)}>支払い済みの月をたたむ</button>}
+
+      <button type="button" className="tax-add" onClick={() => setAdding(true)}><Plus size={16} /> 税金・社会保険を追加</button>
+      <p className="settings-note">金額は定期項目と連動していて、口座の残高見込みにも入ります。国保・住民税の金額と回数は、6月ごろ届く通知書の内容に合わせて変えてください。行をタップすると、金額や日付を直せます。</p>
+
+      {adding && <TaxAddSheet state={state} startYear={startYear} setNotice={setNotice} reload={reload} onClose={() => setAdding(false)} />}
+      {detailCost && (
+        <SettingsSheet title={TAX_KIND_META[detailCost.taxKind as TaxKind]?.label ?? "税金"} onClose={() => setDetailId(null)}>
+          <FixedCostDetail key={detailCost.id} cost={detailCost} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onClose={() => setDetailId(null)} />
+        </SettingsSheet>
+      )}
+      {pensionCost && <PensionSheet cost={pensionCost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onClose={() => setPensionId(null)} onEdit={() => { setPensionId(null); setDetailId(pensionCost.id); }} />}
+    </div>
+  );
+}
+
+type TaxDraftItem = { label: string; date: string; amount: number };
+
+function splitEvenly(total: number, count: number) {
+  // 端数は第1期にまとめる（通知書と同じ考え方）
+  const each = Math.floor(total / count / 100) * 100;
+  return Array.from({ length: count }, (_, index) => (index === 0 ? total - each * (count - 1) : each));
+}
+
+function TaxAddSheet({ state, startYear, setNotice, reload, onClose }: { state: LedgerState; startYear: number; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const normalAccounts = sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"));
+  const [kind, setKind] = useState<TaxKind>("resident_tax");
+  const [incomeMode, setIncomeMode] = useState<"prepay" | "final">("prepay");
+  const [yearTotal, setYearTotal] = useState(0);
+  const [items, setItems] = useState<TaxDraftItem[]>([]);
+  const [accountId, setAccountId] = useState(normalAccounts[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState("");
+  const [pensionAmount, setPensionAmount] = useState(17510);
+  const [pensionDueDay, setPensionDueDay] = useState(31);
+  const existingPension = state.fixedCosts.find((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
+  const pensionCandidates = state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
+  const [linkId, setLinkId] = useState(() => pensionCandidates.find((cost) => cost.name.includes("年金"))?.id ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // 種類ごとの初期の納付スケジュール
+  useEffect(() => {
+    const next = String(startYear + 1);
+    const s = String(startYear);
+    if (kind === "resident_tax") {
+      const amounts = splitEvenly(yearTotal, 4);
+      setItems([`${s}-06`, `${s}-08`, `${s}-10`, `${next}-01`].map((month, index) => ({ label: `第${index + 1}期`, date: monthEndDate(month), amount: amounts[index] })));
+    } else if (kind === "health_insurance") {
+      const amounts = splitEvenly(yearTotal, 10);
+      setItems(Array.from({ length: 10 }, (_, index) => ({ label: `第${index + 1}期`, date: monthEndDate(addMonthsKey(`${s}-06`, index)), amount: amounts[index] })));
+    } else if (kind === "income_tax") {
+      if (incomeMode === "prepay") setItems([{ label: "予定納税 第1期", date: `${s}-07-31`, amount: yearTotal }, { label: "予定納税 第2期", date: `${s}-11-30`, amount: yearTotal }]);
+      else setItems([{ label: `確定申告（${startYear - 1}年分）`, date: `${s}-04-20`, amount: yearTotal }]);
+    } else {
+      setItems([]);
+    }
+  }, [kind, incomeMode, yearTotal, startYear]);
+
+  async function save() {
+    if (!accountId) return setNotice("支払う口座を選んでください。");
+    setSaving(true);
+    try {
+      if (kind === "pension") {
+        if (existingPension) { onClose(); return; }
+        if (linkId) {
+          await setFixedCostTaxKind(linkId, "pension");
+        } else {
+          if (!pensionAmount) { setNotice("月額を入力してください。"); return; }
+          await createFixedCost(state.householdId ?? "", { name: "国民年金", kind: "expense", categoryId, accountId, amount: pensionAmount, variable: false, dueDay: pensionDueDay, status: "planned", effectiveFrom: `${startYear}-04-01`, taxKind: "pension" });
+        }
+      } else {
+        const valid = items.filter((item) => item.amount > 0 && item.date);
+        if (valid.length === 0) { setNotice("金額を入力してください。"); return; }
+        await createTaxInstallments(state.householdId ?? "", valid.map((item) => ({ name: `${TAX_KIND_META[kind].label} ${item.label}`, taxKind: kind, amount: item.amount, date: item.date, accountId, categoryId: categoryId || undefined })));
+      }
+      await reload();
+      setNotice(`${TAX_KIND_META[kind].label}を登録しました。`);
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "税金の登録に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const totalLabel = kind === "resident_tax" ? "年税額（通知書の合計）" : kind === "health_insurance" ? "年額（通知書の合計）" : incomeMode === "prepay" ? "1回あたりの金額（通知書の第1期）" : "納める金額";
+  return (
+    <SettingsSheet title="税金・社会保険を追加" onClose={onClose}>
+      <div className="tax-add">
+        <div className="segmented compact tax-kind-seg" role="tablist" aria-label="種類">
+          {TAX_KIND_ORDER.map((value) => (
+            <button key={value} type="button" className={kind === value ? "selected" : ""} onClick={() => setKind(value)}>{TAX_KIND_META[value].short}</button>
+          ))}
+        </div>
+        {kind === "income_tax" && (
+          <div className="segmented compact" role="tablist" aria-label="所得税の種類">
+            <button type="button" className={incomeMode === "prepay" ? "selected" : ""} onClick={() => setIncomeMode("prepay")}>予定納税（7月・11月）</button>
+            <button type="button" className={incomeMode === "final" ? "selected" : ""} onClick={() => setIncomeMode("final")}>確定申告</button>
+          </div>
+        )}
+        {kind !== "pension" ? (
+          <>
+            <label>{totalLabel}<input type="number" inputMode="numeric" value={numberInputValue(yearTotal)} onChange={(event) => setYearTotal(Number(event.target.value || 0))} placeholder="0" /></label>
+            <div className="tax-draft">
+              <div className="tax-draft-h"><span>納付の予定（{startYear}年度）</span><span>日付・金額は直せます</span></div>
+              {items.map((item, index) => (
+                <div className="tax-draft-row" key={index}>
+                  <span>{item.label}</span>
+                  <input type="date" value={item.date} onChange={(event) => setItems(items.map((row, i) => (i === index ? { ...row, date: event.target.value } : row)))} />
+                  <input type="number" inputMode="numeric" value={numberInputValue(item.amount)} onChange={(event) => setItems(items.map((row, i) => (i === index ? { ...row, amount: Number(event.target.value || 0) } : row)))} />
+                </div>
+              ))}
+              {kind === "income_tax" && incomeMode === "final" && <p className="settings-note">振替納税なら4月20日ごろに引き落とされます。自分で納める場合は3月15日に変えてください。</p>}
+            </div>
+          </>
+        ) : existingPension ? (
+          <p className="settings-note">国民年金は「{existingPension.name}」（毎月 {plainAmount(existingPension.amount)}円）を使っています。一覧の年金の行をタップすると、まとめ払いや前納に切り替えられます。</p>
+        ) : (
+          <>
+            {pensionCandidates.length > 0 && (
+              <label>今ある定期項目を使う
+                <select value={linkId} onChange={(event) => setLinkId(event.target.value)}>
+                  <option value="">新しく作る</option>
+                  {pensionCandidates.map((cost) => <option key={cost.id} value={cost.id}>{cost.name}（毎月 {plainAmount(cost.amount)}円）</option>)}
+                </select>
+              </label>
+            )}
+            {!linkId && (
+              <div className="form-grid">
+                <label>月額<input type="number" inputMode="numeric" value={numberInputValue(pensionAmount)} onChange={(event) => setPensionAmount(Number(event.target.value || 0))} /></label>
+                <label>引落日<input type="number" min="1" max="31" value={numberInputValue(pensionDueDay)} onChange={(event) => setPensionDueDay(Number(event.target.value || 0))} /></label>
+              </div>
+            )}
+            <p className="settings-note">国民年金は毎月の定期項目として扱います（その月の分は翌月末に引き落とし）。まとめ払いや前納は、登録後に一覧の年金の行から切り替えられます。</p>
+          </>
+        )}
+        {!(kind === "pension" && (existingPension || linkId)) && (
+          <>
+            <label>支払う口座<AccountSelect value={accountId} onChange={setAccountId} accounts={normalAccounts} /></label>
+            <label>カテゴリ（任意）<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">なし</option><CategoryOptions categories={state.categories} kind="expense" /></select></label>
+          </>
+        )}
+        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "登録中…" : kind === "pension" && existingPension ? "閉じる" : "登録する"}</button>
+      </div>
+    </SettingsSheet>
+  );
+}
+
+// 国民年金：毎月／まとめて払う／前納
+function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEdit }: { cost: FixedCost; state: LedgerState; startYear: number; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void; onEdit: () => void }) {
+  const s = String(startYear);
+  const [mode, setMode] = useState<"lump" | "prepay">("lump");
+  const nowMonth = todayIso().slice(0, 7);
+  const firstCover = nowMonth > `${s}-03` ? addMonthsKey(nowMonth, -1) : `${s}-04`;
+  const [fromMonth, setFromMonth] = useState(firstCover);
+  const [toMonth, setToMonth] = useState(addMonthsKey(firstCover, 2));
+  const [payDate, setPayDate] = useState(monthEndDate(addMonthsKey(firstCover, 1)));
+  const [prepay, setPrepay] = useState<"half1" | "half2" | "year" | "two">("year");
+  const prepayPlan = {
+    half1: { from: `${s}-04`, to: `${s}-09`, date: `${s}-04-30`, label: "6か月前納（4月〜9月分）" },
+    half2: { from: `${s}-10`, to: `${startYear + 1}-03`, date: `${s}-10-31`, label: "6か月前納（10月〜3月分）" },
+    year: { from: `${s}-04`, to: `${startYear + 1}-03`, date: `${s}-04-30`, label: "1年前納" },
+    two: { from: `${s}-04`, to: `${startYear + 2}-03`, date: `${s}-04-30`, label: "2年前納" }
+  }[prepay];
+  const from = mode === "lump" ? fromMonth : prepayPlan.from;
+  const to = mode === "lump" ? toMonth : prepayPlan.to;
+  const count = to >= from ? Number(to.slice(0, 4)) * 12 + Number(to.slice(5, 7)) - (Number(from.slice(0, 4)) * 12 + Number(from.slice(5, 7))) + 1 : 0;
+  const [amountEdit, setAmountEdit] = useState<number | null>(null);
+  const amount = amountEdit ?? cost.amount * count;
+  const date = mode === "lump" ? payDate : prepayPlan.date;
+  const [saving, setSaving] = useState(false);
+  const monthOptions = Array.from({ length: 30 }, (_, index) => addMonthsKey(`${startYear - 1}-10`, index));
+  const label = (month: string) => `${month.slice(0, 4)}年${monthNumber(month)}月分`;
+
+  async function save() {
+    if (count <= 0) return setNotice("対象の月を正しく選んでください。");
+    if (!amount) return setNotice("金額を入力してください。");
+    setSaving(true);
+    try {
+      const payMonth = date.slice(0, 7);
+      const memo = mode === "lump" ? `${monthNumber(from)}月分〜${monthNumber(to)}月分 まとめ払い` : `${monthNumber(from)}月分〜${monthNumber(to)}月分 ${prepayPlan.label.replace(/（.*）/, "")}`;
+      let includesPayMonth = false;
+      const jobs: Promise<void>[] = [];
+      for (let index = 0; index < count; index += 1) {
+        const covered = addMonthsKey(from, index);
+        const normalPay = addMonthsKey(covered, 1);
+        if (normalPay === payMonth) { includesPayMonth = true; continue; }
+        if (!isFixedCostActiveInMonth(cost, normalPay)) continue;
+        jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, normalPay, { amount: cost.amount, dueDay: cost.dueDay, skipped: true, memo: `${monthNumber(payMonth)}月にまとめ払い済み` }));
+      }
+      // 支払う月：まとめ払いの額（その月のふだんの分が対象外なら足す）
+      jobs.push(upsertFixedCostOverride(state.householdId ?? "", cost.id, payMonth, { amount: amount + (includesPayMonth ? 0 : cost.amount), dueDay: Number(date.slice(8, 10)), skipped: false, memo }));
+      await Promise.all(jobs);
+      await reload();
+      setNotice(`国民年金を「${memo}」にしました。`);
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "国民年金の払い方の変更に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resetYear() {
+    setSaving(true);
+    try {
+      const months = fiscalMonths(startYear);
+      const targets = (state.fixedCostOverrides ?? []).filter((item) => item.fixedCostId === cost.id && months.includes(item.month) && (item.skipped || /まとめ払い|前納/.test(item.memo ?? "")));
+      await Promise.all(targets.map((item) => upsertFixedCostOverride(state.householdId ?? "", cost.id, item.month, { amount: cost.amount, dueDay: cost.dueDay, skipped: false, memo: "" })));
+      await reload();
+      setNotice(`${startYear}年度の国民年金を毎月払いに戻しました。`);
+      onClose();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "毎月払いに戻せませんでした。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  const hasLump = (state.fixedCostOverrides ?? []).some((item) => item.fixedCostId === cost.id && fiscalMonths(startYear).includes(item.month) && (item.skipped || /まとめ払い|前納/.test(item.memo ?? "")));
+
+  return (
+    <SettingsSheet title="国民年金の払い方" onClose={onClose}>
+      <div className="pension-sheet">
+        <div className="pension-head"><span className="tax-mark" style={{ background: TAX_KIND_META.pension.color }}>年</span><b>{cost.name}</b><small className="num">毎月 {plainAmount(cost.amount)}円</small></div>
+        <div className="segmented compact" role="tablist" aria-label="払い方">
+          <button type="button" className={mode === "lump" ? "selected" : ""} onClick={() => { setMode("lump"); setAmountEdit(null); }}>まとめて払う</button>
+          <button type="button" className={mode === "prepay" ? "selected" : ""} onClick={() => { setMode("prepay"); setAmountEdit(null); }}>前納</button>
+        </div>
+        {mode === "lump" ? (
+          <>
+            <div className="form-grid">
+              <label>いつの分から<select value={fromMonth} onChange={(event) => { setFromMonth(event.target.value); setAmountEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
+              <label>いつの分まで<select value={toMonth} onChange={(event) => { setToMonth(event.target.value); setAmountEdit(null); }}>{monthOptions.map((month) => <option key={month} value={month}>{label(month)}</option>)}</select></label>
+            </div>
+            <label>支払日<input type="date" value={payDate} onChange={(event) => setPayDate(event.target.value)} /></label>
+          </>
+        ) : (
+          <div className="pension-options">
+            {(["half1", "half2", "year", "two"] as const).map((value) => {
+              const plan = { half1: ["6か月前納（前期）", "4月末に4月〜9月分"], half2: ["6か月前納（後期）", "10月末に10月〜翌3月分"], year: ["1年前納", "4月末に1年分"], two: ["2年前納", "4月末に2年分"] }[value];
+              return (
+                <button key={value} type="button" className={`pension-option${prepay === value ? " selected" : ""}`} onClick={() => { setPrepay(value); setAmountEdit(null); }}>
+                  <span className="ledger-purpose-radio" aria-hidden="true" /><span><b>{plan[0]}</b><small>{plan[1]}</small></span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <label>支払う金額{mode === "prepay" ? "（割引後の額に直してください）" : ""}<input type="number" inputMode="numeric" value={numberInputValue(amount)} onChange={(event) => setAmountEdit(Number(event.target.value || 0))} /></label>
+        <div className="pension-calc">
+          <div><span>{plainAmount(cost.amount)}円 × {count}か月</span><b className="num">{plainAmount(cost.amount * count)}</b></div>
+          <div><span>支払う日</span><b className="num">{date.replace(/-/g, "/")}</b></div>
+          <div><span>対象の月のふだんの支払い</span><b>なし（まとめ払い済み）</b></div>
+        </div>
+        <p className="settings-note">保存すると、毎月の「{cost.name}」の定期項目が、対象の月だけこの払い方に合わせて変わります。残高見込みにもそのまま入ります。</p>
+        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存する"}</button>
+        {hasLump && <button className="google-button" type="button" disabled={saving} onClick={resetYear}>{startYear}年度を毎月払いに戻す</button>}
+        <button className="template-save" type="button" onClick={onEdit}>月額や口座を変える</button>
+      </div>
+    </SettingsSheet>
+  );
+}
+
 function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id: string) => void }) {
   const currentMonth = todayIso().slice(0, 7);
-  const active = state.fixedCosts.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth);
-  const ended = state.fixedCosts.filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
+  // 税金の1回ごとの納付は「資産 › 税金」で管理するので、ここには出さない
+  const listed = state.fixedCosts.filter((cost) => !isTaxInstallment(cost));
+  const taxInstallmentCount = state.fixedCosts.length - listed.length;
+  const active = listed.filter((cost) => !cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= currentMonth);
+  const ended = listed.filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth);
   const sum = (kind: TransactionType) => active.filter((cost) => cost.kind === kind).reduce((total, cost) => total + cost.amount, 0);
   // 分割で生まれた後続レコードは代表1件にまとめる（今月有効なものを優先）
   const installments = new Map<string, { cost: LedgerState["fixedCosts"][number]; info: InstallmentInfo }>();
@@ -5792,6 +6334,7 @@ function FixedCostsOverview({ state, onEdit }: { state: LedgerState; onEdit: (id
         <div><span>毎月の支出</span><b className="num">{plainAmount(expense)}</b></div>
         <div><span>差し引き</span><b className={`num ${income - expense >= 0 ? "pos" : "neg"}`}>{income - expense > 0 ? "+" : income - expense < 0 ? "−" : ""}{plainAmount(income - expense)}</b></div>
       </div>
+      {taxInstallmentCount > 0 && <p className="settings-note">税金の納付（{taxInstallmentCount}件）は、資産 › 税金 で管理しています。</p>}
       {installmentList.length > 0 && (
         <div>
           <div className="settings-sec-h"><span>ローン・分割払い</span><span>残り {plainAmount(installmentList.reduce((total, item) => total + item.info.remainingAmount, 0))}</span></div>
