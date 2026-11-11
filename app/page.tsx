@@ -6061,9 +6061,65 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
       {detailCost && (
         <SettingsSheet title={TAX_KIND_META[detailCost.taxKind as TaxKind]?.label ?? "税金"} onClose={() => setDetailId(null)}>
           <FixedCostDetail key={detailCost.id} cost={detailCost} state={state} setNotice={setNotice} reloadHousehold={async () => reload()} onClose={() => setDetailId(null)} />
+          <TaxDeleteActions cost={detailCost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onDone={() => setDetailId(null)} />
         </SettingsSheet>
       )}
       {pensionCost && <PensionSheet cost={pensionCost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onClose={() => setPensionId(null)} onEdit={() => { setPensionId(null); setDetailId(pensionCost.id); }} />}
+    </div>
+  );
+}
+
+// 税金の削除：この回だけ／この年度の同じ種類をまとめて／年金は税金タブから外す
+function TaxDeleteActions({ cost, state, startYear, setNotice, reload, onDone }: { cost: FixedCost; state: LedgerState; startYear: number; setNotice: (message: string) => void; reload: () => Promise<void>; onDone: () => void }) {
+  const [confirm, setConfirm] = useState<"one" | "year" | "unlink" | "pension" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const kind = cost.taxKind as TaxKind | undefined;
+  if (!kind) return null;
+  const meta = TAX_KIND_META[kind];
+  const months = fiscalMonths(startYear);
+  const sameYear = state.fixedCosts.filter((item) => item.taxKind === kind && isTaxInstallment(item) && months.includes((item.effectiveFrom ?? "").slice(0, 7)));
+  const isMonthly = !isTaxInstallment(cost);
+  async function run(action: "one" | "year" | "unlink" | "pension") {
+    setBusy(true);
+    try {
+      if (action === "one" || action === "pension") await deleteFixedCost(cost.id, "all");
+      if (action === "year") await Promise.all(sameYear.map((item) => deleteFixedCost(item.id, "all")));
+      if (action === "unlink") await setFixedCostTaxKind(cost.id, null);
+      await reload();
+      setNotice(action === "one" ? `${cost.name}を削除しました。` : action === "year" ? `${startYear}年度の${meta.label}（${sameYear.length}件）を削除しました。` : action === "unlink" ? `${cost.name}を税金タブから外しました（定期項目には残っています）。` : `${cost.name}の定期項目を削除しました。`);
+      onDone();
+    } catch (error) {
+      setNotice(toJapaneseError(error, "削除に失敗しました。"));
+    } finally {
+      setBusy(false);
+      setConfirm(null);
+    }
+  }
+  const options = isMonthly
+    ? ([
+        ["unlink", "税金タブから外す", "定期項目の「" + cost.name + "」は残ります。残高の見込みも今まで通りです。"],
+        ["pension", "定期項目ごと削除する", "毎月の「" + cost.name + "」がなくなり、残高の見込みからも外れます。"]
+      ] as const)
+    : ([
+        ["one", "この回だけ削除する", `${cost.name}だけを消します。`],
+        ...(sameYear.length > 1 ? [["year", `${startYear}年度の${meta.label}をすべて削除する`, `${sameYear.length}件をまとめて消します。登録し直したいときに。`] as const] : [])
+      ] as const);
+  return (
+    <div className="tax-delete">
+      <div className="tax-delete-h">削除</div>
+      {options.map(([action, label, text]) => (
+        confirm === action ? (
+          <div key={action} className="tax-delete-confirm">
+            <p>{text} よろしいですか？</p>
+            <div>
+              <button type="button" className="google-button" disabled={busy} onClick={() => setConfirm(null)}>やめる</button>
+              <button type="button" className="danger-fill" disabled={busy} onClick={() => run(action)}>{busy ? "削除中…" : "削除する"}</button>
+            </div>
+          </div>
+        ) : (
+          <button key={action} type="button" className="tax-delete-btn" onClick={() => setConfirm(action)}>{label}</button>
+        )
+      ))}
     </div>
   );
 }
@@ -6328,6 +6384,7 @@ function PensionSheet({ cost, state, startYear, setNotice, reload, onClose, onEd
         <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存する"}</button>
         {hasLump && <button className="google-button" type="button" disabled={saving} onClick={resetYear}>{startYear}年度を毎月払いに戻す</button>}
         <button className="template-save" type="button" onClick={onEdit}>月額や口座を変える</button>
+        <TaxDeleteActions cost={cost} state={state} startYear={startYear} setNotice={setNotice} reload={reload} onDone={onClose} />
       </div>
     </SettingsSheet>
   );
@@ -7375,7 +7432,7 @@ function FixedCostDetail({ cost, state, setNotice, reloadHousehold, onClose }: {
   const isIn = cost.transferDirection === "in";
   const kindLabel = cost.taxKind ? TAX_KIND_META[cost.taxKind].label : isLedger ? (isIn ? "資金移動（受け取り）" : "資金移動") : cost.kind === "income" ? "定期収入" : cost.kind === "transfer" ? "定期振替" : "定期支出";
   const dayLabel = isLedger ? "移動日" : cost.kind === "income" ? "入金日" : cost.kind === "transfer" ? "振替日" : "支払日";
-  const info = cost.kind !== "income" && !isLedger ? installmentInfo(state, cost) : null;
+  const info = cost.kind !== "income" && !isLedger && !isTaxInstallment(cost) ? installmentInfo(state, cost) : null;
   const rows: Array<[string, React.ReactNode]> = [
     ["種類", kindLabel],
     isTaxInstallment(cost)
@@ -7397,7 +7454,7 @@ function FixedCostDetail({ cost, state, setNotice, reloadHousehold, onClose }: {
   return (
     <div className="fixed-detail-view">
       <div className="fixed-detail-amount">
-        <span>{cost.variable ? "毎月（約）" : "毎月"}</span>
+        <span>{isTaxInstallment(cost) ? "この回の金額" : cost.variable ? "毎月（約）" : "毎月"}</span>
         <b className={`num${cost.kind === "income" || isIn ? " pos" : ""}`}>{cost.kind === "income" || isIn ? "+" : ""}{plainAmount(cost.amount)}<small>円</small></b>
       </div>
       <dl className="fixed-detail-list">
