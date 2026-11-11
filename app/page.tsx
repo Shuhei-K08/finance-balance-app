@@ -6400,7 +6400,10 @@ function splitEvenly(total: number, count: number) {
 function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice, reload, onClose }: { state: LedgerState; startYear: number; initialKind?: TaxKind; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
   const normalAccounts = sortAccountsByType(state.accounts.filter((account) => account.type !== "credit"));
   const [kind, setKind] = useState<TaxKind>(initialKind);
-  const [incomeMode, setIncomeMode] = useState<"prepay" | "final">("prepay");
+  const [incomeMode, setIncomeMode] = useState<"prepay" | "final">("final");
+  // 確定申告：何年分か（その年の翌年3〜4月に払う）と払い方
+  const [finalYear, setFinalYear] = useState(() => (todayIso() <= `${startYear}-04-20` ? startYear - 1 : startYear));
+  const [finalMethod, setFinalMethod] = useState<"transfer" | "self">("transfer");
   const [yearTotal, setYearTotal] = useState(0);
   const [items, setItems] = useState<TaxDraftItem[]>([]);
   // この年度に1か月でもかかっている年金があれば、それを使う
@@ -6431,11 +6434,11 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
       setItems(Array.from({ length: 10 }, (_, index) => ({ label: `第${index + 1}期`, date: monthEndDate(addMonthsKey(`${s}-06`, index)), amount: amounts[index] })));
     } else if (kind === "income_tax") {
       if (incomeMode === "prepay") setItems([{ label: "予定納税 第1期", date: `${s}-07-31`, amount: yearTotal }, { label: "予定納税 第2期", date: `${s}-11-30`, amount: yearTotal }]);
-      else setItems([{ label: `確定申告（${startYear - 1}年分）`, date: `${s}-04-20`, amount: yearTotal }]);
+      else setItems([{ label: `確定申告（${finalYear}年分）`, date: finalMethod === "transfer" ? `${finalYear + 1}-04-20` : `${finalYear + 1}-03-15`, amount: yearTotal }]);
     } else {
       setItems([]);
     }
-  }, [kind, incomeMode, yearTotal, startYear]);
+  }, [kind, incomeMode, yearTotal, startYear, finalYear, finalMethod]);
 
   async function save() {
     if (!accountId) return setNotice("支払う口座を選んでください。");
@@ -6478,15 +6481,21 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
         </div>
         {kind === "income_tax" && (
           <div className="segmented compact" role="tablist" aria-label="所得税の種類">
+            <button type="button" className={incomeMode === "final" ? "selected" : ""} onClick={() => setIncomeMode("final")}>確定申告（3〜4月）</button>
             <button type="button" className={incomeMode === "prepay" ? "selected" : ""} onClick={() => setIncomeMode("prepay")}>予定納税（7月・11月）</button>
-            <button type="button" className={incomeMode === "final" ? "selected" : ""} onClick={() => setIncomeMode("final")}>確定申告</button>
+          </div>
+        )}
+        {kind === "income_tax" && incomeMode === "final" && (
+          <div className="form-grid">
+            <label>何年分の申告か<select value={finalYear} onChange={(event) => setFinalYear(Number(event.target.value))}>{[startYear - 1, startYear].map((year) => <option key={year} value={year}>{year}年分（{year + 1}年に払う）</option>)}</select></label>
+            <label>払い方<select value={finalMethod} onChange={(event) => setFinalMethod(event.target.value as "transfer" | "self")}><option value="transfer">振替納税（4月20日ごろ引き落とし）</option><option value="self">自分で納める（3月15日まで）</option></select></label>
           </div>
         )}
         {kind !== "pension" ? (
           <>
             <label>{totalLabel}<input type="number" inputMode="numeric" value={numberInputValue(yearTotal)} onChange={(event) => setYearTotal(Number(event.target.value || 0))} placeholder="0" /></label>
             <div className="tax-draft">
-              <div className="tax-draft-h"><span>納付の予定（{startYear}年度）</span><span>日付・金額は直せます</span></div>
+              <div className="tax-draft-h"><span>納付の予定</span><span>日付・金額は直せます</span></div>
               {items.map((item, index) => (
                 <div className="tax-draft-row" key={index}>
                   <span>{item.label}</span>
@@ -6494,7 +6503,7 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
                   <input type="number" inputMode="numeric" value={numberInputValue(item.amount)} onChange={(event) => setItems(items.map((row, i) => (i === index ? { ...row, amount: Number(event.target.value || 0) } : row)))} />
                 </div>
               ))}
-              {kind === "income_tax" && incomeMode === "final" && <p className="settings-note">振替納税なら4月20日ごろに引き落とされます。自分で納める場合は3月15日に変えてください。</p>}
+              {kind === "income_tax" && incomeMode === "final" && <p className="settings-note">確定申告で決まった「納める税額」を入れてください（予定納税で払った分を引いたあとの額）。還付になる場合は登録しなくて大丈夫です。{items[0] && fiscalStartYear(items[0].date.slice(0, 7)) !== startYear ? `この支払いは${fiscalStartYear(items[0].date.slice(0, 7))}年度（${items[0].date.slice(0, 4)}年${monthNumber(items[0].date.slice(0, 7))}月）の一覧に出ます。` : ""}</p>}
             </div>
           </>
         ) : existingPension ? (
