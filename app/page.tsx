@@ -1856,7 +1856,7 @@ function upcomingBills(state: LedgerState, days: number) {
     .filter((cost) => cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
     .map((cost) => ({
       id: cost.id,
-      installment: cost.taxKind === "pension" ? "" : (() => { const info = cost.kind !== "income" ? installmentInfo(state, cost) : null; return info ? installmentLabel(info, cost.occurrenceMonth) : ""; })(),
+      installment: fixedRowTag(state, cost),
       name: cost.taxKind === "pension" || cost.payDateMoved ? `${cost.name} ${monthNumber(cost.occurrenceMonth)}月分` : cost.name,
       amount: cost.amount,
       kind: cost.kind,
@@ -2991,6 +2991,26 @@ function installmentInfo(state: LedgerState, costOrOccurrence: FixedCost, today 
   };
 }
 
+// 税金・社会保険は1期ずつ別の定期項目なので、同じ種類・同じ年度の期をまとめて数える
+function taxInstallmentLabel(state: LedgerState, costOrOccurrence: FixedCost) {
+  const cost = state.fixedCosts.find((item) => item.id === costOrOccurrence.id) ?? costOrOccurrence;
+  if (!isTaxInstallment(cost)) return "";
+  const year = fiscalStartYear(cost.effectiveFrom!.slice(0, 7));
+  const group = state.fixedCosts
+    .filter((item) => item.taxKind === cost.taxKind && isTaxInstallment(item) && fiscalStartYear(item.effectiveFrom!.slice(0, 7)) === year)
+    .sort((a, b) => a.effectiveFrom!.slice(0, 7).localeCompare(b.effectiveFrom!.slice(0, 7)) || a.dueDay - b.dueDay || a.name.localeCompare(b.name, "ja", { numeric: true }));
+  const nth = group.findIndex((item) => item.id === cost.id) + 1;
+  if (!nth) return "";
+  return nth === group.length ? `最終回 ${nth}/${group.length}回` : `${nth}/${group.length}回目`;
+}
+
+function fixedRowTag(state: LedgerState, row: FixedCostOccurrence) {
+  if (row.kind === "income" || row.taxKind === "pension") return "";
+  if (isTaxInstallment(row)) return taxInstallmentLabel(state, row);
+  const info = installmentInfo(state, row);
+  return info ? installmentLabel(info, row.occurrenceMonth) : "";
+}
+
 function installmentLabel(info: InstallmentInfo, month: string) {
   const nth = info.nthOf(month);
   if (!nth) return "";
@@ -3266,7 +3286,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}{(row.taxKind === "pension" || row.payDateMoved) && <> {monthNumber(row.occurrenceMonth)}月分</>}{(() => { const info = row.kind !== "income" && row.taxKind !== "pension" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.occurrenceMonth) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
+      <div><strong>{row.name}{(row.taxKind === "pension" || row.payDateMoved) && <> {monthNumber(row.occurrenceMonth)}月分</>}{(() => { const label = fixedRowTag(state, row); return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
       <em className={row.transferDirection === "in" ? "income" : meta.className}>{row.kind === "income" || row.transferDirection === "in" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
