@@ -6403,12 +6403,17 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
   const [incomeMode, setIncomeMode] = useState<"prepay" | "final">("prepay");
   const [yearTotal, setYearTotal] = useState(0);
   const [items, setItems] = useState<TaxDraftItem[]>([]);
-  const [accountId, setAccountId] = useState(normalAccounts[0]?.id ?? "");
-  const [categoryId, setCategoryId] = useState("");
-  const [pensionAmount, setPensionAmount] = useState(17510);
-  const [pensionDueDay, setPensionDueDay] = useState(31);
-  const existingPension = state.fixedCosts.find((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
-  const pensionCandidates = state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
+  // この年度に1か月でもかかっている年金があれば、それを使う
+  const fyMonthsForAdd = fiscalMonths(startYear);
+  const pensionCosts = state.fixedCosts.filter((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
+  const existingPension = pensionCosts.find((cost) => fyMonthsForAdd.some((month) => isFixedCostActiveInMonth(cost, month)));
+  // 前の年度で終わっている年金（翌年度の分を作るときの初期値に使う）
+  const previousPension = existingPension ? undefined : [...pensionCosts].filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < `${startYear}-04`).sort((a, b) => (b.effectiveTo ?? "").localeCompare(a.effectiveTo ?? ""))[0];
+  const [accountId, setAccountId] = useState(previousPension?.accountId ?? normalAccounts[0]?.id ?? "");
+  const [categoryId, setCategoryId] = useState(previousPension?.categoryId ?? "");
+  const [pensionAmount, setPensionAmount] = useState(previousPension?.amount ?? 17510);
+  const [pensionDueDay, setPensionDueDay] = useState(previousPension?.dueDay ?? 31);
+  const pensionCandidates = previousPension ? [] : state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
   const likelyPension = pensionCandidates.filter((cost) => cost.name.includes("年金"));
   const [linkId, setLinkId] = useState(() => likelyPension[0]?.id ?? "");
   const [showAllCandidates, setShowAllCandidates] = useState(false);
@@ -6442,7 +6447,10 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
           await setFixedCostTaxKind(linkId, "pension");
         } else {
           if (!pensionAmount) { setNotice("月額を入力してください。"); return; }
-          await createFixedCost(state.householdId ?? "", { name: "国民年金", kind: "expense", categoryId, accountId, amount: pensionAmount, variable: false, dueDay: pensionDueDay, status: "planned", effectiveFrom: `${startYear}-04-01`, taxKind: "pension" });
+          // 前の年度を「◯年度国民年金」のように1年ごとに作っていたら、同じ形で作る
+          const yearly = Boolean(previousPension?.effectiveTo && /\d{4}年度/.test(previousPension.name));
+          const name = yearly ? previousPension!.name.replace(/\d{4}年度/, `${startYear}年度`) : "国民年金";
+          await createFixedCost(state.householdId ?? "", { name, kind: "expense", categoryId, accountId, amount: pensionAmount, variable: false, dueDay: pensionDueDay, status: "planned", effectiveFrom: `${startYear}-04-01`, ...(yearly ? { effectiveTo: `${startYear + 1}-03-01` } : {}), taxKind: "pension", memo: previousPension?.memo });
         }
       } else {
         const valid = items.filter((item) => item.amount > 0 && item.date);
@@ -6493,6 +6501,7 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
           <p className="settings-note">国民年金は「{existingPension.name}」（毎月 {plainAmount(existingPension.amount)}円）を使っています。一覧の年金の行をタップすると、まとめ払いや前納に切り替えられます。</p>
         ) : (
           <>
+            {previousPension && <p className="pension-hint">「{previousPension.name}」は{previousPension.effectiveTo!.slice(0, 4)}年{monthNumber(previousPension.effectiveTo!.slice(0, 7))}月で終わっています。{startYear}年度（{startYear}年4月〜{startYear + 1}年3月）の分を登録します。金額は前の年度と同じにしてあるので、新しい年度の額に直してください。</p>}
             {pensionCandidates.length > 0 ? (
               <div className="pension-link">
                 <div className="pension-link-h">
