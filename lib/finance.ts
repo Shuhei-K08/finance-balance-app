@@ -366,12 +366,13 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
         date: override?.payDate ?? `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
       };
     });
-  // ほかの月の分で、支払日をこの月に変えたもの
-  (state?.fixedCostOverrides ?? []).forEach((override) => {
+  // ほかの月の分で、支払日をこの月に変えたもの（同じ定期項目のこの月の分の前に、古い月から順に並べる）
+  const moved: FixedCostOccurrence[] = [];
+  [...(state?.fixedCostOverrides ?? [])].sort((a, b) => a.month.localeCompare(b.month)).forEach((override) => {
     if (!override.payDate || override.skipped || override.month === monthKey || override.payDate.slice(0, 7) !== monthKey) return;
     const cost = fixedCosts.find((item) => item.id === override.fixedCostId);
     if (!cost || !isFixedCostActiveInMonth(cost, override.month)) return;
-    rows.push({
+    moved.push({
       ...cost,
       name: override.name ?? cost.name,
       categoryId: override.categoryId ?? cost.categoryId,
@@ -387,7 +388,15 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
       date: override.payDate
     });
   });
-  return rows.filter((cost): cost is FixedCostOccurrence => Boolean(cost));
+  const result = rows.filter((cost): cost is FixedCostOccurrence => Boolean(cost));
+  moved.forEach((item) => {
+    const own = result.findIndex((row) => row.id === item.id && !row.payDateMoved && row.occurrenceMonth > item.occurrenceMonth);
+    const lastSame = result.map((row) => row.id === item.id && row.payDateMoved).lastIndexOf(true);
+    if (lastSame >= 0) result.splice(lastSame + 1, 0, item);
+    else if (own >= 0) result.splice(own, 0, item);
+    else result.push(item);
+  });
+  return result;
 }
 
 export function monthlyFixedCostExpense(state: LedgerState, date = new Date()) {

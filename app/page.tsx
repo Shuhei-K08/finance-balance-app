@@ -1856,8 +1856,8 @@ function upcomingBills(state: LedgerState, days: number) {
     .filter((cost) => cost.date >= today && cost.date <= `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`)
     .map((cost) => ({
       id: cost.id,
-      installment: (() => { const info = cost.kind !== "income" ? installmentInfo(state, cost) : null; return info ? installmentLabel(info, cost.date.slice(0, 7)) : ""; })(),
-      name: cost.name,
+      installment: cost.taxKind === "pension" ? "" : (() => { const info = cost.kind !== "income" ? installmentInfo(state, cost) : null; return info ? installmentLabel(info, cost.occurrenceMonth) : ""; })(),
+      name: cost.taxKind === "pension" || cost.payDateMoved ? `${cost.name} ${monthNumber(cost.occurrenceMonth)}月分` : cost.name,
       amount: cost.amount,
       kind: cost.kind,
       date: cost.date,
@@ -2968,8 +2968,13 @@ function installmentInfo(state: LedgerState, costOrOccurrence: FixedCost, today 
   if (endMonth < startMonth) return null;
   const months: Array<{ month: string; amount: number; date: string }> = [];
   for (let month = startMonth; month <= endMonth; month = addMonthsKey(month, 1)) {
-    const occurrence = fixedCostOccurrencesForMonth(chain, month, state)[0];
-    if (occurrence) months.push({ month, amount: occurrence.amount, date: occurrence.date });
+    // 支払日を別の月に変えた分も「もともとの月の回」として数える
+    const cost = chain.find((item) => isFixedCostActiveInMonth(item, month));
+    if (!cost) continue;
+    const override = state.fixedCostOverrides?.find((item) => item.fixedCostId === cost.id && item.month === month);
+    if (override?.skipped) continue;
+    const dueDay = override?.dueDay ?? cost.dueDay;
+    months.push({ month, amount: override?.amount ?? cost.amount, date: override?.payDate ?? `${month}-${String(Math.min(dueDay, lastDayOfMonth(month))).padStart(2, "0")}` });
   }
   const paidRows = months.filter((row) => row.date <= today);
   const remainingRows = months.filter((row) => row.date > today);
@@ -3261,7 +3266,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}{(() => { const info = row.kind !== "income" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.date.slice(0, 7)) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
+      <div><strong>{row.name}{(row.taxKind === "pension" || row.payDateMoved) && <> {monthNumber(row.occurrenceMonth)}月分</>}{(() => { const info = row.kind !== "income" && row.taxKind !== "pension" ? installmentInfo(state, row) : null; const label = info ? installmentLabel(info, row.occurrenceMonth) : ""; return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong><span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
       <em className={row.transferDirection === "in" ? "income" : meta.className}>{row.kind === "income" || row.transferDirection === "in" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
