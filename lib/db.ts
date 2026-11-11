@@ -204,6 +204,7 @@ type DbFixedCostOverride = {
   due_day: number | null;
   skipped: boolean | null;
   memo?: string | null;
+  pay_date?: string | null;
 };
 
 type DbGoal = {
@@ -697,7 +698,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
     client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo,tax_kind").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
-    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
+    client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo,pay_date").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("monthly_asset_snapshots").select("id,account_id,snapshot_month,amount").eq("household_id", householdId).is("deleted_at", null).order("snapshot_month", { ascending: false }),
     client.from("investment_accounts").select("id,name,account_kind,start_month,initial_amount,initial_principal,monthly_contribution,target_annual_rate,target_monthly_rate,color").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -754,6 +755,17 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     (!!investmentRecordsError && /investment_monthly_records.*does not exist|relation.*investment_monthly_records/i.test(investmentRecordsError.message));
   let fixedCostOverridesData: unknown = fixedCostOverridesResult.data;
   let fixedCostOverridesError = fixedCostOverridesResult.error;
+  if (fixedCostOverridesError && /pay_date/i.test(fixedCostOverridesError.message)) {
+    // 支払日の列がまだ無い（add-fixed-pay-date.sql 未実行）
+    const fallback = await client
+      .from("fixed_cost_overrides")
+      .select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("target_month", { ascending: false });
+    fixedCostOverridesData = fallback.data;
+    fixedCostOverridesError = fallback.error;
+  }
   if (fixedCostOverridesError && /memo/i.test(fixedCostOverridesError.message)) {
     // メモ列がまだ無い（add-fixed-cost-memo.sql 未実行）
     const fallback = await client
@@ -958,7 +970,8 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       amount: override.amount == null ? undefined : toNumber(override.amount),
       dueDay: override.due_day ?? undefined,
       skipped: override.skipped ?? false,
-      memo: override.memo ?? undefined
+      memo: override.memo ?? undefined,
+      payDate: override.pay_date ? override.pay_date.slice(0, 10) : undefined
     })),
     goals: ((goalsResult.data ?? []) as DbGoal[]).map((goal): Goal => ({
       id: goal.id,
@@ -1502,6 +1515,7 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
   dueDay?: number;
   skipped?: boolean;
   memo?: string;
+  payDate?: string;
 }) {
   const client = requireSupabase();
   const { error } = await client.from("fixed_cost_overrides").upsert({
@@ -1515,8 +1529,10 @@ export async function upsertFixedCostOverride(householdId: string, fixedCostId: 
     amount: input.amount ?? null,
     due_day: input.dueDay ?? null,
     skipped: input.skipped ?? false,
-    ...(input.memo !== undefined ? { memo: input.memo || null } : {})
+    ...(input.memo !== undefined ? { memo: input.memo || null } : {}),
+    ...(input.payDate !== undefined ? { pay_date: input.payDate || null } : {})
   }, { onConflict: "fixed_cost_id,target_month" });
+  if (error && /pay_date/i.test(error.message ?? "")) throw new Error("支払日を別の月に変えるには、Supabase で add-fixed-pay-date.sql を実行してください。");
   if (error && fixedMemoSetupError(error)) throw new Error(FIXED_MEMO_SETUP_MESSAGE);
   if (error) throwJapanese(error, "選択月のみの固定費変更に失敗しました。");
 }

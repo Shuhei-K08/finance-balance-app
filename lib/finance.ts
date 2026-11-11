@@ -337,7 +337,8 @@ export function monthlyIncome(transactions: Transaction[]) {
   return transactions.filter((transaction) => transaction.type === "income").reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-export type FixedCostOccurrence = FixedCost & { date: string; overrideId?: string; overrideMemo?: string };
+// occurrenceMonth: もともとの支払い月。支払日を別の月に変えたときは date の月と異なる
+export type FixedCostOccurrence = FixedCost & { date: string; occurrenceMonth: string; overrideId?: string; overrideMemo?: string; payDateMoved?: boolean };
 
 export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
   const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
@@ -346,6 +347,8 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
     .map((cost) => {
       const override = state?.fixedCostOverrides?.find((item) => item.fixedCostId === cost.id && item.month === monthKey);
       if (override?.skipped) return null;
+      // 支払日を別の月に変えた分は、その月には出さない（移動先の月に出す）
+      if (override?.payDate && override.payDate.slice(0, 7) !== monthKey) return null;
       const dueDay = override?.dueDay ?? cost.dueDay;
       return {
         ...cost,
@@ -359,9 +362,31 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
         // その月だけのメモがあればそれを、なければ定期項目のメモ
         memo: override?.memo || cost.memo,
         overrideMemo: override?.memo,
-        date: `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
+        occurrenceMonth: monthKey,
+        date: override?.payDate ?? `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
       };
     });
+  // ほかの月の分で、支払日をこの月に変えたもの
+  (state?.fixedCostOverrides ?? []).forEach((override) => {
+    if (!override.payDate || override.skipped || override.month === monthKey || override.payDate.slice(0, 7) !== monthKey) return;
+    const cost = fixedCosts.find((item) => item.id === override.fixedCostId);
+    if (!cost || !isFixedCostActiveInMonth(cost, override.month)) return;
+    rows.push({
+      ...cost,
+      name: override.name ?? cost.name,
+      categoryId: override.categoryId ?? cost.categoryId,
+      accountId: override.accountId ?? cost.accountId,
+      transferToAccountId: override.transferToAccountId ?? cost.transferToAccountId,
+      amount: override.amount ?? cost.amount,
+      dueDay: Number(override.payDate.slice(8, 10)),
+      overrideId: override.id,
+      memo: override.memo || cost.memo,
+      overrideMemo: override.memo,
+      occurrenceMonth: override.month,
+      payDateMoved: true,
+      date: override.payDate
+    });
+  });
   return rows.filter((cost): cost is FixedCostOccurrence => Boolean(cost));
 }
 

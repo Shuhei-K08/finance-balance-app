@@ -86,6 +86,8 @@ export type FixedCostOverride = {
   dueDay?: number;
   skipped?: boolean;
   memo?: string;
+  // この月の分を別の日（別の月でもよい）に払うとき、その日付 YYYY-MM-DD
+  payDate?: string;
 };
 
 export type Goal = {
