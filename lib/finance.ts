@@ -337,12 +337,14 @@ export function monthlyIncome(transactions: Transaction[]) {
   return transactions.filter((transaction) => transaction.type === "income").reduce((total, transaction) => total + transaction.amount, 0);
 }
 
-// occurrenceMonth: もともとの支払い月。支払日を別の月に変えたときは date の月と異なる
-// overdue: 税金・年金で期日を過ぎたのに「支払った」が押されていないもの。dueDate はもとの期日
-export type FixedCostOccurrence = FixedCost & { date: string; occurrenceMonth: string; overrideId?: string; overrideMemo?: string; payDateMoved?: boolean; paidOn?: string; overdue?: boolean; dueDate?: string };
+// occurrenceMonth: もともとの月（◯月分）。
+// dueDate: 期日（「支払日を変える」で動かした日も含む）。paidOn: 実際に払った日。
+// date: 残高で使う日付＝払っていれば払った日、まだなら期日。
+// overdue: 税金・年金で期日を過ぎたのに「支払った」が押されていないもの
+export type FixedCostOccurrence = FixedCost & { date: string; occurrenceMonth: string; dueDate: string; overrideId?: string; overrideMemo?: string; payDateMoved?: boolean; paidOn?: string; overdue?: boolean };
 
 function isOverdueOccurrence(occurrence: FixedCostOccurrence, today: string) {
-  return Boolean(occurrence.taxKind && !occurrence.paidOn && occurrence.amount > 0 && occurrence.date < today);
+  return Boolean(occurrence.taxKind && !occurrence.paidOn && occurrence.amount > 0 && occurrence.dueDate < today);
 }
 
 // 期日を過ぎた未払いは、まだ口座から出ていないお金として「明日」に出ていく扱いにする
@@ -354,11 +356,11 @@ function overdueCarryDate(today: string) {
   return key.slice(0, 7) === today.slice(0, 7) ? key : today;
 }
 
-// 期日を過ぎた未払いには overdue の印を付ける（収支ではもとの月のまま数える）。
 // options.carryOverdue: 残高の計算用。未払いをもとの日から外し、今月の「明日」にまとめて載せる
-export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">, options?: { carryOverdue?: boolean }): FixedCostOccurrence[] {
+// options.byDueDate: 税金タブ用。払った日ではなく期日の月に並べる
+export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">, options?: { carryOverdue?: boolean; byDueDate?: boolean }): FixedCostOccurrence[] {
   const today = todayIso();
-  const raw = rawFixedCostOccurrencesForMonth(fixedCosts, monthKey, state).map((occurrence) => (isOverdueOccurrence(occurrence, today) ? { ...occurrence, overdue: true, dueDate: occurrence.date } : occurrence));
+  const raw = rawFixedCostOccurrencesForMonth(fixedCosts, monthKey, state, Boolean(options?.byDueDate)).map((occurrence) => (isOverdueOccurrence(occurrence, today) ? { ...occurrence, overdue: true } : occurrence));
   const currentMonth = today.slice(0, 7);
   if (!options?.carryOverdue || monthKey > currentMonth || !fixedCosts.some((cost) => cost.taxKind)) return raw;
   const rows = raw.filter((occurrence) => !occurrence.overdue);
@@ -370,12 +372,12 @@ export function fixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: 
     const start = (cost.effectiveFrom ?? `${currentMonth}-01`).slice(0, 7);
     const end = cost.effectiveTo && cost.effectiveTo.slice(0, 7) < currentMonth ? cost.effectiveTo.slice(0, 7) : currentMonth;
     for (let month = start; month <= end; month = addMonths(month, 1)) {
-      rawFixedCostOccurrencesForMonth([cost], month, state)
+      rawFixedCostOccurrencesForMonth([cost], month, state, false)
         .filter((occurrence) => isOverdueOccurrence(occurrence, today))
-        .forEach((occurrence) => overdue.push({ ...occurrence, overdue: true, dueDate: occurrence.date, date: carry }));
+        .forEach((occurrence) => overdue.push({ ...occurrence, overdue: true, date: carry }));
     }
   });
-  return [...overdue.sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? "")), ...rows];
+  return [...overdue.sort((a, b) => a.dueDate.localeCompare(b.dueDate)), ...rows];
 }
 
 function addMonths(monthKey: string, diff: number) {
@@ -383,55 +385,55 @@ function addMonths(monthKey: string, diff: number) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function rawFixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state?: Pick<LedgerState, "fixedCostOverrides">): FixedCostOccurrence[] {
-  const lastDay = new Date(Number(monthKey.slice(0, 4)), Number(monthKey.slice(5, 7)), 0).getDate();
+function defaultDueDate(month: string, dueDay: number) {
+  const lastDay = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate();
+  return `${month}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`;
+}
+
+function rawFixedCostOccurrencesForMonth(fixedCosts: FixedCost[], monthKey: string, state: Pick<LedgerState, "fixedCostOverrides"> | undefined, byDueDate: boolean): FixedCostOccurrence[] {
+  const build = (cost: FixedCost, month: string, override: NonNullable<LedgerState["fixedCostOverrides"]>[number] | undefined): FixedCostOccurrence => {
+    const dueDay = override?.dueDay ?? cost.dueDay;
+    const dueDate = override?.payDate ?? defaultDueDate(month, dueDay);
+    const date = override?.paidOn ?? dueDate;
+    return {
+      ...cost,
+      name: override?.name ?? cost.name,
+      categoryId: override?.categoryId ?? cost.categoryId,
+      accountId: override?.accountId ?? cost.accountId,
+      transferToAccountId: override?.transferToAccountId ?? cost.transferToAccountId,
+      amount: override?.amount ?? cost.amount,
+      dueDay: override?.payDate ? Number(override.payDate.slice(8, 10)) : dueDay,
+      overrideId: override?.id,
+      // その月だけのメモがあればそれを、なければ定期項目のメモ
+      memo: override?.memo || cost.memo,
+      overrideMemo: override?.memo,
+      occurrenceMonth: month,
+      payDateMoved: (byDueDate ? dueDate : date).slice(0, 7) !== month,
+      paidOn: override?.paidOn,
+      dueDate,
+      date
+    };
+  };
+  // その分を並べる月（期日 or 払った日の月）
+  const placeOf = (override: NonNullable<LedgerState["fixedCostOverrides"]>[number]) => (byDueDate ? override.payDate : override.paidOn ?? override.payDate);
   const rows: Array<FixedCostOccurrence | null> = fixedCosts
     .filter((cost) => isFixedCostActiveInMonth(cost, monthKey))
     .map((cost) => {
       const override = state?.fixedCostOverrides?.find((item) => item.fixedCostId === cost.id && item.month === monthKey);
       if (override?.skipped) return null;
-      // 支払日を別の月に変えた分は、その月には出さない（移動先の月に出す）
-      if (override?.payDate && override.payDate.slice(0, 7) !== monthKey) return null;
-      const dueDay = override?.dueDay ?? cost.dueDay;
-      return {
-        ...cost,
-        name: override?.name ?? cost.name,
-        categoryId: override?.categoryId ?? cost.categoryId,
-        accountId: override?.accountId ?? cost.accountId,
-        transferToAccountId: override?.transferToAccountId ?? cost.transferToAccountId,
-        amount: override?.amount ?? cost.amount,
-        dueDay,
-        overrideId: override?.id,
-        // その月だけのメモがあればそれを、なければ定期項目のメモ
-        memo: override?.memo || cost.memo,
-        overrideMemo: override?.memo,
-        occurrenceMonth: monthKey,
-        paidOn: override?.paidOn,
-        date: override?.payDate ?? `${monthKey}-${String(Math.min(dueDay, lastDay)).padStart(2, "0")}`
-      };
+      // 別の月に動いた分は、その月には出さない（動いた先の月に出す）
+      const place = override ? placeOf(override) : undefined;
+      if (place && place.slice(0, 7) !== monthKey) return null;
+      return build(cost, monthKey, override);
     });
-  // ほかの月の分で、支払日をこの月に変えたもの（同じ定期項目のこの月の分の前に、古い月から順に並べる）
+  // ほかの月の分で、この月に動いてきたもの（同じ定期項目のこの月の分の前に、古い月から順に並べる）
   const moved: FixedCostOccurrence[] = [];
   [...(state?.fixedCostOverrides ?? [])].sort((a, b) => a.month.localeCompare(b.month)).forEach((override) => {
-    if (!override.payDate || override.skipped || override.month === monthKey || override.payDate.slice(0, 7) !== monthKey) return;
+    const place = placeOf(override);
+    if (!place || override.skipped || override.month === monthKey || place.slice(0, 7) !== monthKey) return;
     const cost = fixedCosts.find((item) => item.id === override.fixedCostId);
     if (!cost || !isFixedCostActiveInMonth(cost, override.month)) return;
-    moved.push({
-      ...cost,
-      name: override.name ?? cost.name,
-      categoryId: override.categoryId ?? cost.categoryId,
-      accountId: override.accountId ?? cost.accountId,
-      transferToAccountId: override.transferToAccountId ?? cost.transferToAccountId,
-      amount: override.amount ?? cost.amount,
-      dueDay: Number(override.payDate.slice(8, 10)),
-      overrideId: override.id,
-      memo: override.memo || cost.memo,
-      overrideMemo: override.memo,
-      occurrenceMonth: override.month,
-      payDateMoved: true,
-      paidOn: override.paidOn,
-      date: override.payDate
-    });
+    moved.push(build(cost, override.month, override));
   });
   const result = rows.filter((cost): cost is FixedCostOccurrence => Boolean(cost));
   moved.forEach((item) => {

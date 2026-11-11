@@ -6110,3 +6110,12 @@ button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-styl
 .tax-row .st.short { width: auto; height: auto; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--danger); color: var(--danger); font-size: 10.5px; white-space: nowrap; }
 .overdue-more { width: 100%; padding: 8px; border: 0; border-top: 1px solid var(--rule); background: none; color: var(--ink-soft); font: inherit; font-size: 12.5px; font-weight: 700; }
 .tax-row { grid-template-columns: 30px minmax(0, 1fr) auto minmax(22px, auto); }
+
+/* 税金：状態のラベル（済／未払い／期日超過） */
+.tax-row-status { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.tax-row .st.todo { width: auto; height: auto; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--line-strong, var(--rule)); color: var(--ink-soft); font-size: 10.5px; white-space: nowrap; }
+.tax-row .tax-paid-on { color: var(--income); font-weight: 700; }
+.tax-pay-head em.paid { color: var(--income); }
+.fixed-tax-state { display: block; font-size: 11.5px; font-weight: 700; color: var(--ink-soft); }
+.fixed-tax-state.paid { color: var(--income); }
+.fixed-tax-state.overdue { color: var(--danger); }
