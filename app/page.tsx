@@ -6060,7 +6060,9 @@ function TaxAddSheet({ state, startYear, setNotice, reload, onClose }: { state: 
   const [pensionDueDay, setPensionDueDay] = useState(31);
   const existingPension = state.fixedCosts.find((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
   const pensionCandidates = state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
-  const [linkId, setLinkId] = useState(() => pensionCandidates.find((cost) => cost.name.includes("年金"))?.id ?? "");
+  const likelyPension = pensionCandidates.filter((cost) => cost.name.includes("年金"));
+  const [linkId, setLinkId] = useState(() => likelyPension[0]?.id ?? "");
+  const [showAllCandidates, setShowAllCandidates] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // 種類ごとの初期の納付スケジュール
@@ -6142,21 +6144,38 @@ function TaxAddSheet({ state, startYear, setNotice, reload, onClose }: { state: 
           <p className="settings-note">国民年金は「{existingPension.name}」（毎月 {plainAmount(existingPension.amount)}円）を使っています。一覧の年金の行をタップすると、まとめ払いや前納に切り替えられます。</p>
         ) : (
           <>
-            {pensionCandidates.length > 0 && (
-              <label>今ある定期項目を使う
-                <select value={linkId} onChange={(event) => setLinkId(event.target.value)}>
-                  <option value="">新しく作る</option>
-                  {pensionCandidates.map((cost) => <option key={cost.id} value={cost.id}>{cost.name}（毎月 {plainAmount(cost.amount)}円）</option>)}
-                </select>
-              </label>
-            )}
+            {pensionCandidates.length > 0 ? (
+              <div className="pension-link">
+                <div className="pension-link-h">
+                  {likelyPension.length > 0
+                    ? <>定期項目に「{likelyPension[0].name}」があります。国民年金はこの定期項目として登録済みですか？</>
+                    : <>国民年金をすでに定期項目として登録していますか？</>}
+                </div>
+                {(showAllCandidates ? pensionCandidates : likelyPension).map((cost) => {
+                  const account = state.accounts.find((item) => item.id === cost.accountId);
+                  return (
+                    <button key={cost.id} type="button" className={`pension-option${linkId === cost.id ? " selected" : ""}`} onClick={() => setLinkId(cost.id)}>
+                      <span className="ledger-purpose-radio" aria-hidden="true" />
+                      <span><b>はい、「{cost.name}」がそれです</b><small>毎月 {plainAmount(cost.amount)}円・{cost.dueDay}日・{account?.name ?? "口座未設定"}。この定期項目をそのまま税金タブに出します（金額も口座も変わりません）。</small></span>
+                    </button>
+                  );
+                })}
+                {!showAllCandidates && pensionCandidates.length > likelyPension.length && (
+                  <button type="button" className="pension-link-more" onClick={() => setShowAllCandidates(true)}>{likelyPension.length > 0 ? "別の定期項目を選ぶ" : "定期項目の一覧から選ぶ"}</button>
+                )}
+                <button type="button" className={`pension-option${linkId === "" ? " selected" : ""}`} onClick={() => setLinkId("")}>
+                  <span className="ledger-purpose-radio" aria-hidden="true" />
+                  <span><b>いいえ、新しく登録する</b><small>国民年金の定期項目をここで作ります。{likelyPension.length > 0 ? `「${likelyPension[0].name}」が国民年金の分なら、二重に引かれた計算になるので「はい」を選んでください。` : ""}</small></span>
+                </button>
+              </div>
+            ) : null}
             {!linkId && (
               <div className="form-grid">
                 <label>月額<input type="number" inputMode="numeric" value={numberInputValue(pensionAmount)} onChange={(event) => setPensionAmount(Number(event.target.value || 0))} /></label>
                 <label>引落日<input type="number" min="1" max="31" value={numberInputValue(pensionDueDay)} onChange={(event) => setPensionDueDay(Number(event.target.value || 0))} /></label>
               </div>
             )}
-            <p className="settings-note">国民年金は毎月の定期項目として扱います（その月の分は翌月末に引き落とし）。まとめ払いや前納は、登録後に一覧の年金の行から切り替えられます。</p>
+            <p className="settings-note">{linkId ? "登録すると、税金タブに毎月の年金が並びます。" : "月額は年金の納付書の金額です。口座振替なら、その月の分が翌月末に引き落とされます。"}まとめ払いや前納は、登録後に税金タブの年金の行をタップすると切り替えられます。</p>
           </>
         )}
         {!(kind === "pension" && (existingPension || linkId)) && (
@@ -6165,7 +6184,7 @@ function TaxAddSheet({ state, startYear, setNotice, reload, onClose }: { state: 
             <label>カテゴリ（任意）<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">なし</option><CategoryOptions categories={state.categories} kind="expense" /></select></label>
           </>
         )}
-        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "登録中…" : kind === "pension" && existingPension ? "閉じる" : "登録する"}</button>
+        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "登録中…" : kind === "pension" && existingPension ? "閉じる" : kind === "pension" && linkId ? "この定期項目を税金タブに出す" : "登録する"}</button>
       </div>
     </SettingsSheet>
   );
