@@ -6469,6 +6469,17 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
   const [finalMethod, setFinalMethod] = useState<"transfer" | "self">("transfer");
   const [yearTotal, setYearTotal] = useState(0);
   const [items, setItems] = useState<TaxDraftItem[]>([]);
+  // 住民税・国保の期の数と最初の月（市区町村によって違う）。前に選んだものを覚えておく
+  const schedulePrefs = (() => { try { return JSON.parse(localStorage.getItem("mirai-tax-schedule") ?? "{}") as Record<string, { count: number; start: number }>; } catch { return {}; } })();
+  const scheduleDefault = (value: TaxKind) => schedulePrefs[value] ?? (value === "resident_tax" ? { count: 4, start: 6 } : { count: 10, start: 6 });
+  const [periodCount, setPeriodCount] = useState(() => scheduleDefault(initialKind).count);
+  const [startMonth, setStartMonth] = useState(() => scheduleDefault(initialKind).start);
+  useEffect(() => {
+    const pref = scheduleDefault(kind);
+    setPeriodCount(pref.count);
+    setStartMonth(pref.start);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind]);
   // この年度に1か月でもかかっている年金があれば、それを使う
   const fyMonthsForAdd = fiscalMonths(startYear);
   const pensionCosts = state.fixedCosts.filter((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
@@ -6489,19 +6500,23 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
   useEffect(() => {
     const next = String(startYear + 1);
     const s = String(startYear);
+    // 最初の月が1〜3月なら翌年
+    const firstMonth = `${startMonth <= 3 ? next : s}-${String(startMonth).padStart(2, "0")}`;
     if (kind === "resident_tax") {
-      const amounts = splitEvenly(yearTotal, 4);
-      setItems([`${s}-06`, `${s}-08`, `${s}-10`, `${next}-01`].map((month, index) => ({ label: `第${index + 1}期`, date: monthEndDate(month), amount: amounts[index] })));
+      const amounts = splitEvenly(yearTotal, periodCount);
+      // ふつうの4期（6・8・10・翌1月）以外は毎月続けて
+      const months = periodCount === 4 && startMonth === 6 ? [`${s}-06`, `${s}-08`, `${s}-10`, `${next}-01`] : Array.from({ length: periodCount }, (_, index) => addMonthsKey(firstMonth, index));
+      setItems(months.map((month, index) => ({ label: `第${index + 1}期`, date: monthEndDate(month), amount: amounts[index] })));
     } else if (kind === "health_insurance") {
-      const amounts = splitEvenly(yearTotal, 10);
-      setItems(Array.from({ length: 10 }, (_, index) => ({ label: `第${index + 1}期`, date: monthEndDate(addMonthsKey(`${s}-06`, index)), amount: amounts[index] })));
+      const amounts = splitEvenly(yearTotal, periodCount);
+      setItems(Array.from({ length: periodCount }, (_, index) => ({ label: `第${index + 1}期`, date: monthEndDate(addMonthsKey(firstMonth, index)), amount: amounts[index] })));
     } else if (kind === "income_tax") {
       if (incomeMode === "prepay") setItems([{ label: "予定納税 第1期", date: `${s}-07-31`, amount: yearTotal }, { label: "予定納税 第2期", date: `${s}-11-30`, amount: yearTotal }]);
       else setItems([{ label: `確定申告（${finalYear}年分）`, date: finalMethod === "transfer" ? `${finalYear + 1}-04-20` : `${finalYear + 1}-03-15`, amount: yearTotal }]);
     } else {
       setItems([]);
     }
-  }, [kind, incomeMode, yearTotal, startYear, finalYear, finalMethod]);
+  }, [kind, incomeMode, yearTotal, startYear, finalYear, finalMethod, periodCount, startMonth]);
 
   async function save() {
     if (!accountId) return setNotice("支払う口座を選んでください。");
@@ -6521,6 +6536,9 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
       } else {
         const valid = items.filter((item) => item.amount > 0 && item.date);
         if (valid.length === 0) { setNotice("金額を入力してください。"); return; }
+        if (kind === "resident_tax" || kind === "health_insurance") {
+          try { localStorage.setItem("mirai-tax-schedule", JSON.stringify({ ...schedulePrefs, [kind]: { count: periodCount, start: startMonth } })); } catch { /* 保存できない環境 */ }
+        }
         await createTaxInstallments(state.householdId ?? "", valid.map((item) => ({ name: `${TAX_KIND_META[kind].label} ${item.label}`, taxKind: kind, amount: item.amount, date: item.date, accountId, categoryId: categoryId || undefined })));
       }
       await reload();
@@ -6557,6 +6575,12 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
         {kind !== "pension" ? (
           <>
             <label>{totalLabel}<input type="number" inputMode="numeric" value={numberInputValue(yearTotal)} onChange={(event) => setYearTotal(Number(event.target.value || 0))} placeholder="0" /></label>
+            {(kind === "resident_tax" || kind === "health_insurance") && (
+              <div className="form-grid">
+                <label>何期に分けて払うか<select value={periodCount} onChange={(event) => setPeriodCount(Number(event.target.value))}>{Array.from({ length: 12 }, (_, index) => index + 1).map((count) => <option key={count} value={count}>{count === 1 ? "1回（一括）" : `${count}期`}</option>)}</select></label>
+                <label>第1期の月<select value={startMonth} onChange={(event) => setStartMonth(Number(event.target.value))}>{[4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3].map((month) => <option key={month} value={month}>{month}月</option>)}</select></label>
+              </div>
+            )}
             <div className="tax-draft">
               <div className="tax-draft-h"><span>納付の予定</span><span>日付・金額は直せます</span></div>
               {items.map((item, index) => (
