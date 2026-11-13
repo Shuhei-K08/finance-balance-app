@@ -81,6 +81,7 @@ type DbHousehold = {
   mode: LedgerMode;
   invite_code: string | null;
   ledger_purpose?: "household" | "business" | null;
+  tax_enabled?: boolean | null;
 };
 
 type DbHouseholdSummary = DbHousehold & {
@@ -636,7 +637,11 @@ async function loadHouseholds(): Promise<HouseholdSummary[]> {
     .eq("household_members.user_id", userId)
     .is("deleted_at", null)
     .order("created_at");
-  let { data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,ledger_purpose,household_members!inner(member_role)");
+  let { data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,ledger_purpose,tax_enabled,household_members!inner(member_role)");
+  if (error && /tax_enabled/i.test(error.message)) {
+    // 税金タブの設定の列がまだ無い（add-tax-setting.sql 未実行）
+    ({ data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,ledger_purpose,household_members!inner(member_role)"));
+  }
   if (error && /ledger_purpose/i.test(error.message)) {
     // 事業用の列がまだ無い（add-business-ledger.sql 未実行）
     ({ data, error } = await selectHouseholds("id,name,space_type,mode,invite_code,household_members!inner(member_role)"));
@@ -650,6 +655,8 @@ async function loadHouseholds(): Promise<HouseholdSummary[]> {
     inviteCode: household.invite_code ?? undefined,
     memberRole: household.household_members?.[0]?.member_role ?? "member",
     purpose: household.space_type === "shared" && household.ledger_purpose === "business" ? "business" : "household",
+    // 未設定なら事業用の家計簿だけ税金タブを使う
+    taxEnabled: household.tax_enabled ?? (household.space_type === "shared" && household.ledger_purpose === "business"),
     themeColor: typeof window !== "undefined" ? window.localStorage.getItem(`mirai-ledger-color-${household.id}`) ?? undefined : undefined
   }));
 }
@@ -899,6 +906,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     householdId,
     householdName: household.name,
     ledgerPurpose: households.find((item) => item.id === householdId)?.purpose ?? "household",
+    taxEnabled: households.find((item) => item.id === householdId)?.taxEnabled ?? false,
     themeColor: getHouseholdThemeColor(householdId),
     inviteCode: household.invite_code ?? undefined,
     profileRole: (profileResult.data as DbProfile | null)?.role ?? "user",
@@ -1883,6 +1891,15 @@ export async function updateLedgerPurpose(householdId: string, purpose: "househo
   const { error } = await client.from("households").update({ ledger_purpose: purpose }).eq("id", householdId);
   if (error && /ledger_purpose/i.test(error.message)) throw new Error(BUSINESS_SETUP_MESSAGE);
   if (error) throwJapanese(error, "家計簿の使い方の変更に失敗しました。");
+}
+
+// 家計簿で税金タブを使うかどうか（個人・共有・事業用のどれでも）
+export async function updateLedgerTaxEnabled(householdId: string, enabled: boolean) {
+  const client = requireSupabase();
+  const { data, error } = await client.from("households").update({ tax_enabled: enabled }).eq("id", householdId).select("id");
+  if (error && /tax_enabled/i.test(error.message)) throw new Error("税金タブの設定を使うには、Supabase で add-tax-setting.sql を実行してください。");
+  if (error) throwJapanese(error, "税金タブの設定の変更に失敗しました。");
+  if (!data || data.length === 0) throw new Error("税金タブの設定を変えられるのは、この家計簿のオーナーだけです。");
 }
 
 // 既存の定期項目を「税金」として印を付ける／外す

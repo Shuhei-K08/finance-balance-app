@@ -136,6 +136,7 @@ import {
   loadHouseholdMembers,
   updateLedgerPurpose,
   setFixedCostTaxKind,
+  updateLedgerTaxEnabled,
   setFixedCostPaid,
   createTaxInstallments,
   loadLedgerAccountsAndCategories,
@@ -244,7 +245,7 @@ function LedgerPurposeChoice({ ledger, onChanged, setNotice }: { ledger: Househo
       <div className="ledger-purpose-h">家計簿の使い方</div>
       {([
         ["household", "生活費", "shared", "ふだんの家計簿。食費や日用品などの支出を管理します。"],
-        ["business", "事業用", "business", "事業口座とプール金を管理します。資産に「税金」タブが出て、納税の予定が残高見込みに入ります。"]
+        ["business", "事業用", "business", "事業口座やプール金を管理します。「事業」の印が付き、最初から税金タブを使う設定になります。"]
       ] as const).map(([value, label, kind, text]) => (
         <button key={value} type="button" className={`ledger-purpose-option ${value}${current === value ? " selected" : ""}`} disabled={!isOwner || saving} onClick={() => choose(value)} aria-pressed={current === value}>
           <span className="ledger-purpose-radio" aria-hidden="true" />
@@ -252,6 +253,34 @@ function LedgerPurposeChoice({ ledger, onChanged, setNotice }: { ledger: Househo
         </button>
       ))}
       <p className="settings-note">{isOwner ? "あとから何度でも切り替えられます。取引やカテゴリはそのまま残ります。" : "使い方を変えられるのは、この家計簿のオーナーだけです。"}</p>
+    </div>
+  );
+}
+
+// 家計簿ごとに税金タブを使うか（個人・共有・事業用どれでも）
+function LedgerTaxToggle({ ledger, onChanged, setNotice }: { ledger: HouseholdSummary; onChanged: (enabled: boolean) => Promise<void>; setNotice: (message: string) => void }) {
+  const enabled = Boolean(ledger.taxEnabled);
+  const [saving, setSaving] = useState(false);
+  const isOwner = ledger.memberRole === "owner";
+  async function toggle() {
+    if (!isOwner || saving) return;
+    setSaving(true);
+    try {
+      await updateLedgerTaxEnabled(ledger.id, !enabled);
+      await onChanged(!enabled);
+    } catch (error) {
+      setNotice(toJapaneseError(error, "税金タブの設定の変更に失敗しました。"));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <div className="ledger-tax-toggle">
+      <button type="button" role="switch" aria-checked={enabled} className={`ledger-tax-switch${enabled ? " on" : ""}`} disabled={!isOwner || saving} onClick={toggle}>
+        <span><b>税金タブを使う</b><small>所得税・住民税・国保・年金の納付予定と「支払った」の記録、支払いの見通しを、この家計簿の資産画面で管理します。</small></span>
+        <i aria-hidden="true" />
+      </button>
+      {!isOwner && <p className="settings-note">切り替えられるのは、この家計簿のオーナーだけです。</p>}
     </div>
   );
 }
@@ -650,8 +679,8 @@ export default function App() {
     try {
       rememberHouseholdId(householdId);
       const next = await loadRemoteState(householdId);
-      // 税金タブは事業用の家計簿だけにあるので、そうでない家計簿では総資産へ
-      if (!(next.activeSpace === "shared" && next.ledgerPurpose === "business")) setTab((current) => (current === "taxes" ? "analysis" : current));
+      // 税金タブを使わない家計簿では総資産へ
+      if (!next.taxEnabled) setTab((current) => (current === "taxes" ? "analysis" : current));
       rememberHouseholdId(next.householdId);
       setState(next);
     } finally {
@@ -680,7 +709,8 @@ export default function App() {
     fixed: fixedCostForecast(state.fixedCosts, calendarMonth),
     credit: monthlyCreditWithdrawalsByKey(state, calendarMonth)
   };
-  const isBusinessLedger = state.activeSpace === "shared" && state.ledgerPurpose === "business";
+  // 税金タブ：設定でオンにした家計簿（未設定なら事業用だけ）
+  const isBusinessLedger = Boolean(state.taxEnabled);
   const ledgerTabs = isBusinessLedger
     ? [...baseTabs.slice(0, 5), { id: "taxes" as const, label: "税金", icon: Receipt }, ...baseTabs.slice(5)]
     : baseTabs;
@@ -901,7 +931,7 @@ export default function App() {
           />
         )}
         {tab === "investments" && <InvestmentsView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
-        {tab === "taxes" && !isBusinessLedger && <p className="settings-note">この家計簿は事業用ではないため、税金タブはありません。設定 › 家計簿を管理 で「事業用」にすると使えます。</p>}
+        {tab === "taxes" && !isBusinessLedger && <p className="settings-note">この家計簿では税金タブを使っていません。設定 › 家計簿を管理 で「税金タブを使う」をオンにすると使えます。</p>}
         {tab === "taxes" && isBusinessLedger && <TaxesView state={state} monthKey={calendarMonth} setNotice={setNotice} reload={() => refreshRemoteState()} />}
         {tab === "settings" && (
           <SettingsView
@@ -4976,7 +5006,7 @@ function SettingsView({
   onSignOut: () => void;
 }) {
   const [taxAddKind, setTaxAddKind] = useState<TaxKind | null>(null);
-  const isBusinessLedger = state.activeSpace === "shared" && state.ledgerPurpose === "business";
+  const isBusinessLedger = Boolean(state.taxEnabled);
   const [sharedName, setSharedName] = useState("共有家計簿");
   const [showCreateShared, setShowCreateShared] = useState(false);
   const [creatingShared, setCreatingShared] = useState(false);
@@ -5186,6 +5216,14 @@ function SettingsView({
                   setNotice={setNotice}
                 />
               )}
+              <LedgerTaxToggle
+                ledger={modalLedger}
+                onChanged={async (enabled) => {
+                  await reload();
+                  setNotice(enabled ? `${modalLedger.name}で税金タブを使うようにしました。資産に「税金」タブが出ます。` : `${modalLedger.name}の税金タブを非表示にしました（登録した税金は残ります）。`);
+                }}
+                setNotice={setNotice}
+              />
               <LedgerColorPicker
                 householdId={modalLedger.id}
                 currentColor={modalLedger.themeColor}

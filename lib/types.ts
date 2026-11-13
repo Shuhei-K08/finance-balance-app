@@ -149,6 +149,8 @@ export type HouseholdSummary = {
   themeColor?: string;
   /** 家計簿の使い方：ふだんの生活費か、事業用か */
   purpose?: LedgerPurpose;
+  /** 税金タブを使うか（未設定なら事業用だけ使う） */
+  taxEnabled?: boolean;
 };
 
 export type LedgerPurpose = "household" | "business";
@@ -183,6 +185,8 @@ export type LedgerState = {
   householdId?: string;
   householdName?: string;
   ledgerPurpose?: LedgerPurpose;
+  /** この家計簿で税金タブを使うか */
+  taxEnabled?: boolean;
   themeColor?: string;
   inviteCode?: string;
   profileRole?: "user" | "admin";
