@@ -1956,7 +1956,7 @@ function upcomingBills(state: LedgerState, days: number) {
     .map((cost) => ({
       id: cost.id,
       installment: fixedRowTag(state, cost),
-      name: cost.taxKind === "pension" || cost.payDateMoved ? `${cost.name} ${monthNumber(cost.occurrenceMonth)}月分` : cost.name,
+      name: (cost.taxKind === "pension" || cost.payDateMoved) && !isTaxInstallment(cost) ? `${cost.name} ${monthNumber(cost.occurrenceMonth)}月分` : cost.name,
       amount: cost.amount,
       kind: cost.kind,
       date: cost.date,
@@ -3385,7 +3385,7 @@ function FixedCostOccurrenceRow({ row, state, setNotice, reload }: { row: FixedC
   return (
     <article className="fixed-occurrence-row">
       <div className="tx-lead kind fixed">定期</div>
-      <div><strong>{row.name}{(row.taxKind === "pension" || row.payDateMoved) && <> {monthNumber(row.occurrenceMonth)}月分</>}{(() => { const label = fixedRowTag(state, row); return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong>{row.taxKind && <small className={`fixed-tax-state${row.paidOn ? " paid" : row.overdue ? " overdue" : ""}`}>期日 {shortDate(row.dueDate)} ・ {row.paidOn ? `${shortDate(row.paidOn)}に支払い済み` : row.overdue ? "期日超過・未払い" : "未払い"}</small>}<span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
+      <div><strong>{row.name}{(row.taxKind === "pension" || row.payDateMoved) && !isTaxInstallment(row) && <> {monthNumber(row.occurrenceMonth)}月分</>}{(() => { const label = fixedRowTag(state, row); return label ? <em className={`installment-tag${label.startsWith("最終回") ? " last" : ""}`}>{label}</em> : null; })()}</strong>{row.taxKind && <small className={`fixed-tax-state${row.paidOn ? " paid" : row.overdue ? " overdue" : ""}`}>期日 {shortDate(row.dueDate)} ・ {row.paidOn ? `${shortDate(row.paidOn)}に支払い済み` : row.overdue ? "期日超過・未払い" : "未払い"}</small>}<span>{row.transferGroupId ? fixedLedgerLine(row, account?.name) : row.kind === "transfer" ? `${account?.name ?? "未設定"} → ${transferToAccount?.name ?? "未設定"}` : `${categoryPathLabel(state, row.categoryId) || category?.name || "未設定"}／${account?.name ?? "未設定"}`}</span>{row.memo && <small className={`fixed-memo${row.overrideMemo ? " this-month" : ""}`}>{row.overrideMemo ? "今月：" : ""}{row.memo}</small>}</div>
       <em className={row.transferDirection === "in" ? "income" : meta.className}>{row.kind === "income" || row.transferDirection === "in" ? "+" : ""}{plainAmount(row.amount)}</em>
       {setNotice && reload && <button className="mini-button" type="button" onClick={() => setEditing(!editing)}>この月だけ変更</button>}
       {editing && (
@@ -6028,7 +6028,7 @@ function taxRowsForMonth(state: LedgerState, monthKey: string): Omit<TaxRow, "st
     const base = state.fixedCosts.find((cost) => cost.id === occurrence.id) ?? occurrence;
     const isLump = Boolean(occurrence.overrideMemo && /まとめ払い|前納/.test(occurrence.overrideMemo));
     // 年金は国保の「第◯期」と同じように、どの月の分かを出す（支払日を変えた分は元の月）
-    const sub = kind === "pension"
+    const sub = kind === "pension" && !isTaxInstallment(base)
       ? (isLump ? occurrence.overrideMemo!.replace(/\s*(まとめ払い|前納)$/, "") : `${monthNumber(occurrence.occurrenceMonth)}月分`)
       : occurrence.name.replace(meta.label, "").replace(meta.short, "").trim();
     return {
@@ -6313,7 +6313,7 @@ function OverduePanel({ state, setNotice, reload }: { state: LedgerState; setNot
   if (rows.length === 0) return null;
   const visible = showAll ? rows : rows.slice(0, 3);
   const keyOf = (row: FixedCostOccurrence) => `${row.id}-${row.occurrenceMonth}`;
-  const label = (row: FixedCostOccurrence) => `${row.name}${row.taxKind === "pension" ? ` ${monthNumber(row.occurrenceMonth)}月分` : ""}`;
+  const label = (row: FixedCostOccurrence) => `${row.name}${row.taxKind === "pension" && !isTaxInstallment(row) ? ` ${monthNumber(row.occurrenceMonth)}月分` : ""}`;
 
   async function pay(targets: FixedCostOccurrence[], date: string | null) {
     setBusy(true);
@@ -6518,19 +6518,27 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
     setStartMonth(pref.start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
-  // この年度に1か月でもかかっている年金があれば、それを使う
+  // 年金は国保と同じく1か月分ずつ登録する（◯月分は翌月末に引き落とし）
   const fyMonthsForAdd = fiscalMonths(startYear);
   const pensionCosts = state.fixedCosts.filter((cost) => cost.taxKind === "pension" && !isTaxInstallment(cost));
+  // これまでの「毎月の定期項目」としての年金（この年度にかかっているもの）
   const existingPension = pensionCosts.find((cost) => fyMonthsForAdd.some((month) => isFixedCostActiveInMonth(cost, month)));
-  // 前の年度で終わっている年金（翌年度の分を作るときの初期値に使う）
-  const previousPension = existingPension ? undefined : [...pensionCosts].filter((cost) => cost.effectiveTo && cost.effectiveTo.slice(0, 7) < `${startYear}-04`).sort((a, b) => (b.effectiveTo ?? "").localeCompare(a.effectiveTo ?? ""))[0];
+  const previousPension = existingPension ?? [...pensionCosts].sort((a, b) => (b.effectiveTo ?? "9999").localeCompare(a.effectiveTo ?? "9999"))[0];
+  const pensionInstallments = state.fixedCosts.filter((cost) => cost.taxKind === "pension" && isTaxInstallment(cost) && fyMonthsForAdd.includes(cost.effectiveFrom!.slice(0, 7)));
   const [accountId, setAccountId] = useState(previousPension?.accountId ?? normalAccounts[0]?.id ?? "");
   const [categoryId, setCategoryId] = useState(previousPension?.categoryId ?? "");
   const [pensionAmount, setPensionAmount] = useState(previousPension?.amount ?? 17510);
   const [pensionDueDay, setPensionDueDay] = useState(previousPension?.dueDay ?? 31);
-  const pensionCandidates = previousPension ? [] : state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
+  // 毎月の定期項目から切り替えるときは、これから引き落とされる分（今月末に払う先月分）から
+  const [pensionFrom, setPensionFrom] = useState(() => {
+    const lastMonth = addMonthsKey(todayIso().slice(0, 7), -1);
+    return existingPension && fyMonthsForAdd.includes(lastMonth) ? monthNumber(lastMonth) : 4;
+  });
+  const pensionCandidates = existingPension ? [] : state.fixedCosts.filter((cost) => !cost.taxKind && cost.kind === "expense" && (!cost.effectiveTo || cost.effectiveTo.slice(0, 7) >= todayIso().slice(0, 7)));
   const likelyPension = pensionCandidates.filter((cost) => cost.name.includes("年金"));
+  // 置き換える毎月の定期項目（年金として登録済みのもの、または「はい」で選んだもの）
   const [linkId, setLinkId] = useState(() => likelyPension[0]?.id ?? "");
+  const replaceCost = existingPension ?? state.fixedCosts.find((cost) => cost.id === linkId);
   const [showAllCandidates, setShowAllCandidates] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -6551,26 +6559,35 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
     } else if (kind === "income_tax") {
       if (incomeMode === "prepay") setItems([{ label: "予定納税 第1期", date: `${s}-07-31`, amount: yearTotal }, { label: "予定納税 第2期", date: `${s}-11-30`, amount: yearTotal }]);
       else setItems([{ label: `確定申告（${finalYear}年分）`, date: finalMethod === "transfer" ? `${finalYear + 1}-04-20` : `${finalYear + 1}-03-15`, amount: yearTotal }]);
+    } else if (kind === "pension") {
+      // 4月分〜3月分。◯月分は翌月の引落日に払う
+      const firstMonth = `${pensionFrom <= 3 ? next : s}-${String(pensionFrom).padStart(2, "0")}`;
+      const count = Math.max(1, (startYear + 1) * 12 + 3 - (Number(firstMonth.slice(0, 4)) * 12 + Number(firstMonth.slice(5, 7))) + 1);
+      setItems(Array.from({ length: count }, (_, index) => {
+        const month = addMonthsKey(firstMonth, index);
+        const payMonth = addMonthsKey(month, 1);
+        return { label: `${monthNumber(month)}月分`, date: `${payMonth}-${String(Math.min(pensionDueDay || 31, lastDayOfMonth(payMonth))).padStart(2, "0")}`, amount: pensionAmount };
+      }));
     } else {
       setItems([]);
     }
-  }, [kind, incomeMode, yearTotal, startYear, finalYear, finalMethod, periodCount, startMonth]);
+  }, [kind, incomeMode, yearTotal, startYear, finalYear, finalMethod, periodCount, startMonth, pensionFrom, pensionAmount, pensionDueDay]);
 
   async function save() {
     if (!accountId) return setNotice("支払う口座を選んでください。");
     setSaving(true);
     try {
       if (kind === "pension") {
-        if (existingPension) { onClose(); return; }
-        if (linkId) {
-          await setFixedCostTaxKind(linkId, "pension");
-        } else {
-          if (!pensionAmount) { setNotice("月額を入力してください。"); return; }
-          // 前の年度を「◯年度国民年金」のように1年ごとに作っていたら、同じ形で作る
-          const yearly = Boolean(previousPension?.effectiveTo && /\d{4}年度/.test(previousPension.name));
-          const name = yearly ? previousPension!.name.replace(/\d{4}年度/, `${startYear}年度`) : "国民年金";
-          await createFixedCost(state.householdId ?? "", { name, kind: "expense", categoryId, accountId, amount: pensionAmount, variable: false, dueDay: pensionDueDay, status: "planned", effectiveFrom: `${startYear}-04-01`, ...(yearly ? { effectiveTo: `${startYear + 1}-03-01` } : {}), taxKind: "pension", memo: previousPension?.memo });
+        const valid = items.filter((item) => item.amount > 0 && item.date);
+        if (valid.length === 0) { setNotice("月額を入力してください。"); return; }
+        // 毎月の定期項目で登録していた年金は、新しい1か月ずつの登録の最初の引き落とし月から外す
+        if (replaceCost) {
+          const firstPay = valid.map((item) => item.date.slice(0, 7)).sort()[0];
+          const from = (replaceCost.effectiveFrom ?? "0000-00").slice(0, 7);
+          if (from >= firstPay) await deleteFixedCost(replaceCost.id, "all");
+          else await deleteFixedCost(replaceCost.id, "future", firstPay);
         }
+        await createTaxInstallments(state.householdId ?? "", valid.map((item) => ({ name: `国民年金 ${item.label}`, taxKind: "pension", amount: item.amount, date: item.date, accountId, categoryId: categoryId || undefined, memo: previousPension?.memo })));
       } else {
         const valid = items.filter((item) => item.amount > 0 && item.date);
         if (valid.length === 0) { setNotice("金額を入力してください。"); return; }
@@ -6631,24 +6648,23 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
               {kind === "income_tax" && incomeMode === "final" && <p className="settings-note">確定申告で決まった「納める税額」を入れてください（予定納税で払った分を引いたあとの額）。還付になる場合は登録しなくて大丈夫です。{items[0] && fiscalStartYear(items[0].date.slice(0, 7)) !== startYear ? `この支払いは${fiscalStartYear(items[0].date.slice(0, 7))}年度（${items[0].date.slice(0, 4)}年${monthNumber(items[0].date.slice(0, 7))}月）の一覧に出ます。` : ""}</p>}
             </div>
           </>
-        ) : existingPension ? (
-          <p className="settings-note">国民年金は「{existingPension.name}」（毎月 {plainAmount(existingPension.amount)}円）を使っています。一覧の年金の行をタップすると、まとめ払いや前納に切り替えられます。</p>
         ) : (
           <>
-            {previousPension && <p className="pension-hint">「{previousPension.name}」は{previousPension.effectiveTo!.slice(0, 4)}年{monthNumber(previousPension.effectiveTo!.slice(0, 7))}月で終わっています。{startYear}年度（{startYear}年4月〜{startYear + 1}年3月）の分を登録します。金額は前の年度と同じにしてあるので、新しい年度の額に直してください。</p>}
-            {pensionCandidates.length > 0 ? (
+            {pensionInstallments.length > 0 && <p className="pension-hint">{startYear}年度の国民年金は {pensionInstallments.length}か月分 登録済みです。続けて登録すると重なるので、足りない月だけ「何月分から」で選んでください。</p>}
+            {existingPension && <p className="pension-hint">いまは「{existingPension.name}」（毎月 {plainAmount(existingPension.amount)}円）の定期項目で登録しています。ここで登録すると、国保と同じく1か月分ずつの登録に置き換わります（最初の引き落とし月から前の定期項目を止めます）。「支払った」の記録は付け直してください。</p>}
+            {!existingPension && pensionCandidates.length > 0 && (
               <div className="pension-link">
                 <div className="pension-link-h">
                   {likelyPension.length > 0
-                    ? <>定期項目に「{likelyPension[0].name}」があります。国民年金はこの定期項目として登録済みですか？</>
+                    ? <>定期項目に「{likelyPension[0].name}」があります。これは国民年金の分ですか？</>
                     : <>国民年金をすでに定期項目として登録していますか？</>}
                 </div>
                 {(showAllCandidates ? pensionCandidates : likelyPension).map((cost) => {
                   const account = state.accounts.find((item) => item.id === cost.accountId);
                   return (
-                    <button key={cost.id} type="button" className={`pension-option${linkId === cost.id ? " selected" : ""}`} onClick={() => setLinkId(cost.id)}>
+                    <button key={cost.id} type="button" className={`pension-option${linkId === cost.id ? " selected" : ""}`} onClick={() => { setLinkId(cost.id); setPensionAmount(cost.amount); setPensionDueDay(cost.dueDay); setAccountId(cost.accountId ?? accountId); }}>
                       <span className="ledger-purpose-radio" aria-hidden="true" />
-                      <span><b>はい、「{cost.name}」がそれです</b><small>毎月 {plainAmount(cost.amount)}円・{cost.dueDay}日・{account?.name ?? "口座未設定"}。この定期項目をそのまま税金タブに出します（金額も口座も変わりません）。</small></span>
+                      <span><b>はい、「{cost.name}」がそれです</b><small>毎月 {plainAmount(cost.amount)}円・{cost.dueDay}日・{account?.name ?? "口座未設定"}。二重に引かれないよう、この定期項目を止めて1か月分ずつの登録に置き換えます。</small></span>
                     </button>
                   );
                 })}
@@ -6657,26 +6673,36 @@ function TaxAddSheet({ state, startYear, initialKind = "resident_tax", setNotice
                 )}
                 <button type="button" className={`pension-option${linkId === "" ? " selected" : ""}`} onClick={() => setLinkId("")}>
                   <span className="ledger-purpose-radio" aria-hidden="true" />
-                  <span><b>いいえ、新しく登録する</b><small>国民年金の定期項目をここで作ります。{likelyPension.length > 0 ? `「${likelyPension[0].name}」が国民年金の分なら、二重に引かれた計算になるので「はい」を選んでください。` : ""}</small></span>
+                  <span><b>いいえ、別のもの</b><small>国民年金は新しくここで登録します。</small></span>
                 </button>
               </div>
-            ) : null}
-            {!linkId && (
-              <div className="form-grid">
-                <label>月額<input type="number" inputMode="numeric" value={numberInputValue(pensionAmount)} onChange={(event) => setPensionAmount(Number(event.target.value || 0))} /></label>
-                <label>引落日<input type="number" min="1" max="31" value={numberInputValue(pensionDueDay)} onChange={(event) => setPensionDueDay(Number(event.target.value || 0))} /></label>
-              </div>
             )}
-            <p className="settings-note">{linkId ? "登録すると、税金タブに毎月の年金が並びます。" : "月額は年金の納付書の金額です。口座振替なら、その月の分が翌月末に引き落とされます。"}まとめ払いや前納は、登録後に税金タブの年金の行をタップすると切り替えられます。</p>
+            <div className="form-grid">
+              <label>月額<input type="number" inputMode="numeric" value={numberInputValue(pensionAmount)} onChange={(event) => setPensionAmount(Number(event.target.value || 0))} /></label>
+              <label>引落日（翌月の）<select value={pensionDueDay >= 28 ? 31 : pensionDueDay} onChange={(event) => setPensionDueDay(Number(event.target.value))}>{[...Array.from({ length: 27 }, (_, index) => index + 1), 31].map((day) => <option key={day} value={day}>{day === 31 ? "月末" : `${day}日`}</option>)}</select></label>
+            </div>
+            <label>何月分から登録するか<select value={pensionFrom} onChange={(event) => setPensionFrom(Number(event.target.value))}>{[4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3].map((month) => <option key={month} value={month}>{month}月分から（{month === 12 ? 1 : month + 1}月に引き落とし）〜3月分まで</option>)}</select></label>
+            <div className="tax-draft">
+              <div className="tax-draft-h"><span>引き落としの予定</span><span>日付・金額は1か月ずつ直せます</span></div>
+              {items.map((item, index) => (
+                <div className="tax-draft-row" key={index}>
+                  <span>{item.label}</span>
+                  <input type="date" value={item.date} onChange={(event) => setItems(items.map((row, i) => (i === index ? { ...row, date: event.target.value } : row)))} />
+                  <input type="number" inputMode="numeric" value={numberInputValue(item.amount)} onChange={(event) => setItems(items.map((row, i) => (i === index ? { ...row, amount: Number(event.target.value || 0) } : row)))} />
+                </div>
+              ))}
+              <p className="settings-note">国民年金は「◯月分」をその翌月末に払います（10月分は11月末）。まとめて払う月や前納は、ここで日付や金額を直すか、登録後に1か月ずつ直せます。</p>
+            </div>
           </>
         )}
-        {!(kind === "pension" && (existingPension || linkId)) && (
+        {(
+
           <>
             <label>支払う口座<AccountSelect value={accountId} onChange={setAccountId} accounts={normalAccounts} /></label>
             <label>カテゴリ（任意）<select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}><option value="">なし</option><CategoryOptions categories={state.categories} kind="expense" /></select></label>
           </>
         )}
-        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "登録中…" : kind === "pension" && existingPension ? "閉じる" : kind === "pension" && linkId ? "この定期項目を税金タブに出す" : "登録する"}</button>
+        <button className="full-primary" type="button" disabled={saving} onClick={save}>{saving ? "登録中…" : kind === "pension" && replaceCost ? "1か月ずつの登録に置き換える" : "登録する"}</button>
       </div>
     </SettingsSheet>
   );
