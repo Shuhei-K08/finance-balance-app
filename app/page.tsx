@@ -6077,7 +6077,10 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
   const [pensionId, setPensionId] = useState<string | null>(null);
 
   const allRows = months.map((month) => ({ month, rows: taxRowsForMonth(state, month) }));
-  const upcoming = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0 && row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
+  // 次の年度の分（翌4月末の年金3月分や確定申告など、払い忘れないように一緒に出す）
+  const nextYearRows = fiscalMonths(startYear + 1).map((month) => ({ month, rows: taxRowsForMonth(state, month) })).filter(({ rows }) => rows.length > 0);
+  const bothYears = [...allRows, ...nextYearRows];
+  const upcoming = bothYears.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0 && row.date >= today).sort((a, b) => a.date.localeCompare(b.date));
   const nextDate = upcoming[0]?.date;
   const withStatus = allRows.map(({ month, rows }) => ({
     month,
@@ -6118,7 +6121,7 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
 
   // 支払いの見通し：払う口座ごとに、期日に残高が足りるか
   const outlook = useMemo(() => {
-    const pending = allRows.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0);
+    const pending = bothYears.flatMap(({ rows }) => rows).filter((row) => !row.covered && !row.paidOn && row.amount > 0);
     const accountIds = Array.from(new Set(pending.map((row) => row.cost.accountId).filter(Boolean)));
     const tomorrow = (() => { const next = new Date(`${today}T00:00:00`); next.setDate(next.getDate() + 1); return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`; })();
     const shortKeys = new Set<string>();
@@ -6147,6 +6150,35 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
     }).filter((item): item is NonNullable<typeof item> => Boolean(item));
     return { accounts, shortKeys };
   }, [state, startYear, today]);
+
+  const nextYearView = nextYearRows.map(({ month, rows }) => ({
+    month,
+    rows: rows
+      .filter((row) => filter === "all" || row.kind === filter)
+      .map((row): TaxRow => ({ ...row, status: row.covered ? "covered" : row.paidOn ? "done" : row.date < today ? "unpaid" : row.date === nextDate ? "next" : "plan" }))
+  })).filter(({ rows }) => rows.length > 0);
+  const renderRow = (row: TaxRow) => (
+                <button type="button" key={row.key} className={`tax-row ${row.status}${outlook.shortKeys.has(row.key) ? " short" : ""}`} onClick={() => openRow(row)}>
+                  <span className="tax-mark" style={{ background: TAX_KIND_META[row.kind].color }}>{TAX_KIND_META[row.kind].mark}</span>
+                  <span className="tax-row-text">
+                    <b>{row.title}{row.sub && <small>{row.sub}</small>}</b>
+                    <small>
+                      {!row.covered && <span className="num">期日 {shortDate(row.date)}</span>}
+                      {!row.covered && row.paidOn && <span className="tax-paid-on num"> ・ {shortDate(row.paidOn)}に支払い</span>}
+                      {!row.covered && row.note && " ・ "}
+                      {row.note && <u className={row.covered ? "" : "lump"}>{row.note}</u>}
+                      {row.cost.memo && !row.covered && !row.note && <> ・ {row.cost.memo}</>}
+                    </small>
+                  </span>
+                  <span className="tax-row-amount num">{row.covered ? "—" : plainAmount(row.amount)}</span>
+                  <span className="tax-row-status" aria-label={row.status === "done" ? "支払い済み" : row.status === "unpaid" ? "期日超過" : row.status === "covered" ? "前納済み" : "未払い"}>
+                    {row.status === "done" && <i className="st done">済</i>}
+                    {row.status === "unpaid" && <i className="st unpaid">期日超過</i>}
+                    {(row.status === "next" || row.status === "plan") && <i className="st todo">未払い</i>}
+                    {row.status !== "unpaid" && row.status !== "done" && outlook.shortKeys.has(row.key) && <i className="st short">残高不足</i>}
+                    {row.status === "covered" && <i className="st cov">前</i>}
+                  </span>
+                </button>);
 
   function openRow(row: TaxRow) {
     // 前納で払わない月は払い方の画面、それ以外は「支払った」の画面
@@ -6247,35 +6279,25 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
           <div key={month} className="tax-month">
             <div className={`tax-month-h${isPast ? " past" : ""}`}><b>{monthNumber(month)}月</b>{isNow && <em>今月</em>}<span className="num">{plainAmount(rows.reduce((sum, row) => sum + row.amount, 0))}</span></div>
             <div className={`tax-list${isNow ? " now" : ""}${isPast ? " past" : ""}`}>
-              {rows.map((row) => (
-                <button type="button" key={row.key} className={`tax-row ${row.status}${outlook.shortKeys.has(row.key) ? " short" : ""}`} onClick={() => openRow(row)}>
-                  <span className="tax-mark" style={{ background: TAX_KIND_META[row.kind].color }}>{TAX_KIND_META[row.kind].mark}</span>
-                  <span className="tax-row-text">
-                    <b>{row.title}{row.sub && <small>{row.sub}</small>}</b>
-                    <small>
-                      {!row.covered && <span className="num">期日 {shortDate(row.date)}</span>}
-                      {!row.covered && row.paidOn && <span className="tax-paid-on num"> ・ {shortDate(row.paidOn)}に支払い</span>}
-                      {!row.covered && row.note && " ・ "}
-                      {row.note && <u className={row.covered ? "" : "lump"}>{row.note}</u>}
-                      {row.cost.memo && !row.covered && !row.note && <> ・ {row.cost.memo}</>}
-                    </small>
-                  </span>
-                  <span className="tax-row-amount num">{row.covered ? "—" : plainAmount(row.amount)}</span>
-                  <span className="tax-row-status" aria-label={row.status === "done" ? "支払い済み" : row.status === "unpaid" ? "期日超過" : row.status === "covered" ? "前納済み" : "未払い"}>
-                    {row.status === "done" && <i className="st done">済</i>}
-                    {row.status === "unpaid" && <i className="st unpaid">期日超過</i>}
-                    {(row.status === "next" || row.status === "plan") && <i className="st todo">未払い</i>}
-                    {row.status !== "unpaid" && row.status !== "done" && outlook.shortKeys.has(row.key) && <i className="st short">残高不足</i>}
-                    {row.status === "covered" && <i className="st cov">前</i>}
-                  </span>
-                </button>
-              ))}
+              {rows.map((row) => renderRow(row))}
             </div>
           </div>
         );
       })}
 
       {showPast && pastMonths.length > 0 && <button type="button" className="tax-fold-close" onClick={() => setShowPast(false)}>支払い済みの月をたたむ</button>}
+
+      {nextYearView.length > 0 && (
+        <section className="tax-next-year">
+          <div className="tax-next-year-h"><b>{startYear + 1}年度の予定</b><span>次の年度（{startYear + 1}年4月〜）に払う分 ・ <span className="num">{plainAmount(nextYearView.reduce((sum, item) => sum + item.rows.reduce((t, row) => t + row.amount, 0), 0))}</span></span></div>
+          {nextYearView.map(({ month, rows }) => (
+            <div key={month} className="tax-month">
+              <div className="tax-month-h"><b>{month.slice(0, 4)}年{monthNumber(month)}月</b><span className="num">{plainAmount(rows.reduce((sum, row) => sum + row.amount, 0))}</span></div>
+              <div className="tax-list">{rows.map((row) => renderRow(row))}</div>
+            </div>
+          ))}
+        </section>
+      )}
 
       <p className="settings-note">金額は定期項目と連動していて、口座の残高見込みにも入ります。国保・住民税の金額と回数は、6月ごろ届く通知書の内容に合わせて変えてください。行をタップすると、金額や日付を直せます。</p>
 
@@ -6289,7 +6311,7 @@ function TaxesView({ state, monthKey, setNotice, reload }: { state: LedgerState;
       {payRow && (
         <TaxPaySheet
           row={payRow}
-          siblings={allRows.flatMap(({ rows }) => rows).filter((row) => row.key !== payRow.key && !row.covered && !row.paidOn && row.amount > 0 && row.date === payRow.date)}
+          siblings={bothYears.flatMap(({ rows }) => rows).filter((row) => row.key !== payRow.key && !row.covered && !row.paidOn && row.amount > 0 && row.date === payRow.date)}
           state={state}
           setNotice={setNotice}
           reload={reload}

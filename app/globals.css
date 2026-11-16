@@ -6181,3 +6181,9 @@ button.tax-add.top { width: 100%; margin: 12px 0 4px; padding: 11px; border-styl
 .ledger-tax-switch.on > i::after { transform: translateX(18px); }
 .ledger-tax-switch:disabled { opacity: .6; }
 @media (prefers-reduced-motion: reduce) { .ledger-tax-switch > i, .ledger-tax-switch > i::after { transition: none; } }
+
+/* 税金：次の年度の予定 */
+.tax-next-year { margin-top: 18px; padding-top: 14px; border-top: 2px dashed var(--rule); display: grid; gap: 4px; }
+.tax-next-year-h { display: grid; gap: 2px; margin-bottom: 4px; }
+.tax-next-year-h b { font-size: 15px; color: var(--ink); }
+.tax-next-year-h > span { font-size: 12px; color: var(--muted); }
