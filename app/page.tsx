@@ -99,6 +99,8 @@ import {
   todayIso,
   totalAssets,
   transactionLedgerDate,
+  nextWithdrawalDate,
+  cardWithdrawalDate,
   transactionTypeLabel,
   yen
 } from "@/lib/finance";
@@ -1886,7 +1888,7 @@ function upcomingCardWithdrawals(state: LedgerState, today = todayIso()): CardWi
     state.transactions
       .filter((tx) => tx.accountId === card.id && tx.type === "expense" && tx.creditStatus !== "withdrawn")
       .forEach((tx) => {
-        const withdrawal = tx.reflectedDate ?? nextWithdrawalDate(card, tx.date);
+        const withdrawal = cardWithdrawalDate(tx, card);
         if (withdrawal < today) return;
         add(card, withdrawal, tx.amount, transactionLedgerDate(tx) <= monthEnd, { tx });
       });
@@ -3260,21 +3262,27 @@ function yenShort(amount: number) {
 }
 
 function HomeEntryModal({ type, monthKey, state, setNotice, reload, onClose }: { type: "expense" | "income" | "credit"; monthKey: string; state: LedgerState; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
-  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
+  const creditCards = new Map(state.accounts.filter((account) => account.type === "credit").map((account) => [account.id, account]));
+  const creditIds = new Set(creditCards.keys());
+  // カード引落は「実際に引き落とされる日」で月を振り分ける（使用日で計上した取引も引落月の明細に入れる）
+  const entryDate = (transaction: Transaction) => {
+    const card = type === "credit" ? creditCards.get(transaction.accountId) : undefined;
+    return card ? cardWithdrawalDate(transaction, card) : transactionLedgerDate(transaction);
+  };
   const rows = state.transactions
     .filter((transaction) => (
       type === "credit"
-        ? transaction.type === "expense" && creditIds.has(transaction.accountId) && transactionLedgerDate(transaction).startsWith(monthKey)
+        ? transaction.type === "expense" && creditIds.has(transaction.accountId) && entryDate(transaction).startsWith(monthKey)
         : transaction.type === type && transactionLedgerDate(transaction).startsWith(monthKey)
     ))
-    .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
+    .sort((a, b) => entryDate(b).localeCompare(entryDate(a)));
   const fixedRows = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state).filter((row) => (
     type === "credit"
       ? row.kind === "expense" && creditIds.has(row.accountId)
       : row.kind === type
   ));
   const entries = [
-    ...rows.map((transaction) => ({ kind: "transaction" as const, date: transactionLedgerDate(transaction), transaction })),
+    ...rows.map((transaction) => ({ kind: "transaction" as const, date: entryDate(transaction), transaction })),
     ...fixedRows.map((fixedCost) => ({ kind: "fixed" as const, date: fixedCost.date, fixedCost }))
   ].sort((a, b) => b.date.localeCompare(a.date));
   const total = rows.reduce((sum, transaction) => sum + transaction.amount, 0) + fixedRows.reduce((sum, row) => sum + row.amount, 0);
@@ -3302,8 +3310,8 @@ function CreditCardTotals({ state, monthKey }: { state: LedgerState; monthKey: s
   const creditAccounts = state.accounts.filter((account) => account.type === "credit");
   const totals = creditAccounts
     .map((account) => {
-      const transactionTotal = monthTransactionsByKey(state.transactions, monthKey)
-        .filter((transaction) => transaction.type === "expense" && transaction.accountId === account.id)
+      const transactionTotal = state.transactions
+        .filter((transaction) => transaction.type === "expense" && transaction.accountId === account.id && cardWithdrawalDate(transaction, account).startsWith(monthKey))
         .reduce((sum, transaction) => sum + transaction.amount, 0);
       const fixedTotal = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
         .filter((cost) => cost.kind === "expense" && cost.accountId === account.id)
@@ -8719,16 +8727,6 @@ function TransactionEditSheet({
   );
 }
 
-function nextWithdrawalDate(account: LedgerState["accounts"][number], occurredOn: string) {
-  const closingDay = account.closingDay ?? 25;
-  const withdrawalDay = account.withdrawalDay ?? 10;
-  const usedAt = new Date(`${occurredOn}T00:00:00`);
-  const monthsToAdd = usedAt.getDate() <= closingDay ? 1 : 2;
-  const targetMonth = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, 1);
-  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
-  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(withdrawalDay, lastDay));
-  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
-}
 
 function shiftMonth(date: string, delta: number) {
   const base = new Date(`${date}T00:00:00`);

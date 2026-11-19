@@ -88,6 +88,25 @@ export function transactionLedgerDate(transaction: Transaction) {
   return transaction.reflectedDate || transaction.date;
 }
 
+// カードの締め日・引落日から、使用日に対する引落日を求める
+export function nextWithdrawalDate(account: Pick<Account, "closingDay" | "withdrawalDay">, occurredOn: string) {
+  const closingDay = account.closingDay ?? 25;
+  const withdrawalDay = account.withdrawalDay ?? 10;
+  const usedAt = new Date(`${occurredOn}T00:00:00`);
+  const monthsToAdd = usedAt.getDate() <= closingDay ? 1 : 2;
+  const targetMonth = new Date(usedAt.getFullYear(), usedAt.getMonth() + monthsToAdd, 1);
+  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
+  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(withdrawalDay, lastDay));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+}
+
+// カード払いの取引が実際に引き落とされる日。
+// 「引落日」で計上した取引は reflectedDate、「使用日」で計上した取引は締め日・引落日から計算する。
+// （収支に反映する日＝transactionLedgerDate とは別。カード引落の明細・合計はこちらで振り分ける）
+export function cardWithdrawalDate(transaction: Transaction, card: Pick<Account, "closingDay" | "withdrawalDay">) {
+  return transaction.reflectedDate || nextWithdrawalDate(card, transaction.date);
+}
+
 export function calculateAccountBalance(account: Account, transactions: Transaction[], throughMonthKey?: string) {
   const rows = throughMonthKey ? transactions.filter((transaction) => transactionLedgerDate(transaction) <= monthEndKey(throughMonthKey)) : transactions;
   return rows.reduce((balance, transaction) => {
@@ -506,14 +525,18 @@ export function monthlyCreditWithdrawals(state: LedgerState, date = new Date()) 
 }
 
 export function monthlyCreditWithdrawalsByKey(state: LedgerState, monthKey: string) {
-  const creditIds = new Set(state.accounts.filter((account) => account.type === "credit").map((account) => account.id));
+  const cards = new Map(state.accounts.filter((account) => account.type === "credit").map((account) => [account.id, account]));
+  const creditIds = new Set(cards.keys());
   const transactionTotal = state.transactions
-    .filter((transaction) => (
-      transaction.type === "expense" &&
-      creditIds.has(transaction.accountId) &&
-      transaction.creditStatus !== "withdrawn" &&
-      transactionLedgerDate(transaction).startsWith(monthKey)
-    ))
+    .filter((transaction) => {
+      const card = cards.get(transaction.accountId);
+      return (
+        transaction.type === "expense" &&
+        Boolean(card) &&
+        transaction.creditStatus !== "withdrawn" &&
+        cardWithdrawalDate(transaction, card!).startsWith(monthKey)
+      );
+    })
     .reduce((total, transaction) => total + transaction.amount, 0);
   const fixedTotal = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
     .filter((cost) => cost.kind === "expense" && creditIds.has(cost.accountId))
