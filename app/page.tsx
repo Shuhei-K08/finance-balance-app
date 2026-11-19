@@ -38,6 +38,7 @@ import {
   HelpCircle,
   Home,
   Landmark,
+  ShoppingBag,
   LineChart as LineChartIcon,
   LogOut,
   Moon,
@@ -101,6 +102,8 @@ import {
   transactionLedgerDate,
   nextWithdrawalDate,
   cardWithdrawalDate,
+  shiftWithdrawalDate,
+  statementClosingDate,
   transactionTypeLabel,
   yen
 } from "@/lib/finance";
@@ -736,6 +739,7 @@ export default function App() {
     date: string;
     memo?: string;
     creditPostingMode?: "used" | "withdrawal";
+    withdrawalDate?: string;
   }) {
     if (!state) return;
     if (transaction.type !== "transfer" && !transaction.categoryId) {
@@ -755,9 +759,14 @@ export default function App() {
       return;
     }
     const creditAccount = state.accounts.find((account) => account.id === transaction.accountId && account.type === "credit");
-    const withdrawalDate = transaction.type === "expense" && creditAccount && transaction.creditPostingMode === "withdrawal" ? nextWithdrawalDate(creditAccount, transaction.date) : undefined;
+    const isCardExpense = transaction.type === "expense" && Boolean(creditAccount);
+    // つきずれで引落日を手で決めたときはその日、そうでなければ締め日・引落日から計算
+    const cardWithdrawal = isCardExpense && creditAccount ? transaction.withdrawalDate || nextWithdrawalDate(creditAccount, transaction.date) : undefined;
+    const withdrawalDate = isCardExpense && transaction.creditPostingMode === "withdrawal" ? cardWithdrawal : undefined;
+    const { creditPostingMode: _mode, ...transactionFields } = transaction;
     const payload = {
-      ...transaction,
+      ...transactionFields,
+      withdrawalDate: isCardExpense ? transaction.withdrawalDate || undefined : undefined,
       categoryId: transaction.type === "transfer" ? undefined : transaction.categoryId,
       transferToAccountId: transaction.type === "transfer" ? transaction.transferToAccountId : undefined,
       date: transaction.date,
@@ -2080,7 +2089,7 @@ function QuickTransactionSheet({
   initialDate: string;
   initialType: TransactionType;
   onClose: () => void;
-  onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string; creditPostingMode?: "used" | "withdrawal" }) => Promise<void>;
+  onSubmit: (transaction: { type: TransactionType; amount: number; categoryId?: string; accountId: string; transferToAccountId?: string; date: string; memo?: string; creditPostingMode?: "used" | "withdrawal"; withdrawalDate?: string }) => Promise<void>;
   onLedgerTransferDone?: () => Promise<void>;
 }) {
   const usableAccounts = state.accounts;
@@ -2093,6 +2102,9 @@ function QuickTransactionSheet({
   const [date, setDate] = useState(initialDate);
   const [memo, setMemo] = useState("");
   const [creditPostingMode, setCreditPostingMode] = useState<"used" | "withdrawal">("used");
+  // つきずれ：自動計算の引落日から何か月ずらすか（使った日・支払元を変えたら戻す）
+  const [withdrawalShift, setWithdrawalShift] = useState(0);
+  useEffect(() => { setWithdrawalShift(0); }, [date, accountId]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [overdraft, setOverdraft] = useState<OverdraftInfo | null>(null);
@@ -2286,7 +2298,8 @@ function QuickTransactionSheet({
         transferToAccountId: type === "transfer" ? transferToAccountId || undefined : undefined,
         date,
         memo,
-        creditPostingMode: isCreditExpense ? creditPostingMode : undefined
+        creditPostingMode: isCreditExpense ? creditPostingMode : undefined,
+        withdrawalDate: isCreditExpense && selectedAccount && withdrawalShift !== 0 ? shiftWithdrawalDate(selectedAccount, nextWithdrawalDate(selectedAccount, date), withdrawalShift) : undefined
       });
     } finally {
       setSubmitting(false);
@@ -2376,17 +2389,20 @@ function QuickTransactionSheet({
           {type === "transfer" && (
             <label>振替先<AccountSelect value={transferToAccountId} onChange={(nextId: string) => setTransferToAccountId(nextId)} accounts={normalAccounts.filter((account) => account.id !== accountId)} placeholder="選択してください" /></label>
           )}
-          <label>{isCreditExpense ? "使用日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
+          <label>{isCreditExpense ? "使った日" : "日付"}<input value={date} onChange={(event) => setDate(event.target.value)} type="date" /></label>
         </div>}
-        {isCreditExpense && (
-          <div className="credit-posting-mode">
-            <span>計上する日付</span>
-            <div className="segmented compact">
-              <button className={creditPostingMode === "withdrawal" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("withdrawal")}>引落日</button>
-              <button className={creditPostingMode === "used" ? "selected" : ""} type="button" onClick={() => setCreditPostingMode("used")}>使用日</button>
-            </div>
-            <small>{creditPostingMode === "withdrawal" ? `${nextWithdrawalDate(selectedAccount, date)} に収支へ反映します。` : "使用日に収支へ反映します。"}</small>
-          </div>
+        {isCreditExpense && selectedAccount && date && (
+          <CardMoneyFlow
+            card={selectedAccount}
+            usedDate={date}
+            autoWithdrawalDate={nextWithdrawalDate(selectedAccount, date)}
+            withdrawalDate={shiftWithdrawalDate(selectedAccount, nextWithdrawalDate(selectedAccount, date), withdrawalShift)}
+            recordAt={creditPostingMode}
+            onRecordAt={setCreditPostingMode}
+            onShift={(months) => setWithdrawalShift((value) => value + months)}
+            onReset={() => setWithdrawalShift(0)}
+            withdrawalAccountName={state.accounts.find((item) => item.id === selectedAccount.withdrawalAccountId)?.name}
+          />
         )}
         <input value={memo} onChange={(event) => setMemo(event.target.value)} placeholder="メモ" />
         {error && <p className="form-error">{error}</p>}
@@ -4873,8 +4889,8 @@ function TransactionDetail({ transaction, state }: { transaction: LedgerState["t
       {transaction.type !== "transfer" && <div><span>カテゴリ</span><strong>{category?.name ?? "未設定"}</strong></div>}
       <div><span>{transaction.type === "income" ? "入金先" : "支払元"}</span><strong>{account?.name ?? "未設定"}</strong></div>
       {transaction.type === "transfer" && !transaction.transferGroupId && <div><span>振替先</span><strong>{transferTo?.name ?? "未設定"}</strong></div>}
-      <div><span>{transaction.reflectedDate ? "使用日" : "日付"}</span><strong>{transaction.date}</strong></div>
-      {transaction.reflectedDate && <div><span>引落日</span><strong>{transaction.reflectedDate}</strong></div>}
+      <div><span>{account?.type === "credit" && transaction.type === "expense" ? "使った日" : "日付"}</span><strong>{transaction.date}</strong></div>
+      {account?.type === "credit" && transaction.type === "expense" && <div><span>引落日</span><strong>{cardWithdrawalDate(transaction, account)}</strong></div>}
       <div><span>メモ</span><strong>{transaction.memo || "なし"}</strong></div>
     </div>
   );
@@ -8395,6 +8411,8 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
     const withdrawalDate = draft.type === "expense" && creditAccount ? draft.reflectedDate : undefined;
     const payload = {
       ...draft,
+      // カード以外に変えたら、手で決めた引落日も消す（列がまだ無い環境では、もともと無ければ送らない）
+      withdrawalDate: draft.type === "expense" && creditAccount ? draft.withdrawalDate : transaction.withdrawalDate ? "" : undefined,
       categoryId: draft.type === "transfer" ? undefined : draft.categoryId || undefined,
       transferToAccountId: draft.type === "transfer" ? draft.transferToAccountId || normalAccounts.find((item) => item.id !== draft.accountId)?.id : undefined,
       creditStatus: draft.type === "expense" && creditAccount ? draft.creditStatus ?? "unconfirmed" as const : undefined,
@@ -8428,7 +8446,7 @@ function TransactionRow({ transaction, state, setNotice, reload, leading = "date
           </div>
           <em className={`tx-amount ${isLedgerMove ? (isMoveIn ? "move-in" : "move-out") : transaction.type}`}>
             {transaction.type === "income" || isMoveIn ? "+" : ""}{plainAmount(transaction.amount)}
-            {transaction.reflectedDate && <small>{shortDate(transaction.reflectedDate)} 引落</small>}
+            {(transaction.reflectedDate || transaction.withdrawalDate) && account?.type === "credit" && <small>{shortDate(cardWithdrawalDate(transaction, account))} 引落{transaction.withdrawalDate && transaction.withdrawalDate !== nextWithdrawalDate(account, transaction.date) ? "（ずらし済み）" : ""}</small>}
           </em>
         </button>
         {expanded && (
@@ -8665,6 +8683,7 @@ function TransactionEditSheet({
                 accountId: nextAccountId,
                 transferToAccountId: nextAccountId === draft.transferToAccountId ? "" : draft.transferToAccountId,
                 reflectedDate: draft.type === "expense" && nextCreditAccount ? nextWithdrawalDate(nextCreditAccount, draft.date) : undefined,
+                withdrawalDate: transaction.withdrawalDate ? "" : undefined,
                 creditStatus: draft.type === "expense" && nextCreditAccount ? draft.creditStatus ?? "unconfirmed" : undefined
               });
             }} accounts={sortAccountsByType(draft.type === "income" || draft.type === "transfer" ? normalAccounts : state.accounts)} placeholder="選択してください" />
@@ -8674,37 +8693,37 @@ function TransactionEditSheet({
               <AccountSelect value={draft.transferToAccountId ?? ""} onChange={(nextId: string) => setDraft({ ...draft, transferToAccountId: nextId })} accounts={normalAccounts.filter((item) => item.id !== draft.accountId)} placeholder="選択してください" />
             </label>
           )}
-          <label>{isDraftCreditExpense ? "使用日" : "日付"}
+          <label>{isDraftCreditExpense ? "使った日" : "日付"}
             <input type="date" value={draft.date} onChange={(e) => {
               const nextDate = e.target.value;
               const nextAutoDate = draftCreditAccount ? nextWithdrawalDate(draftCreditAccount, nextDate) : undefined;
-              setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense ? nextAutoDate : undefined });
+              // 使った日を変えたら、つきずれの指定は消して引落日を計算し直す（記録する点はそのまま）
+              setDraft({ ...draft, date: nextDate, reflectedDate: isDraftCreditExpense && draft.reflectedDate ? nextAutoDate : undefined, withdrawalDate: transaction.withdrawalDate ? "" : undefined });
             }} />
           </label>
         </div>
 
-        {isDraftCreditExpense && (
-          <div className="credit-posting-mode">
-            <span>計上する日付</span>
-            <div className="segmented compact">
-              <button type="button" className={draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>引落日</button>
-              <button type="button" className={!draft.reflectedDate ? "selected" : ""} onClick={() => setDraft({ ...draft, reflectedDate: undefined })}>使用日</button>
-            </div>
-            {draft.reflectedDate && (
-              <>
-                <label style={{ display: "grid", gap: 4, fontSize: 12, color: "var(--muted)" }}>
-                  引落日
-                  <input type="date" value={draft.reflectedDate ?? autoWithdrawalDate ?? ""} onChange={(e) => setDraft({ ...draft, reflectedDate: e.target.value })} />
-                </label>
-                <div className="date-adjust-actions">
-                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, -1) })}>前月へ</button>
-                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: autoWithdrawalDate })}>自動計算</button>
-                  <button type="button" onClick={() => setDraft({ ...draft, reflectedDate: shiftMonth(draft.reflectedDate ?? autoWithdrawalDate ?? draft.date, 1) })}>翌月へ</button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
+        {isDraftCreditExpense && draftCreditAccount && autoWithdrawalDate && (() => {
+          const currentWithdrawal = draft.withdrawalDate || draft.reflectedDate || autoWithdrawalDate;
+          const setWithdrawal = (next: string) => setDraft({
+            ...draft,
+            withdrawalDate: next === autoWithdrawalDate ? transaction.withdrawalDate ? "" : undefined : next,
+            reflectedDate: draft.reflectedDate ? next : undefined
+          });
+          return (
+            <CardMoneyFlow
+              card={draftCreditAccount}
+              usedDate={draft.date}
+              autoWithdrawalDate={autoWithdrawalDate}
+              withdrawalDate={currentWithdrawal}
+              recordAt={draft.reflectedDate ? "withdrawal" : "used"}
+              onRecordAt={(mode) => setDraft({ ...draft, reflectedDate: mode === "withdrawal" ? currentWithdrawal : undefined })}
+              onShift={(months) => setWithdrawal(shiftWithdrawalDate(draftCreditAccount, currentWithdrawal, months))}
+              onReset={() => setWithdrawal(autoWithdrawalDate)}
+              withdrawalAccountName={state.accounts.find((item) => item.id === draftCreditAccount.withdrawalAccountId)?.name}
+            />
+          );
+        })()}
 
         <input
           placeholder="メモ"
@@ -8728,13 +8747,69 @@ function TransactionEditSheet({
 }
 
 
-function shiftMonth(date: string, delta: number) {
-  const base = new Date(`${date}T00:00:00`);
-  const targetMonth = new Date(base.getFullYear(), base.getMonth() + delta, 1);
-  const lastDay = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0).getDate();
-  const target = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), Math.min(base.getDate(), lastDay));
-  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+// ============================================================
+// カード払いのお金の流れ（使った → 締め → 銀行から引落）
+// 家計簿に記録する点（使った日 / 引落日）をタップで選び、つきずれは引落月を ‹ › でずらす
+// ============================================================
+function CardMoneyFlow({ card, usedDate, autoWithdrawalDate, withdrawalDate, recordAt, onRecordAt, onShift, onReset, withdrawalAccountName }: {
+  card: LedgerState["accounts"][number];
+  usedDate: string;
+  autoWithdrawalDate: string;
+  withdrawalDate: string;
+  recordAt: "used" | "withdrawal";
+  onRecordAt: (mode: "used" | "withdrawal") => void;
+  onShift: (months: number) => void;
+  onReset: () => void;
+  withdrawalAccountName?: string;
+}) {
+  const closing = statementClosingDate(card, withdrawalDate);
+  const monthDiff = (Number(withdrawalDate.slice(0, 4)) - Number(autoWithdrawalDate.slice(0, 4))) * 12 + Number(withdrawalDate.slice(5, 7)) - Number(autoWithdrawalDate.slice(5, 7));
+  const shifted = monthDiff !== 0;
+  // 前の月の明細の締め日が使った日より前なら、それより前にはずらせない
+  const canPrev = statementClosingDate(card, shiftWithdrawalDate(card, withdrawalDate, -1)) >= usedDate;
+  const canNext = monthDiff < 3;
+  const recordDate = recordAt === "withdrawal" ? withdrawalDate : usedDate;
+  const md = (value: string) => `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}`;
+  return (
+    <div className="card-flow">
+      <span className="card-flow-title">このお金の流れ</span>
+      <div className="card-flow-line">
+        <button type="button" className={`card-flow-node${recordAt === "used" ? " on" : ""}`} aria-pressed={recordAt === "used"} onClick={() => onRecordAt("used")}>
+          <span className="card-flow-dot"><ShoppingBag size={18} /></span>
+          <b className="num">{md(usedDate)}</b>
+          <small>使った</small>
+        </button>
+        <div className="card-flow-node static">
+          <span className="card-flow-dot mini"><i /></span>
+          <b className="num">{md(closing)}</b>
+          <small>締め</small>
+        </div>
+        <button type="button" className={`card-flow-node${recordAt === "withdrawal" ? " on" : ""}${shifted ? " shifted" : ""}`} aria-pressed={recordAt === "withdrawal"} onClick={() => onRecordAt("withdrawal")}>
+          <span className="card-flow-dot"><Landmark size={18} /></span>
+          <b className="num">{md(withdrawalDate)}</b>
+          <small>銀行から引落</small>
+        </button>
+      </div>
+      <div className="card-flow-shift">
+        <span>引落月</span>
+        <button type="button" aria-label="引落を前の月へ" disabled={!canPrev} onClick={() => onShift(-1)}><ChevronLeft size={18} /></button>
+        <b>{Number(withdrawalDate.slice(5, 7))}月</b>
+        <button type="button" aria-label="引落を次の月へ" disabled={!canNext} onClick={() => onShift(1)}><ChevronRight size={18} /></button>
+      </div>
+      {shifted && (
+        <div className="card-flow-warn">
+          <span>いつもより{Math.abs(monthDiff)}か月{monthDiff > 0 ? "後" : "前"}（通常は {md(autoWithdrawalDate)}）</span>
+          <button type="button" onClick={onReset}>元に戻す</button>
+        </div>
+      )}
+      <p className="card-flow-result">
+        <b>{Number(recordDate.slice(5, 7))}月の出費</b>として記録します。
+        <small>{md(withdrawalDate)} に{withdrawalAccountName ?? "引落口座"}から引き落とし。{recordAt === "used" ? "引落日で記録したいときは「銀行から引落」をタップ。" : "使った日で記録したいときは「使った」をタップ。"}</small>
+      </p>
+    </div>
+  );
 }
+
 
 
 // 口座の目印（通帳の表紙／カード）

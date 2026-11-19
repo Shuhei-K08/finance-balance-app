@@ -157,6 +157,7 @@ type DbTransaction = {
   transfer_to_account_id: string | null;
   occurred_on: string;
   reflected_on: string | null;
+  withdrawal_on?: string | null;
   credit_status: Transaction["creditStatus"] | null;
   memo: string | null;
   idempotency_key?: string | null;
@@ -704,7 +705,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
     client.from("households").select("id,name,space_type,mode,invite_code").eq("id", householdId).is("deleted_at", null).maybeSingle(),
     client.from("accounts").select("id,name,account_type,opening_balance,opening_balance_date,color,closing_day,withdrawal_day,withdrawal_account_id").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
     client.from("categories").select("id,name,parent_id,category_kind,color,sort_order").eq("household_id", householdId).is("deleted_at", null).order("sort_order").order("created_at"),
-    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
+    client.from("transactions").select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,withdrawal_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id").eq("household_id", householdId).is("deleted_at", null).order("occurred_on", { ascending: false }).order("created_at", { ascending: false }),
     client.from("fixed_costs").select("id,name,fixed_type,category_id,account_id,transfer_to_account_id,amount,is_variable,due_day,status,effective_from,effective_to,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,memo,tax_kind").eq("household_id", householdId).is("deleted_at", null).order("due_day"),
     client.from("fixed_cost_overrides").select("id,fixed_cost_id,target_month,name,category_id,account_id,transfer_to_account_id,amount,due_day,skipped,memo,pay_date,paid_on").eq("household_id", householdId).is("deleted_at", null).order("target_month", { ascending: false }),
     client.from("saving_goals").select("id,name,account_id,target_amount,deadline,monthly_boost").eq("household_id", householdId).is("deleted_at", null).order("created_at"),
@@ -820,6 +821,18 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
       .order("created_at");
     categoriesData = fallback.data;
     categoriesError = fallback.error;
+  }
+  if (transactionsError && /withdrawal_on/i.test(transactionsError.message)) {
+    // 引落日を手で決める列がまだない（add-transaction-withdrawal-on.sql 未実行）
+    const fallback = await client
+      .from("transactions")
+      .select("id,transaction_type,amount,category_id,account_id,transfer_to_account_id,occurred_on,reflected_on,credit_status,memo,idempotency_key,created_at,transfer_group_id,transfer_direction,counterparty_household_id,counterparty_account_id,counterparty_household_name,counterparty_account_name,transfer_sender_id")
+      .eq("household_id", householdId)
+      .is("deleted_at", null)
+      .order("occurred_on", { ascending: false })
+      .order("created_at", { ascending: false });
+    transactionsData = fallback.data;
+    transactionsError = fallback.error;
   }
   if (transactionsError && /transfer_group_id|transfer_direction|counterparty_|transfer_sender_id/i.test(transactionsError.message)) {
     // 資金移動用の列がまだない（add-ledger-transfers.sql 未実行）
@@ -945,6 +958,7 @@ export async function loadRemoteState(selectedHouseholdId?: string): Promise<Led
         transferToAccountId: transaction.transfer_to_account_id ?? undefined,
         date: transaction.occurred_on,
         reflectedDate: transaction.reflected_on ?? undefined,
+        withdrawalDate: transaction.withdrawal_on ? transaction.withdrawal_on.slice(0, 10) : undefined,
         memo: transaction.memo ?? undefined,
         creditStatus: transaction.credit_status ?? undefined,
         createdAt: transaction.created_at ?? undefined,
@@ -1060,6 +1074,7 @@ export async function insertRemoteTransaction(householdId: string, transaction: 
       transfer_to_account_id: transaction.transferToAccountId ?? null,
       occurred_on: transaction.date,
       reflected_on: transaction.reflectedDate ?? null,
+      ...(transaction.withdrawalDate ? { withdrawal_on: transaction.withdrawalDate } : {}),
       credit_status: transaction.creditStatus ?? null,
       idempotency_key: transaction.idempotencyKey ?? null,
       memo: transaction.memo ?? null
@@ -1076,6 +1091,7 @@ export async function insertRemoteTransaction(householdId: string, transaction: 
         .maybeSingle();
       if (existing) return (existing as { id: string }).id;
     }
+    if (/withdrawal_on/i.test(error.message ?? "")) throw new Error("引落月をずらすには、Supabase で add-transaction-withdrawal-on.sql を実行してください。");
     throwJapanese(error, "取引登録に失敗しました。");
   }
   if (!data) throw new Error("取引IDを取得できませんでした。");
@@ -1583,11 +1599,13 @@ export async function updateTransaction(transactionId: string, transaction: Omit
     transfer_to_account_id: transaction.transferToAccountId || null,
     occurred_on: transaction.date,
     reflected_on: transaction.reflectedDate || null,
+    ...(transaction.withdrawalDate !== undefined ? { withdrawal_on: transaction.withdrawalDate || null } : {}),
     credit_status: transaction.creditStatus || null,
     memo: transaction.memo || null
   };
   const { error } = await client.from("transactions").update(payload).eq("id", transactionId);
   if (!error) return;
+  if (/withdrawal_on/i.test(error.message ?? "")) throw new Error("引落月をずらすには、Supabase で add-transaction-withdrawal-on.sql を実行してください。");
 
   const { error: rpcError } = await client.rpc("update_transaction_safe", {
     target_transaction_id: transactionId,

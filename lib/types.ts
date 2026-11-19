@@ -37,6 +37,8 @@ export type Transaction = {
   paymentMethodId?: string;
   date: string;
   reflectedDate?: string;
+  /** カードの引落日を手で決めたとき（つきずれ）。未設定なら締め日・引落日から計算。空文字は「手動指定を消す」 */
+  withdrawalDate?: string;
   memo?: string;
   creditStatus?: CreditStatus;
   createdAt?: string;

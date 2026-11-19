@@ -100,6 +100,7 @@ create table if not exists transactions (
   transfer_to_account_id uuid references accounts(id),
   occurred_on date not null,
   reflected_on date,
+  withdrawal_on date,
   credit_status text check (credit_status is null or credit_status in ('unconfirmed', 'confirmed', 'withdrawn')),
   memo text,
   deleted_at timestamptz,

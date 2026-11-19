@@ -104,7 +104,25 @@ export function nextWithdrawalDate(account: Pick<Account, "closingDay" | "withdr
 // 「引落日」で計上した取引は reflectedDate、「使用日」で計上した取引は締め日・引落日から計算する。
 // （収支に反映する日＝transactionLedgerDate とは別。カード引落の明細・合計はこちらで振り分ける）
 export function cardWithdrawalDate(transaction: Transaction, card: Pick<Account, "closingDay" | "withdrawalDay">) {
-  return transaction.reflectedDate || nextWithdrawalDate(card, transaction.date);
+  return transaction.withdrawalDate || transaction.reflectedDate || nextWithdrawalDate(card, transaction.date);
+}
+
+function isoDate(year: number, monthIndex: number, day: number) {
+  const lastDay = new Date(year, monthIndex + 1, 0).getDate();
+  const target = new Date(year, monthIndex, Math.min(day, lastDay));
+  return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, "0")}-${String(target.getDate()).padStart(2, "0")}`;
+}
+
+// 引落日を n か月ずらす（カードの引落日で、月末より後にはならない）
+export function shiftWithdrawalDate(account: Pick<Account, "withdrawalDay">, withdrawalOn: string, months: number) {
+  const base = new Date(`${withdrawalOn}T00:00:00`);
+  return isoDate(base.getFullYear(), base.getMonth() + months, account.withdrawalDay ?? 10);
+}
+
+// その引落日の明細の締め日（引落月の前月の締め日）
+export function statementClosingDate(account: Pick<Account, "closingDay">, withdrawalOn: string) {
+  const base = new Date(`${withdrawalOn}T00:00:00`);
+  return isoDate(base.getFullYear(), base.getMonth() - 1, account.closingDay ?? 25);
 }
 
 export function calculateAccountBalance(account: Account, transactions: Transaction[], throughMonthKey?: string) {
