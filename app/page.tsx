@@ -1441,6 +1441,13 @@ function HomeView({
   const [accountHistoryId, setAccountHistoryId] = useState<string | null>(null);
   const [showAllAccounts, setShowAllAccounts] = useState(false);
   const [showRecentTxModal, setShowRecentTxModal] = useState(false);
+  const [withdrawalDetail, setWithdrawalDetail] = useState<{ cardId: string; date: string } | null>(null);
+  const [directDetailId, setDirectDetailId] = useState<string | null>(null);
+  // 「最近の取引」「これからの予定」はたたんでおき、開閉は次回も覚えておく
+  const [recentOpen, setRecentOpen] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("homeRecentOpen") === "true");
+  const [upcomingOpen, setUpcomingOpen] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("homeUpcomingOpen") === "true");
+  const toggleRecent = () => { const next = !recentOpen; setRecentOpen(next); window.localStorage.setItem("homeRecentOpen", String(next)); };
+  const toggleUpcoming = () => { const next = !upcomingOpen; setUpcomingOpen(next); window.localStorage.setItem("homeUpcomingOpen", String(next)); };
   const [assetsHidden, setAssetsHidden] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("assetsHidden") === "true");
   const toggleAssetsHidden = () => { const next = !assetsHidden; setAssetsHidden(next); window.localStorage.setItem("assetsHidden", String(next)); };
   // hide() no longer used — blur is applied via CSS .assets-hidden class
@@ -1467,6 +1474,9 @@ function HomeView({
   const monthChangePct = lastActual.length === 2 && lastActual[0].actual ? (monthChange / Math.max(Math.abs(lastActual[0].actual), 1)) * 100 : 0;
   const recentTx = [...state.transactions].sort((a, b) => (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date)).slice(0, 5);
   const upcoming = useMemo(() => upcomingBills(state, 14), [state]);
+  const outflows = useMemo(() => monthOutflowsByAccount(state, calendarMonth), [state, calendarMonth]);
+  const todayKey = todayIso();
+  const recentTodayCount = state.transactions.filter((tx) => (tx.createdAt ?? "").slice(0, 10) === todayKey || tx.date === todayKey).length;
 
   return (
     <div className="view-stack">
@@ -1498,32 +1508,13 @@ function HomeView({
         </div>
       </section>
 
-      <section className={`panel asset-link${assetsHidden ? " assets-hidden" : ""}`}>
-        {isSnapshotConfirmed && (
-          <div className="hanko" aria-label={`${monthLabel}の月末資産は確定済み`}>
-            <b>確定</b>
-            <i>{Number(calendarMonth.slice(5, 7))}.{new Date(Number(calendarMonth.slice(0, 4)), Number(calendarMonth.slice(5, 7)), 0).getDate()}</i>
-          </div>
-        )}
-        <div className="panel-title">
-          <h2>{isSnapshotConfirmed ? `${monthLabel}末の総資産` : isCurrentMonth ? "月末の予定総資産" : `${monthLabel}の総資産`}</h2>
-          {!assetsHidden && Math.abs(monthChange) > 0 && (
-            <span className={`delta-chip ${monthChange > 0 ? "up" : "down"}`}>
-              {monthChange > 0 ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-              {monthChange > 0 ? "+" : ""}{yen.format(monthChange)}
-            </span>
-          )}
-        </div>
-        <div className="amount asset-link-amount"><span className="yen">¥</span>{balanceAmount(displayAssets)}</div>
-        <div className="asset-link-rows">
-          <button type="button" onClick={() => setShowAllAccounts(true)}>
-            <Wallet size={16} /><span>口座</span><strong className="kpi-value">{balanceAmount(accountAssets)}</strong><ChevronRight size={16} />
-          </button>
-          <button type="button" onClick={() => onNavigate("investments")}>
-            <LineChartIcon size={16} /><span>投資</span><strong className="kpi-value">{balanceAmount(investmentTotal)}</strong><ChevronRight size={16} />
-          </button>
-        </div>
-      </section>
+      <MonthOutflowPanel
+        outflows={outflows}
+        monthKey={calendarMonth}
+        hidden={assetsHidden}
+        onCard={(cardId, date) => setWithdrawalDetail({ cardId, date })}
+        onDirect={(accountId) => setDirectDetailId(accountId)}
+      />
 
       {shouldShowSnapshotPanel && (
         <AssetSnapshotPanel
@@ -1544,30 +1535,46 @@ function HomeView({
         />
       )}
 
-      <section className="panel">
-        <div className="panel-title">
-          <h2>最近の取引</h2>
-          <button className="panel-action" type="button" onClick={() => setShowRecentTxModal(true)}>すべて見る <ChevronRight size={14} /></button>
-        </div>
-        {recentTx.length === 0 ? (
-          <div className="empty-state"><div className="empty-illustration"><Receipt size={20} /></div>下の ＋ ボタンから最初の取引を登録してみましょう。</div>
-        ) : (
-          <TransactionList state={{ ...state, transactions: recentTx }} setNotice={setNotice} reload={reload} />
+      <section className={`panel home-fold${recentOpen ? " open" : ""}`}>
+        <button type="button" className="home-fold-head" aria-expanded={recentOpen} onClick={toggleRecent}>
+          <Receipt size={18} />
+          <b>最近の取引</b>
+          <small>{recentTx.length === 0 ? "まだありません" : recentTodayCount > 0 ? `今日 ${recentTodayCount}件` : `${recentTx.length}件`}</small>
+          <ChevronDown size={16} className="home-fold-chev" />
+        </button>
+        {recentOpen && (
+          <div className="home-fold-body">
+            {recentTx.length === 0 ? (
+              <div className="empty-state"><div className="empty-illustration"><Receipt size={20} /></div>下の ＋ ボタンから最初の取引を登録してみましょう。</div>
+            ) : (
+              <>
+                <TransactionList state={{ ...state, transactions: recentTx }} setNotice={setNotice} reload={reload} />
+                <button className="panel-action home-fold-more" type="button" onClick={() => setShowRecentTxModal(true)}>すべて見る <ChevronRight size={14} /></button>
+              </>
+            )}
+          </div>
         )}
       </section>
 
       {upcoming.length > 0 && (
-        <section className="panel">
-          <div className="panel-title"><h2>これからの引落・予定</h2><span className="panel-meta">2週間以内</span></div>
-          <div className="ledger-lines">
-            {upcoming.slice(0, 3).map((item, index) => (
-              <div className="ledger-line" key={`${item.id}-${item.date}-${index}`}>
-                <div className="tx-lead">{shortDate(item.date)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
-                <div className="ledger-line-body"><strong>{item.name}</strong>{item.installment && <small className={item.installment.startsWith("最終回") ? "last" : ""}>{item.installment}</small>}</div>
-                <div className={`ledger-line-amount ${item.kind}`}>{item.kind === "income" ? "+" : ""}{plainAmount(item.amount)}</div>
-              </div>
-            ))}
-          </div>
+        <section className={`panel home-fold${upcomingOpen ? " open" : ""}`}>
+          <button type="button" className="home-fold-head" aria-expanded={upcomingOpen} onClick={toggleUpcoming}>
+            <CalendarDays size={18} />
+            <b>これからの予定</b>
+            <small>2週間で {upcoming.length}件</small>
+            <ChevronDown size={16} className="home-fold-chev" />
+          </button>
+          {upcomingOpen && (
+            <div className="ledger-lines home-fold-body">
+              {upcoming.slice(0, 5).map((item, index) => (
+                <div className="ledger-line" key={`${item.id}-${item.date}-${index}`}>
+                  <div className="tx-lead">{shortDate(item.date)}<small>{item.daysLeft <= 0 ? "今日" : `あと${item.daysLeft}日`}</small></div>
+                  <div className="ledger-line-body"><strong>{item.name}</strong>{item.installment && <small className={item.installment.startsWith("最終回") ? "last" : ""}>{item.installment}</small>}</div>
+                  <div className={`ledger-line-amount ${item.kind}`}>{item.kind === "income" ? "+" : ""}{plainAmount(item.amount)}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       )}
 
@@ -1596,6 +1603,12 @@ function HomeView({
           onClose={() => setShowAllAccounts(false)}
           onSelect={(id) => { setShowAllAccounts(false); setAccountHistoryId(id); }}
         />
+      )}
+      {withdrawalDetail && (
+        <CardWithdrawalSheet state={state} cardId={withdrawalDetail.cardId} date={withdrawalDetail.date} setNotice={setNotice} reload={reload} onClose={() => setWithdrawalDetail(null)} />
+      )}
+      {directDetailId && (
+        <DirectPaymentsSheet state={state} accountId={directDetailId} monthKey={calendarMonth} setNotice={setNotice} reload={reload} onClose={() => setDirectDetailId(null)} />
       )}
       {showRecentTxModal && (
         <RecentTransactionsModal
@@ -1919,10 +1932,173 @@ function upcomingCardWithdrawals(state: LedgerState, today = todayIso()): CardWi
   return Array.from(groups.values()).sort((a, b) => a.date.localeCompare(b.date) || a.card.name.localeCompare(b.card.name));
 }
 
+// ============================================================
+// その月に口座から出ていくお金（引落口座ごとに、カードの引落と口座からの直接の支払い）
+// カードは引落口座の中にまとめるので、カード引落と口座の支払いを二重に数えない
+// ============================================================
+type MonthOutflowAccount = {
+  account?: LedgerState["accounts"][number];
+  total: number;
+  cards: Array<{ card: LedgerState["accounts"][number]; date: string; amount: number; done: boolean }>;
+  direct: { amount: number; count: number; nextDate?: string; done: boolean };
+};
+
+function monthOutflowsByAccount(state: LedgerState, monthKey: string, today = todayIso()) {
+  const accounts = state.accounts.filter((account) => account.type !== "credit");
+  const cards = state.accounts.filter((account) => account.type === "credit");
+  const rows = new Map<string, MonthOutflowAccount>();
+  const rowFor = (accountId?: string) => {
+    const key = accountId && accounts.some((item) => item.id === accountId) ? accountId : "";
+    const row = rows.get(key) ?? { account: accounts.find((item) => item.id === key), total: 0, cards: [], direct: { amount: 0, count: 0, done: true } };
+    rows.set(key, row);
+    return row;
+  };
+  // カードの引落（この月の引落日のもの）
+  upcomingCardWithdrawals(state, `${monthKey}-01`)
+    .filter((group) => group.date.startsWith(monthKey))
+    .forEach((group) => {
+      const row = rowFor(group.card.withdrawalAccountId);
+      row.cards.push({ card: group.card, date: group.date, amount: group.amount, done: group.date <= today });
+      row.total += group.amount;
+    });
+  // 口座から直接の支払い（取引＋定期項目）
+  const addDirect = (accountId: string, amount: number, date: string) => {
+    const row = rowFor(accountId);
+    row.direct.amount += amount;
+    row.direct.count += 1;
+    if (date > today) {
+      row.direct.done = false;
+      if (!row.direct.nextDate || date < row.direct.nextDate) row.direct.nextDate = date;
+    }
+    row.total += amount;
+  };
+  const accountIds = new Set(accounts.map((item) => item.id));
+  state.transactions
+    .filter((tx) => tx.type === "expense" && accountIds.has(tx.accountId) && transactionLedgerDate(tx).startsWith(monthKey))
+    .forEach((tx) => addDirect(tx.accountId, tx.amount, transactionLedgerDate(tx)));
+  fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+    .filter((cost) => cost.kind === "expense" && accountIds.has(cost.accountId))
+    .forEach((cost) => addDirect(cost.accountId, cost.amount, cost.date));
+  // この月に使ったが、引落が翌月以降になるカードの分
+  const monthEnd = `${monthKey}-31`;
+  const later = cards
+    .map((card) => ({
+      card,
+      amount: state.transactions
+        .filter((tx) => tx.type === "expense" && tx.accountId === card.id && tx.date.startsWith(monthKey) && cardWithdrawalDate(tx, card) > monthEnd)
+        .reduce((sum, tx) => sum + tx.amount, 0)
+    }))
+    .filter((item) => item.amount > 0);
+  const list = Array.from(rows.values())
+    .filter((row) => row.total > 0)
+    .map((row) => ({ ...row, cards: row.cards.sort((a, b) => a.date.localeCompare(b.date)) }))
+    .sort((a, b) => b.total - a.total);
+  return { accounts: list, total: list.reduce((sum, row) => sum + row.total, 0), later };
+}
+
+function MonthOutflowPanel({ outflows, monthKey, hidden, onCard, onDirect }: {
+  outflows: ReturnType<typeof monthOutflowsByAccount>;
+  monthKey: string;
+  hidden: boolean;
+  onCard: (cardId: string, date: string) => void;
+  onDirect: (accountId: string) => void;
+}) {
+  const month = Number(monthKey.slice(5, 7));
+  const today = todayIso();
+  const daysUntil = (date: string) => Math.max(0, Math.round((new Date(`${date}T00:00:00`).getTime() - new Date(`${today}T00:00:00`).getTime()) / 86400000));
+  return (
+    <section className={`panel outflow-panel${hidden ? " assets-hidden" : ""}`}>
+      <div className="outflow-head">
+        <h2>{month}月に口座から出ていくお金</h2>
+        <b className="num">{outflows.total > 0 ? "−" : ""}{plainAmount(outflows.total)}</b>
+      </div>
+      {outflows.accounts.length === 0 ? (
+        <div className="empty-state">この月に出ていくお金はまだありません。</div>
+      ) : (
+        <>
+          <div className="outflow-legend"><span><i className="done" />済み</span><span><i />これから</span></div>
+          {outflows.accounts.map((row) => (
+            <div className="outflow-account" key={row.account?.id ?? "none"}>
+              <div className="outflow-account-head">
+                {row.account ? <AccountMark account={row.account} size="sm" /> : <span className="outflow-none" aria-hidden="true">?</span>}
+                <span><b>{row.account?.name ?? "引落口座未設定"}</b><small>{[row.cards.length > 0 ? `カード${new Set(row.cards.map((item) => item.card.id)).size}枚` : "", row.direct.count > 0 ? "直接の支払い" : ""].filter(Boolean).join("＋")}</small></span>
+                <b className="num">−{plainAmount(row.total)}</b>
+              </div>
+              {row.cards.map((item) => (
+                <button type="button" className="outflow-line" key={`${item.card.id}-${item.date}`} onClick={() => onCard(item.card.id, item.date)}>
+                  <i className={item.done ? "done" : ""} aria-label={item.done ? "済み" : "これから"} />
+                  <AccountMark account={item.card} size="sm" />
+                  <span><span>{item.card.name}</span><small className={item.done ? "" : "soon"}>{shortDate(item.date)} 引落{item.done ? "済み" : `・あと${daysUntil(item.date)}日`}</small></span>
+                  <b className="num">{plainAmount(item.amount)}</b>
+                  <ChevronRight size={14} />
+                </button>
+              ))}
+              {row.direct.count > 0 && row.account && (
+                <button type="button" className="outflow-line" onClick={() => onDirect(row.account!.id)}>
+                  <i className={row.direct.done ? "done" : ""} aria-label={row.direct.done ? "済み" : "これから"} />
+                  <span className="outflow-direct-mark" aria-hidden="true"><ArrowUpRight size={12} /></span>
+                  <span><span>口座から直接</span><small className={row.direct.done ? "" : "soon"}>{row.direct.count}件{row.direct.nextDate ? `・次は ${shortDate(row.direct.nextDate)}` : ""}</small></span>
+                  <b className="num">{plainAmount(row.direct.amount)}</b>
+                  <ChevronRight size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+      {outflows.later.map((item) => (
+        <div className="outflow-later" key={item.card.id}>
+          <AccountMark account={item.card} size="sm" />
+          <span>翌月以降の引落へ（{item.card.name} {month}月利用分）</span>
+          <b className="num">{plainAmount(item.amount)}</b>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+// 口座から直接払った分の明細（取引は編集・削除、定期項目はこの月だけ変更）
+function DirectPaymentsSheet({ state, accountId, monthKey, setNotice, reload, onClose }: { state: LedgerState; accountId: string; monthKey: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
+  const account = state.accounts.find((item) => item.id === accountId);
+  const transactions = state.transactions
+    .filter((tx) => tx.type === "expense" && tx.accountId === accountId && transactionLedgerDate(tx).startsWith(monthKey))
+    .sort((a, b) => transactionLedgerDate(b).localeCompare(transactionLedgerDate(a)));
+  const fixed = fixedCostOccurrencesForMonth(state.fixedCosts, monthKey, state)
+    .filter((cost) => cost.kind === "expense" && cost.accountId === accountId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const total = transactions.reduce((sum, tx) => sum + tx.amount, 0) + fixed.reduce((sum, row) => sum + row.amount, 0);
+  return (
+    <SettingsSheet title={`${account?.name ?? "口座"}から直接の支払い　${Number(monthKey.slice(5, 7))}月`} onClose={onClose}>
+      <div className="withdrawal-summary">
+        {account && <AccountMark account={account} size="lg" />}
+        <span><small>カード以外で、この口座から払った分</small><b className="num">{plainAmount(total)}</b></span>
+        <em>{transactions.length + fixed.length}件</em>
+      </div>
+      {fixed.length > 0 && (
+        <div className="withdrawal-block">
+          <div className="settings-sec-h"><span>定期項目</span><b className="num">{plainAmount(fixed.reduce((sum, row) => sum + row.amount, 0))}</b></div>
+          <div className="withdrawal-list">
+            {fixed.map((row) => <FixedCostOccurrenceRow key={`${row.id}-${row.occurrenceMonth}`} row={row} state={state} setNotice={setNotice} reload={reload} />)}
+          </div>
+        </div>
+      )}
+      {transactions.length > 0 && (
+        <div className="withdrawal-block">
+          <div className="settings-sec-h"><span>取引</span><b className="num">{plainAmount(transactions.reduce((sum, tx) => sum + tx.amount, 0))}</b></div>
+          <div className="withdrawal-list">
+            <TransactionList state={{ ...state, transactions }} setNotice={setNotice} reload={reload} />
+          </div>
+        </div>
+      )}
+      <p className="sheet-hint">取引はタップして「編集」「削除」、定期項目は「この月だけ変更」で直せます。</p>
+    </SettingsSheet>
+  );
+}
+
 // カード引落の明細（取引は編集・削除、定期項目はこの月だけ変更）
 function CardWithdrawalSheet({ state, cardId, date, setNotice, reload, onClose }: { state: LedgerState; cardId: string; date: string; setNotice: (message: string) => void; reload: () => Promise<void>; onClose: () => void }) {
   // 編集後の最新データで組み直す
-  const group = upcomingCardWithdrawals(state).find((item) => item.card.id === cardId && item.date === date);
+  const group = upcomingCardWithdrawals(state, date).find((item) => item.card.id === cardId && item.date === date);
   const card = state.accounts.find((item) => item.id === cardId);
   const withdrawal = state.accounts.find((item) => item.id === card?.withdrawalAccountId);
   return (

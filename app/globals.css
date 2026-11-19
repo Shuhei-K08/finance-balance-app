@@ -3842,6 +3842,45 @@ a { color: inherit; text-decoration: none; }
   color: var(--muted);
 }
 
+/* ホーム：その月に口座から出ていくお金 */
+.outflow-panel { display: grid; gap: 12px; }
+.outflow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.outflow-head h2 { margin: 0; font-size: 15px; font-weight: 700; }
+.outflow-head > b { font-size: 17px; color: var(--expense); }
+.outflow-legend { display: flex; gap: 12px; font-size: 11px; color: var(--muted); }
+.outflow-legend span { display: flex; align-items: center; gap: 4px; }
+.outflow-panel i { display: inline-block; flex: none; width: 8px; height: 8px; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--warning); }
+.outflow-panel i.done { border: 0; background: var(--success); }
+.outflow-account { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.outflow-account-head { display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--panel-elev); }
+.outflow-account-head > span:not(.acct-mark):not(.outflow-none) { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.outflow-account-head small { font-size: 11px; color: var(--muted); }
+.outflow-account-head > b { font-size: 15px; }
+.outflow-none { width: 28px; height: 28px; border-radius: 7px; background: var(--line-strong); display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.outflow-line { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 8px 12px 8px 22px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.outflow-line:hover { background: var(--panel-soft); }
+.outflow-line > span:not(.acct-mark):not(.outflow-direct-mark) { flex: 1; display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+.outflow-line small { font-size: 11px; color: var(--muted); }
+.outflow-line small.soon { color: var(--warning); }
+.outflow-line > b { font-size: 14px; }
+.outflow-line > svg { color: var(--muted); flex: none; }
+.outflow-direct-mark { width: 22px; height: 15px; flex: none; border-radius: 3px; background: var(--muted); color: var(--bg-0); display: flex; align-items: center; justify-content: center; }
+.outflow-later { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; background: var(--panel-elev); font-size: 12px; color: var(--ink-soft); }
+.outflow-later span:not(.acct-mark) { flex: 1; }
+.outflow-later b { color: var(--ink); }
+.outflow-panel.assets-hidden .num { filter: blur(6px); }
+
+/* ホーム：たためるパネル（最近の取引・これからの予定） */
+.panel.home-fold { padding-top: 0; padding-bottom: 0; }
+.home-fold-head { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.home-fold-head > svg:first-child { color: var(--muted); flex: none; }
+.home-fold-head b { flex: 1; font-size: 14px; }
+.home-fold-head small { font-size: 12px; color: var(--muted); }
+.home-fold-chev { color: var(--muted); transition: transform 0.18s ease; }
+.home-fold.open .home-fold-chev { transform: rotate(180deg); }
+.home-fold-body { padding-bottom: 14px; }
+.home-fold-more { margin: 8px 0 0 auto; display: flex; align-items: center; gap: 4px; padding: 6px 12px; border: 0; border-radius: 10px; font-size: 12px; font-weight: 600; color: var(--brand-2); background: var(--brand-soft); cursor: pointer; }
+
 /* カード払いのお金の流れ（使った → 締め → 引落） */
 .card-flow {
   display: grid;
